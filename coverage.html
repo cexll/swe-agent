@@ -1,0 +1,1060 @@
+<!doctype html>
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>cmd: Go Coverage Report</title>
+    <style>
+      body {
+        background: black;
+        color: rgb(80, 80, 80);
+      }
+      body,
+      pre,
+      #legend span {
+        font-family: Menlo, monospace;
+        font-weight: bold;
+      }
+      #topbar {
+        background: black;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 42px;
+        border-bottom: 1px solid rgb(80, 80, 80);
+      }
+      #content {
+        margin-top: 50px;
+      }
+      #nav,
+      #legend {
+        float: left;
+        margin-left: 10px;
+      }
+      #legend {
+        margin-top: 12px;
+      }
+      #nav {
+        margin-top: 10px;
+      }
+      #legend span {
+        margin: 0 5px;
+      }
+      .cov0 {
+        color: rgb(192, 0, 0);
+      }
+      .cov1 {
+        color: rgb(128, 128, 128);
+      }
+      .cov2 {
+        color: rgb(116, 140, 131);
+      }
+      .cov3 {
+        color: rgb(104, 152, 134);
+      }
+      .cov4 {
+        color: rgb(92, 164, 137);
+      }
+      .cov5 {
+        color: rgb(80, 176, 140);
+      }
+      .cov6 {
+        color: rgb(68, 188, 143);
+      }
+      .cov7 {
+        color: rgb(56, 200, 146);
+      }
+      .cov8 {
+        color: rgb(44, 212, 149);
+      }
+      .cov9 {
+        color: rgb(32, 224, 152);
+      }
+      .cov10 {
+        color: rgb(20, 236, 155);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="topbar">
+      <div id="nav">
+        <select id="files">
+          <option value="file0">
+            github.com/chenwenjie/pilot-swe/cmd/main.go (0.0%)
+          </option>
+
+          <option value="file1">
+            github.com/chenwenjie/pilot-swe/internal/config/config.go (100.0%)
+          </option>
+
+          <option value="file2">
+            github.com/chenwenjie/pilot-swe/internal/executor/task.go (48.2%)
+          </option>
+
+          <option value="file3">
+            github.com/chenwenjie/pilot-swe/internal/github/clone.go (0.0%)
+          </option>
+
+          <option value="file4">
+            github.com/chenwenjie/pilot-swe/internal/github/comment.go (75.0%)
+          </option>
+
+          <option value="file5">
+            github.com/chenwenjie/pilot-swe/internal/github/pr.go (71.4%)
+          </option>
+
+          <option value="file6">
+            github.com/chenwenjie/pilot-swe/internal/provider/claude/claude.go
+            (65.6%)
+          </option>
+
+          <option value="file7">
+            github.com/chenwenjie/pilot-swe/internal/provider/factory.go
+            (100.0%)
+          </option>
+
+          <option value="file8">
+            github.com/chenwenjie/pilot-swe/internal/webhook/handler.go (95.7%)
+          </option>
+
+          <option value="file9">
+            github.com/chenwenjie/pilot-swe/internal/webhook/verify.go (100.0%)
+          </option>
+        </select>
+      </div>
+      <div id="legend">
+        <span>not tracked</span>
+
+        <span class="cov0">not covered</span>
+        <span class="cov8">covered</span>
+      </div>
+    </div>
+    <div id="content">
+      <pre class="file" id="file0" style="display: none">package main
+
+import (
+        "fmt"
+        "log"
+        "net/http"
+
+        "github.com/chenwenjie/pilot-swe/internal/config"
+        "github.com/chenwenjie/pilot-swe/internal/executor"
+        "github.com/chenwenjie/pilot-swe/internal/provider"
+        "github.com/chenwenjie/pilot-swe/internal/webhook"
+        "github.com/gorilla/mux"
+)
+
+func main() <span class="cov0" title="0">{
+        // Load configuration
+        cfg, err := config.Load()
+        if err != nil </span><span class="cov0" title="0">{
+                log.Fatalf("Failed to load configuration: %v", err)
+        }</span>
+
+        <span class="cov0" title="0">log.Printf("Starting Pilot SWE server...")
+        log.Printf("Port: %d", cfg.Port)
+        log.Printf("Trigger keyword: %s", cfg.TriggerKeyword)
+        log.Printf("Claude model: %s", cfg.ClaudeModel)
+
+        // Initialize AI provider (currently Claude, easy to extend)
+        aiProvider, err := provider.NewProvider(&amp;provider.Config{
+                Name:         "claude",
+                ClaudeAPIKey: cfg.ClaudeAPIKey,
+                ClaudeModel:  cfg.ClaudeModel,
+        })
+        if err != nil </span><span class="cov0" title="0">{
+                log.Fatalf("Failed to initialize AI provider: %v", err)
+        }</span>
+        <span class="cov0" title="0">log.Printf("AI Provider: %s", aiProvider.Name())
+
+        // Initialize executor
+        exec := executor.New(aiProvider)
+
+        // Initialize webhook handler
+        handler := webhook.NewHandler(cfg.GitHubWebhookSecret, cfg.TriggerKeyword, exec)
+
+        // Setup router
+        r := mux.NewRouter()
+
+        // Webhook endpoint
+        r.HandleFunc("/webhook", handler.HandleIssueComment).Methods("POST")
+
+        // Health check endpoint
+        r.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) </span><span class="cov0" title="0">{
+                w.WriteHeader(http.StatusOK)
+                w.Write([]byte("OK"))
+        }</span>).Methods("GET")
+
+        // Root endpoint with info
+        <span class="cov0" title="0">r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) </span><span class="cov0" title="0">{
+                w.Header().Set("Content-Type", "application/json")
+                w.WriteHeader(http.StatusOK)
+                fmt.Fprintf(w, `{"service":"pilot-swe","status":"running","trigger":"%s"}`, cfg.TriggerKeyword)
+        }</span>).Methods("GET")
+
+        // Start server
+        <span class="cov0" title="0">addr := fmt.Sprintf(":%d", cfg.Port)
+        log.Printf("Server listening on %s", addr)
+        log.Printf("Webhook endpoint: http://localhost%s/webhook", addr)
+        log.Printf("Health check: http://localhost%s/health", addr)
+
+        if err := http.ListenAndServe(addr, r); err != nil </span><span class="cov0" title="0">{
+                log.Fatalf("Server failed to start: %v", err)
+        }</span>
+}
+</pre>
+
+      <pre class="file" id="file1" style="display: none">package config
+
+import (
+        "fmt"
+        "os"
+        "strconv"
+)
+
+// Config holds all configuration for the pilot-swe service
+type Config struct {
+        // Server settings
+        Port int
+
+        // GitHub App settings
+        GitHubAppID         string
+        GitHubPrivateKey    string
+        GitHubWebhookSecret string
+
+        // Claude settings
+        ClaudeAPIKey string
+        ClaudeModel  string
+
+        // Trigger settings
+        TriggerKeyword string
+}
+
+// Load loads configuration from environment variables
+func Load() (*Config, error) <span class="cov8" title="1">{
+        cfg := &amp;Config{
+                Port:                getEnvInt("PORT", 3000),
+                GitHubAppID:         os.Getenv("GITHUB_APP_ID"),
+                GitHubPrivateKey:    os.Getenv("GITHUB_PRIVATE_KEY"),
+                GitHubWebhookSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
+                ClaudeAPIKey:        os.Getenv("ANTHROPIC_API_KEY"),
+                ClaudeModel:         getEnv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022"),
+                TriggerKeyword:      getEnv("TRIGGER_KEYWORD", "/pilot"),
+        }
+
+        // Validate required fields
+        if err := cfg.validate(); err != nil </span><span class="cov8" title="1">{
+                return nil, err
+        }</span>
+
+        <span class="cov8" title="1">return cfg, nil</span>
+}
+
+// validate checks that all required configuration is present
+func (c *Config) validate() error <span class="cov8" title="1">{
+        if c.GitHubAppID == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("GITHUB_APP_ID is required")
+        }</span>
+        <span class="cov8" title="1">if c.GitHubPrivateKey == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("GITHUB_PRIVATE_KEY is required")
+        }</span>
+        <span class="cov8" title="1">if c.GitHubWebhookSecret == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("GITHUB_WEBHOOK_SECRET is required")
+        }</span>
+        <span class="cov8" title="1">if c.ClaudeAPIKey == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("ANTHROPIC_API_KEY is required")
+        }</span>
+        <span class="cov8" title="1">return nil</span>
+}
+
+// getEnv gets environment variable with a default value
+func getEnv(key, defaultValue string) string <span class="cov8" title="1">{
+        if value := os.Getenv(key); value != "" </span><span class="cov8" title="1">{
+                return value
+        }</span>
+        <span class="cov8" title="1">return defaultValue</span>
+}
+
+// getEnvInt gets environment variable as int with a default value
+func getEnvInt(key string, defaultValue int) int <span class="cov8" title="1">{
+        if value := os.Getenv(key); value != "" </span><span class="cov8" title="1">{
+                if intValue, err := strconv.Atoi(value); err == nil </span><span class="cov8" title="1">{
+                        return intValue
+                }</span>
+        }
+        <span class="cov8" title="1">return defaultValue</span>
+}
+</pre>
+
+      <pre class="file" id="file2" style="display: none">package executor
+
+import (
+        "context"
+        "fmt"
+        "log"
+        "os"
+        "os/exec"
+        "path/filepath"
+        "strings"
+        "time"
+
+        "github.com/chenwenjie/pilot-swe/internal/github"
+        "github.com/chenwenjie/pilot-swe/internal/provider"
+        "github.com/chenwenjie/pilot-swe/internal/provider/claude"
+        "github.com/chenwenjie/pilot-swe/internal/webhook"
+)
+
+// Executor executes pilot tasks
+type Executor struct {
+        provider provider.Provider
+}
+
+// New creates a new executor
+func New(p provider.Provider) *Executor <span class="cov8" title="1">{
+        return &amp;Executor{
+                provider: p,
+        }
+}</span>
+
+// Execute executes a pilot task
+func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error <span class="cov0" title="0">{
+        log.Printf("Starting task execution for %s#%d", task.Repo, task.Number)
+
+        // 1. Clone repository
+        log.Printf("Cloning repository %s (branch: %s)", task.Repo, task.Branch)
+        workdir, cleanup, err := github.Clone(task.Repo, task.Branch)
+        if err != nil </span><span class="cov0" title="0">{
+                return e.notifyError(task, fmt.Sprintf("Failed to clone repository: %v", err))
+        }</span>
+        <span class="cov0" title="0">defer cleanup()
+        log.Printf("Repository cloned to %s", workdir)
+
+        // 2. Call AI provider to generate changes
+        log.Printf("Calling %s provider with prompt: %s", e.provider.Name(), task.Prompt)
+
+        // Build context
+        context := map[string]string{
+                "issue_title": task.IssueTitle,
+                "issue_body":  task.IssueBody,
+        }
+
+        result, err := e.provider.GenerateCode(ctx, &amp;claude.CodeRequest{
+                Prompt:   task.Prompt,
+                RepoPath: workdir,
+                Context:  context,
+        })
+        if err != nil </span><span class="cov0" title="0">{
+                return e.notifyError(task, fmt.Sprintf("%s error: %v", e.provider.Name(), err))
+        }</span>
+        <span class="cov0" title="0">log.Printf("%s generated %d file changes (cost: $%.4f)", e.provider.Name(), len(result.Files), result.CostUSD)
+
+        // 3. Apply file changes
+        log.Printf("Applying file changes")
+        if err := e.applyChanges(workdir, result.Files); err != nil </span><span class="cov0" title="0">{
+                return e.notifyError(task, fmt.Sprintf("Failed to apply changes: %v", err))
+        }</span>
+
+        // 4. Create branch and commit changes
+        <span class="cov0" title="0">branchName := fmt.Sprintf("pilot/%d-%d", task.Number, time.Now().Unix())
+        log.Printf("Creating branch %s and committing changes", branchName)
+        if err := e.commitAndPush(workdir, branchName, result.Summary); err != nil </span><span class="cov0" title="0">{
+                return e.notifyError(task, fmt.Sprintf("Failed to commit/push: %v", err))
+        }</span>
+
+        // 5. Create PR (don't actually create it, just return a create PR link)
+        <span class="cov0" title="0">log.Printf("Creating PR from %s to %s", branchName, task.Branch)
+        prURL, err := e.createPRLink(task.Repo, branchName, task.Branch, result.Summary)
+        if err != nil </span><span class="cov0" title="0">{
+                return e.notifyError(task, fmt.Sprintf("Failed to create PR: %v", err))
+        }</span>
+        <span class="cov0" title="0">log.Printf("PR link created: %s", prURL)
+
+        // 6. Post success comment
+        return e.notifySuccess(task, result, prURL)</span>
+}
+
+// applyChanges writes file changes to disk
+func (e *Executor) applyChanges(workdir string, changes []claude.FileChange) error <span class="cov8" title="1">{
+        for _, change := range changes </span><span class="cov8" title="1">{
+                filePath := filepath.Join(workdir, change.Path)
+
+                // Ensure directory exists
+                if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("failed to create directory for %s: %w", change.Path, err)
+                }</span>
+
+                // Write file
+                <span class="cov8" title="1">if err := os.WriteFile(filePath, []byte(change.Content), 0644); err != nil </span><span class="cov8" title="1">{
+                        return fmt.Errorf("failed to write file %s: %w", change.Path, err)
+                }</span>
+
+                <span class="cov8" title="1">log.Printf("Applied changes to %s", change.Path)</span>
+        }
+        <span class="cov8" title="1">return nil</span>
+}
+
+// commitAndPush commits changes and pushes to remote
+func (e *Executor) commitAndPush(workdir, branchName, commitMessage string) error <span class="cov8" title="1">{
+        commands := [][]string{
+                {"git", "config", "user.name", "Pilot Bot"},
+                {"git", "config", "user.email", "pilot@github.com"},
+                {"git", "checkout", "-b", branchName},
+                {"git", "add", "."},
+                {"git", "commit", "-m", commitMessage},
+                {"git", "push", "-u", "origin", branchName},
+        }
+
+        for _, args := range commands </span><span class="cov8" title="1">{
+                cmd := exec.Command(args[0], args[1:]...)
+                cmd.Dir = workdir
+                if output, err := cmd.CombinedOutput(); err != nil </span><span class="cov8" title="1">{
+                        return fmt.Errorf("%s failed: %w\nOutput: %s", strings.Join(args, " "), err, string(output))
+                }</span>
+        }
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+// createPRLink generates a GitHub URL for creating a PR
+func (e *Executor) createPRLink(repo, head, base, title string) (string, error) <span class="cov8" title="1">{
+        // Generate GitHub compare URL that allows user to create PR
+        // Format: https://github.com/owner/repo/compare/base...head?expand=1
+        prURL := fmt.Sprintf("https://github.com/%s/compare/%s...%s?expand=1&amp;title=%s",
+                repo, base, head, strings.ReplaceAll(title, " ", "+"))
+        return prURL, nil
+}</span>
+
+// notifySuccess posts a success comment to the issue/PR
+func (e *Executor) notifySuccess(task *webhook.Task, result *claude.CodeResponse, prURL string) error <span class="cov8" title="1">{
+        // Format file list
+        fileList := make([]string, len(result.Files))
+        for i, file := range result.Files </span><span class="cov8" title="1">{
+                fileList[i] = fmt.Sprintf("- `%s`", file.Path)
+        }</span>
+
+        <span class="cov8" title="1">comment := fmt.Sprintf(`### ✅ Task Completed Successfully
+
+**Summary:** %s
+
+**Modified Files:** (%d)
+%s
+
+**Next Step:**
+[🚀 Click here to create Pull Request](%s)
+
+---
+*Generated by Pilot SWE*`, result.Summary, len(result.Files), strings.Join(fileList, "\n"), prURL)
+
+        log.Printf("Posting success comment to %s#%d", task.Repo, task.Number)
+        return github.CreateComment(task.Repo, task.Number, comment)</span>
+}
+
+// notifyError posts an error comment to the issue/PR
+func (e *Executor) notifyError(task *webhook.Task, errorMsg string) error <span class="cov8" title="1">{
+        comment := fmt.Sprintf(`### ❌ Task Failed
+
+**Error:** %s
+
+Please check the error message and try again.
+
+---
+*Generated by Pilot SWE*`, errorMsg)
+
+        log.Printf("Posting error comment to %s#%d: %s", task.Repo, task.Number, errorMsg)
+        if err := github.CreateComment(task.Repo, task.Number, comment); err != nil </span><span class="cov8" title="1">{
+                log.Printf("Failed to post error comment: %v", err)
+                return fmt.Errorf("%s (also failed to post comment: %w)", errorMsg, err)
+        }</span>
+
+        <span class="cov0" title="0">return fmt.Errorf("%s", errorMsg)</span>
+}
+</pre>
+
+      <pre class="file" id="file3" style="display: none">package github
+
+import (
+        "fmt"
+        "os"
+        "os/exec"
+        "path/filepath"
+        "time"
+)
+
+// Clone clones a GitHub repository to a temporary directory
+// Returns: workdir path, cleanup function, error
+func Clone(repo, branch string) (string, func(), error) <span class="cov0" title="0">{
+        // Create temporary directory with timestamp
+        tmpDir := filepath.Join(os.TempDir(), fmt.Sprintf("pilot-%d", time.Now().Unix()))
+
+        // Execute gh repo clone
+        cmd := exec.Command("gh", "repo", "clone", repo, tmpDir, "--branch", branch)
+        if output, err := cmd.CombinedOutput(); err != nil </span><span class="cov0" title="0">{
+                return "", nil, fmt.Errorf("gh repo clone failed: %w\nOutput: %s", err, string(output))
+        }</span>
+
+        // Cleanup function to remove temporary directory
+        <span class="cov0" title="0">cleanup := func() </span><span class="cov0" title="0">{
+                if err := os.RemoveAll(tmpDir); err != nil </span><span class="cov0" title="0">{
+                        fmt.Printf("Warning: failed to cleanup %s: %v\n", tmpDir, err)
+                }</span>
+        }
+
+        <span class="cov0" title="0">return tmpDir, cleanup, nil</span>
+}
+</pre>
+
+      <pre class="file" id="file4" style="display: none">package github
+
+import (
+        "fmt"
+        "os/exec"
+        "strconv"
+)
+
+// CreateComment creates a comment on a GitHub issue or PR
+func CreateComment(repo string, number int, body string) error <span class="cov8" title="1">{
+        cmd := exec.Command("gh", "issue", "comment", strconv.Itoa(number),
+                "--repo", repo,
+                "--body", body)
+
+        if output, err := cmd.CombinedOutput(); err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("gh issue comment failed: %w\nOutput: %s", err, string(output))
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+</pre>
+
+      <pre class="file" id="file5" style="display: none">package github
+
+import (
+        "fmt"
+        "os/exec"
+        "strings"
+)
+
+// CreatePR creates a pull request and returns the PR URL
+func CreatePR(workdir, repo, head, base, title, body string) (string, error) <span class="cov8" title="1">{
+        cmd := exec.Command("gh", "pr", "create",
+                "--repo", repo,
+                "--head", head,
+                "--base", base,
+                "--title", title,
+                "--body", body)
+
+        cmd.Dir = workdir
+
+        output, err := cmd.CombinedOutput()
+        if err != nil </span><span class="cov8" title="1">{
+                return "", fmt.Errorf("gh pr create failed: %w\nOutput: %s", err, string(output))
+        }</span>
+
+        // gh pr create returns the PR URL
+        <span class="cov0" title="0">prURL := strings.TrimSpace(string(output))
+        return prURL, nil</span>
+}
+</pre>
+
+      <pre class="file" id="file6" style="display: none">package claude
+
+import (
+        "context"
+        "fmt"
+        "log"
+        "os"
+        "path/filepath"
+        "regexp"
+        "strings"
+
+        claudecli "github.com/lancekrogers/claude-code-go/pkg/claude"
+)
+
+// FileChange represents a file modification
+type FileChange struct {
+        Path    string
+        Content string
+}
+
+// CodeRequest contains input for code generation
+type CodeRequest struct {
+        Prompt   string            // User instruction
+        RepoPath string            // Repository path
+        Context  map[string]string // Additional context
+}
+
+// CodeResponse contains the AI-generated code changes
+type CodeResponse struct {
+        Files   []FileChange // Modified files
+        Summary string       // Summary of changes
+        CostUSD float64      // Cost in USD
+}
+
+// Provider implements the AI provider interface for Claude
+type Provider struct {
+        claudeClient *claudecli.ClaudeClient
+        model        string
+}
+
+// NewProvider creates a new Claude provider
+func NewProvider(apiKey, model string) *Provider <span class="cov8" title="1">{
+        // Set environment variable for Claude Code CLI
+        os.Setenv("ANTHROPIC_API_KEY", apiKey)
+
+        // Create Claude Code client
+        claudeClient := &amp;claudecli.ClaudeClient{
+                BinPath: "claude", // Uses claude from PATH
+                DefaultOptions: &amp;claudecli.RunOptions{
+                        Format: claudecli.JSONOutput,
+                        Model:  model,
+                },
+        }
+
+        return &amp;Provider{
+                claudeClient: claudeClient,
+                model:        model,
+        }
+}</span>
+
+// Name returns the provider name
+func (p *Provider) Name() string <span class="cov8" title="1">{
+        return "claude"
+}</span>
+
+// GenerateCode generates code changes using Claude Code CLI
+func (p *Provider) GenerateCode(ctx context.Context, req *CodeRequest) (*CodeResponse, error) <span class="cov0" title="0">{
+        log.Printf("[Claude] Starting code generation for: %s", req.Prompt)
+
+        // 1. List repository files
+        files, err := listRepoFiles(req.RepoPath)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to list repo files: %w", err)
+        }</span>
+
+        // 2. Build system prompt
+        <span class="cov0" title="0">systemPrompt := buildSystemPrompt(files, req.Context)
+
+        // 3. Build user prompt
+        userPrompt := fmt.Sprintf(`Task: %s
+
+Please provide your changes in the following format:
+
+&lt;file path="path/to/file.ext"&gt;
+&lt;content&gt;
+... full file content here ...
+&lt;/content&gt;
+&lt;/file&gt;
+
+&lt;summary&gt;
+Brief description of changes made
+&lt;/summary&gt;
+
+Make sure to include the COMPLETE file content, not just the changes.`, req.Prompt)
+
+        log.Printf("[Claude] Calling Claude Code CLI with model: %s", p.model)
+
+        // 4. Call Claude Code CLI
+        result, err := p.claudeClient.RunPromptCtx(ctx, userPrompt, &amp;claudecli.RunOptions{
+                Format:       claudecli.JSONOutput,
+                Model:        p.model,
+                SystemPrompt: systemPrompt,
+        })
+
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("Claude Code CLI error: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">if result.IsError </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("Claude Code error: %s", result.Result)
+        }</span>
+
+        <span class="cov0" title="0">responseText := result.Result
+        log.Printf("[Claude] Response length: %d characters, cost: $%.4f", len(responseText), result.CostUSD)
+
+        // 5. Parse response
+        response, err := parseCodeResponse(responseText)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to parse response: %w", err)
+        }</span>
+
+        // Set cost
+        <span class="cov0" title="0">response.CostUSD = result.CostUSD
+
+        log.Printf("[Claude] Extracted %d file changes", len(response.Files))
+        return response, nil</span>
+}
+
+// listRepoFiles lists all files in the repository (excluding .git)
+func listRepoFiles(repoPath string) ([]string, error) <span class="cov8" title="1">{
+        var files []string
+
+        err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error </span><span class="cov8" title="1">{
+                if err != nil </span><span class="cov8" title="1">{
+                        return err
+                }</span>
+
+                // Skip .git directory
+                <span class="cov8" title="1">if info.IsDir() &amp;&amp; info.Name() == ".git" </span><span class="cov8" title="1">{
+                        return filepath.SkipDir
+                }</span>
+
+                // Skip directories and hidden files
+                <span class="cov8" title="1">if info.IsDir() || strings.HasPrefix(info.Name(), ".") </span><span class="cov8" title="1">{
+                        return nil
+                }</span>
+
+                // Get relative path
+                <span class="cov8" title="1">relPath, err := filepath.Rel(repoPath, path)
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                <span class="cov8" title="1">files = append(files, relPath)
+                return nil</span>
+        })
+
+        <span class="cov8" title="1">return files, err</span>
+}
+
+// buildSystemPrompt creates the system prompt for Claude
+func buildSystemPrompt(files []string, context map[string]string) string <span class="cov8" title="1">{
+        fileList := strings.Join(files, "\n- ")
+
+        prompt := fmt.Sprintf(`You are a code modification assistant working on a GitHub repository.
+
+Repository structure:
+- %s
+
+`, fileList)
+
+        // Add context if available
+        if len(context) &gt; 0 </span><span class="cov8" title="1">{
+                prompt += "\nAdditional Context:\n"
+                for key, value := range context </span><span class="cov8" title="1">{
+                        if value != "" </span><span class="cov8" title="1">{
+                                prompt += fmt.Sprintf("- %s: %s\n", key, value)
+                        }</span>
+                }
+        }
+
+        <span class="cov8" title="1">prompt += `
+When making changes:
+1. Understand the task thoroughly
+2. Make minimal, focused changes
+3. Preserve existing code style
+4. Include complete file content in your response
+
+Return your changes in this exact format:
+&lt;file path="path/to/file"&gt;
+&lt;content&gt;
+... complete file content ...
+&lt;/content&gt;
+&lt;/file&gt;
+
+&lt;summary&gt;
+Brief description of what was changed
+&lt;/summary&gt;`
+
+        return prompt</span>
+}
+
+// parseCodeResponse extracts file changes and summary from Claude's response
+func parseCodeResponse(response string) (*CodeResponse, error) <span class="cov8" title="1">{
+        result := &amp;CodeResponse{
+                Files: []FileChange{},
+        }
+
+        // Extract file blocks: &lt;file path="..."&gt;&lt;content&gt;...&lt;/content&gt;&lt;/file&gt;
+        fileRegex := regexp.MustCompile(`(?s)&lt;file path="([^"]+)"&gt;\s*&lt;content&gt;\s*(.*?)\s*&lt;/content&gt;\s*&lt;/file&gt;`)
+        fileMatches := fileRegex.FindAllStringSubmatch(response, -1)
+
+        for _, match := range fileMatches </span><span class="cov8" title="1">{
+                if len(match) &gt;= 3 </span><span class="cov8" title="1">{
+                        result.Files = append(result.Files, FileChange{
+                                Path:    match[1],
+                                Content: match[2],
+                        })
+                }</span>
+        }
+
+        // Extract summary: &lt;summary&gt;...&lt;/summary&gt;
+        <span class="cov8" title="1">summaryRegex := regexp.MustCompile(`(?s)&lt;summary&gt;\s*(.*?)\s*&lt;/summary&gt;`)
+        summaryMatch := summaryRegex.FindStringSubmatch(response)
+        if len(summaryMatch) &gt;= 2 </span><span class="cov8" title="1">{
+                result.Summary = summaryMatch[1]
+        }</span> else<span class="cov8" title="1"> {
+                result.Summary = "Code changes applied"
+        }</span>
+
+        <span class="cov8" title="1">if len(result.Files) == 0 </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("no file changes found in response")
+        }</span>
+
+        <span class="cov8" title="1">return result, nil</span>
+}
+</pre>
+
+      <pre class="file" id="file7" style="display: none">package provider
+
+import (
+        "fmt"
+
+        "github.com/chenwenjie/pilot-swe/internal/provider/claude"
+)
+
+// Config contains provider configuration
+type Config struct {
+        // Provider name: "claude", "codex", "gemini", "amp"
+        Name string
+
+        // Claude configuration
+        ClaudeAPIKey string
+        ClaudeModel  string
+
+        // Future: Codex configuration
+        // CodexAPIKey string
+        // CodexModel  string
+
+        // Future: Gemini configuration
+        // GeminiAPIKey string
+        // GeminiModel  string
+}
+
+// NewProvider creates a provider based on configuration
+// This is a factory function that eliminates if-else branches
+func NewProvider(cfg *Config) (Provider, error) <span class="cov8" title="1">{
+        switch cfg.Name </span>{
+        case "claude":<span class="cov8" title="1">
+                if cfg.ClaudeAPIKey == "" </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("claude: ANTHROPIC_API_KEY is required")
+                }</span>
+                <span class="cov8" title="1">model := cfg.ClaudeModel
+                if model == "" </span><span class="cov8" title="1">{
+                        model = "claude-3-5-sonnet-20241022"
+                }</span>
+                <span class="cov8" title="1">return claude.NewProvider(cfg.ClaudeAPIKey, model), nil</span>
+
+        // Future providers can be added here without modifying existing code
+        // case "codex":
+        //     return codex.NewProvider(cfg.CodexAPIKey, cfg.CodexModel), nil
+        // case "gemini":
+        //     return gemini.NewProvider(cfg.GeminiAPIKey, cfg.GeminiModel), nil
+        // case "amp":
+        //     return amp.NewProvider(cfg.AMPConfig), nil
+
+        default:<span class="cov8" title="1">
+                return nil, fmt.Errorf("unknown provider: %s (supported: claude)", cfg.Name)</span>
+        }
+}
+</pre>
+
+      <pre class="file" id="file8" style="display: none">package webhook
+
+import (
+        "context"
+        "encoding/json"
+        "fmt"
+        "io"
+        "log"
+        "net/http"
+        "strings"
+)
+
+// Task represents a pilot task to be executed
+type Task struct {
+        Repo       string
+        Number     int
+        Branch     string
+        Prompt     string
+        IssueTitle string
+        IssueBody  string
+        IsPR       bool
+}
+
+// Executor interface for task execution
+type Executor interface {
+        Execute(ctx context.Context, task *Task) error
+}
+
+// Handler handles GitHub webhook events
+type Handler struct {
+        webhookSecret  string
+        triggerKeyword string
+        executor       Executor
+}
+
+// NewHandler creates a new webhook handler
+func NewHandler(webhookSecret, triggerKeyword string, executor Executor) *Handler <span class="cov8" title="1">{
+        return &amp;Handler{
+                webhookSecret:  webhookSecret,
+                triggerKeyword: triggerKeyword,
+                executor:       executor,
+        }
+}</span>
+
+// HandleIssueComment handles issue_comment webhook events
+func (h *Handler) HandleIssueComment(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
+        // 1. Read payload
+        payload, err := io.ReadAll(r.Body)
+        if err != nil </span><span class="cov8" title="1">{
+                log.Printf("Error reading payload: %v", err)
+                http.Error(w, "Error reading payload", http.StatusBadRequest)
+                return
+        }</span>
+
+        // 2. Verify signature
+        <span class="cov8" title="1">signature := r.Header.Get("X-Hub-Signature-256")
+        if err := ValidateSignatureHeader(signature); err != nil </span><span class="cov8" title="1">{
+                log.Printf("Invalid signature header: %v", err)
+                http.Error(w, "Invalid signature", http.StatusUnauthorized)
+                return
+        }</span>
+
+        <span class="cov8" title="1">if !VerifySignature(payload, signature, h.webhookSecret) </span><span class="cov8" title="1">{
+                log.Printf("Signature verification failed")
+                http.Error(w, "Invalid signature", http.StatusUnauthorized)
+                return
+        }</span>
+
+        // 3. Parse event
+        <span class="cov8" title="1">var event IssueCommentEvent
+        if err := json.Unmarshal(payload, &amp;event); err != nil </span><span class="cov8" title="1">{
+                log.Printf("Error parsing event: %v", err)
+                http.Error(w, "Error parsing event", http.StatusBadRequest)
+                return
+        }</span>
+
+        // 4. Check if comment contains trigger keyword
+        <span class="cov8" title="1">if !strings.Contains(event.Comment.Body, h.triggerKeyword) </span><span class="cov8" title="1">{
+                log.Printf("Comment does not contain trigger keyword '%s'", h.triggerKeyword)
+                w.WriteHeader(http.StatusOK)
+                w.Write([]byte("No trigger keyword found"))
+                return
+        }</span>
+
+        // 5. Extract prompt from comment
+        <span class="cov8" title="1">prompt := extractPrompt(event.Comment.Body, h.triggerKeyword)
+        if prompt == "" </span><span class="cov8" title="1">{
+                log.Printf("No prompt found after trigger keyword")
+                w.WriteHeader(http.StatusOK)
+                w.Write([]byte("No prompt found"))
+                return
+        }</span>
+
+        // 6. Check if this is a PR or issue
+        <span class="cov8" title="1">isPR := event.Issue.PullRequest != nil
+
+        // 7. Create task
+        task := &amp;Task{
+                Repo:       event.Repository.FullName,
+                Number:     event.Issue.Number,
+                Branch:     event.Repository.DefaultBranch,
+                Prompt:     prompt,
+                IssueTitle: event.Issue.Title,
+                IssueBody:  event.Issue.Body,
+                IsPR:       isPR,
+        }
+
+        log.Printf("Received task: repo=%s, number=%d, prompt=%s", task.Repo, task.Number, task.Prompt)
+
+        // 8. Execute asynchronously (return 202 immediately)
+        w.WriteHeader(http.StatusAccepted)
+        w.Write([]byte(fmt.Sprintf("Task accepted for processing: %s", prompt)))
+
+        // Execute in background
+        go func() </span><span class="cov8" title="1">{
+                if err := h.executor.Execute(context.Background(), task); err != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error executing task: %v", err)
+                }</span>
+        }()
+}
+
+// extractPrompt extracts the prompt text after the trigger keyword
+func extractPrompt(body, triggerKeyword string) string <span class="cov8" title="1">{
+        // Find the trigger keyword
+        idx := strings.Index(body, triggerKeyword)
+        if idx == -1 </span><span class="cov8" title="1">{
+                return ""
+        }</span>
+
+        // Get text after trigger keyword
+        <span class="cov8" title="1">remaining := strings.TrimSpace(body[idx+len(triggerKeyword):])
+
+        // Get first line after trigger
+        lines := strings.Split(remaining, "\n")
+        if len(lines) == 0 </span><span class="cov0" title="0">{
+                return ""
+        }</span>
+
+        <span class="cov8" title="1">return strings.TrimSpace(lines[0])</span>
+}
+</pre>
+
+      <pre class="file" id="file9" style="display: none">package webhook
+
+import (
+        "crypto/hmac"
+        "crypto/sha256"
+        "encoding/hex"
+        "fmt"
+        "strings"
+)
+
+// VerifySignature verifies the GitHub webhook signature
+// using HMAC SHA-256 and constant-time comparison
+func VerifySignature(payload []byte, signature, secret string) bool <span class="cov8" title="1">{
+        // GitHub sends signature in format "sha256=&lt;hash&gt;"
+        if !strings.HasPrefix(signature, "sha256=") </span><span class="cov8" title="1">{
+                return false
+        }</span>
+
+        // Extract the hash part
+        <span class="cov8" title="1">receivedHash := strings.TrimPrefix(signature, "sha256=")
+
+        // Compute expected hash
+        mac := hmac.New(sha256.New, []byte(secret))
+        mac.Write(payload)
+        expectedHash := hex.EncodeToString(mac.Sum(nil))
+
+        // Constant-time comparison to prevent timing attacks
+        return hmac.Equal([]byte(receivedHash), []byte(expectedHash))</span>
+}
+
+// ValidateSignatureHeader validates the X-Hub-Signature-256 header
+func ValidateSignatureHeader(header string) error <span class="cov8" title="1">{
+        if header == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("missing X-Hub-Signature-256 header")
+        }</span>
+        <span class="cov8" title="1">if !strings.HasPrefix(header, "sha256=") </span><span class="cov8" title="1">{
+                return fmt.Errorf("invalid signature format, expected 'sha256=&lt;hash&gt;'")
+        }</span>
+        <span class="cov8" title="1">return nil</span>
+}
+</pre>
+    </div>
+  </body>
+  <script>
+    (function () {
+      var files = document.getElementById("files");
+      var visible;
+      files.addEventListener("change", onChange, false);
+      function select(part) {
+        if (visible) visible.style.display = "none";
+        visible = document.getElementById(part);
+        if (!visible) return;
+        files.value = part;
+        visible.style.display = "block";
+        location.hash = part;
+      }
+      function onChange() {
+        select(files.value);
+        window.scrollTo(0, 0);
+      }
+      if (location.hash != "") {
+        select(location.hash.substr(1));
+      }
+      if (!visible) {
+        select("file0");
+      }
+    })();
+  </script>
+</html>
