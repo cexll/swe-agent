@@ -92,9 +92,18 @@ package test
 			wantSummary: "Code changes applied",
 		},
 		{
-			name:     "no file changes",
-			response: `<summary>Nothing to do</summary>`,
-			wantErr:  true,
+			name:        "no file changes (text response only)",
+			response:    `<summary>Nothing to do</summary>`,
+			wantErr:     false,
+			wantFiles:   0,
+			wantSummary: "Nothing to do",
+		},
+		{
+			name:        "plain text response without tags",
+			response:    `This is a plain text analysis without any XML tags. The issue is caused by X and can be fixed by doing Y.`,
+			wantErr:     false,
+			wantFiles:   0,
+			wantSummary: "This is a plain text analysis without any XML tags. The issue is caused by X and can be fixed by doing Y.",
 		},
 		{
 			name:     "empty response",
@@ -102,11 +111,13 @@ package test
 			wantErr:  true,
 		},
 		{
-			name: "malformed file tag",
+			name: "malformed file tag (missing content tag, uses raw as summary)",
 			response: `<file path="test.go">
 package test
 </file>`,
-			wantErr: true,
+			wantErr:     false,
+			wantFiles:   0,
+			wantSummary: "<file path=\"test.go\">\npackage test\n</file>",
 		},
 		{
 			name: "file with special characters in path",

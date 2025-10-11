@@ -17,7 +17,7 @@ import (
 
 // mockExecutor is a mock implementation of Executor
 type mockExecutor struct {
-	executeFunc func(ctx context.Context, task *Task) error
+	executeFunc  func(ctx context.Context, task *Task) error
 	executeCalls int
 }
 

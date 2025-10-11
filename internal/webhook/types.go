@@ -3,11 +3,11 @@ package webhook
 // GitHub webhook event types
 
 type IssueCommentEvent struct {
-	Action     string      `json:"action"`
-	Issue      Issue       `json:"issue"`
-	Comment    Comment     `json:"comment"`
-	Repository Repository  `json:"repository"`
-	Sender     User        `json:"sender"`
+	Action     string     `json:"action"`
+	Issue      Issue      `json:"issue"`
+	Comment    Comment    `json:"comment"`
+	Repository Repository `json:"repository"`
+	Sender     User       `json:"sender"`
 }
 
 type Issue struct {

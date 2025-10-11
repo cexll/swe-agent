@@ -309,8 +309,8 @@ func TestClone_CommandConstruction(t *testing.T) {
 		"repo", "clone",
 		repo,
 		// tmpDir would be here but it's dynamic
-		"--",  // Separator: gh flags before, git flags after
-		"-b",  // Git's branch flag
+		"--", // Separator: gh flags before, git flags after
+		"-b", // Git's branch flag
 		branch,
 	}
 

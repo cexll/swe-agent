@@ -87,8 +87,9 @@ func (p *Provider) GenerateCode(ctx context.Context, req *CodeRequest) (*CodeRes
 	// 3. Build user prompt
 	userPrompt := fmt.Sprintf(`Task: %s
 
-Please provide your changes in the following format:
+You can choose to either:
 
+1. Provide code changes (if modifications are needed):
 <file path="path/to/file.ext">
 <content>
 ... full file content here ...
@@ -99,7 +100,13 @@ Please provide your changes in the following format:
 Brief description of changes made
 </summary>
 
-Make sure to include the COMPLETE file content, not just the changes.`, req.Prompt)
+2. Provide analysis/answer only (if no code changes needed):
+<summary>
+Your analysis, recommendations, or answer here.
+You can include explanations, task lists, or any helpful information.
+</summary>
+
+Make sure to include the COMPLETE file content when providing code changes, not just the changes.`, req.Prompt)
 
 	log.Printf("[Claude] Calling Claude Code CLI with model: %s", p.model)
 
@@ -232,12 +239,17 @@ func parseCodeResponse(response string) (*CodeResponse, error) {
 	summaryMatch := summaryRegex.FindStringSubmatch(response)
 	if len(summaryMatch) >= 2 {
 		result.Summary = summaryMatch[1]
+	} else if len(result.Files) == 0 {
+		// No files and no <summary> tag, use raw response as content
+		result.Summary = strings.TrimSpace(response)
 	} else {
 		result.Summary = "Code changes applied"
 	}
 
-	if len(result.Files) == 0 {
-		return nil, fmt.Errorf("no file changes found in response")
+	// Allow responses without file changes (analysis/Q&A/recommendations)
+	// As long as there's meaningful content in the summary
+	if len(result.Files) == 0 && strings.TrimSpace(result.Summary) == "" {
+		return nil, fmt.Errorf("no content found in response")
 	}
 
 	return result, nil
