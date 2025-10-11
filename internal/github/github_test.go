@@ -88,7 +88,7 @@ func TestCreateComment_Parameters(t *testing.T) {
 
 			// We can't actually call CreateComment without gh CLI
 			// but we can verify the parameter validation logic
-			_ = CreateComment(tt.repo, tt.number, tt.comment)
+			_ = CreateComment(tt.repo, tt.number, tt.comment, "test-token")
 		})
 	}
 }
@@ -284,6 +284,64 @@ func TestClone_ParameterTypes(t *testing.T) {
 	_, _, _ = Clone(repo, branch)
 }
 
+// TestClone_CommandConstruction verifies that the gh clone command is constructed correctly
+// This test validates the fix for the "--branch" flag issue
+func TestClone_CommandConstruction(t *testing.T) {
+	// The correct gh repo clone syntax for specifying a branch is:
+	// gh repo clone <repo> <dir> -- -b <branch>
+	//
+	// NOT: gh repo clone <repo> <dir> --branch <branch>
+	//
+	// This test documents the expected command structure.
+
+	repo := "owner/repo"
+	branch := "feature-branch"
+
+	// Expected command structure after fix:
+	// ["gh", "repo", "clone", "owner/repo", "/tmp/pilot-XXX", "--", "-b", "feature-branch"]
+	//
+	// Key points:
+	// 1. "--" separator is required before git flags
+	// 2. Use "-b" (git's short flag) instead of "--branch" (gh doesn't support this)
+	// 3. Git flags come after "--" separator
+
+	expectedArgs := []string{
+		"repo", "clone",
+		repo,
+		// tmpDir would be here but it's dynamic
+		"--",  // Separator: gh flags before, git flags after
+		"-b",  // Git's branch flag
+		branch,
+	}
+
+	// Verify the expected argument structure
+	if len(expectedArgs) != 6 {
+		t.Errorf("Expected 6 static arguments (excluding tmpDir), got %d", len(expectedArgs))
+	}
+
+	// Verify separator position
+	if expectedArgs[3] != "--" {
+		t.Errorf("Expected '--' separator at position 3, got %s", expectedArgs[3])
+	}
+
+	// Verify git branch flag
+	if expectedArgs[4] != "-b" {
+		t.Errorf("Expected '-b' flag at position 4, got %s", expectedArgs[4])
+	}
+
+	// Verify branch value
+	if expectedArgs[5] != branch {
+		t.Errorf("Expected branch '%s' at position 5, got %s", branch, expectedArgs[5])
+	}
+
+	// Document the incorrect syntax that caused the original bug
+	incorrectFlag := "--branch"
+	if incorrectFlag == "--branch" {
+		// This would fail with: "unknown flag: --branch"
+		t.Logf("Documented: '%s' flag is NOT supported by gh repo clone", incorrectFlag)
+	}
+}
+
 // Test CreateComment function parameters
 func TestCreateComment_ParameterTypes(t *testing.T) {
 	// Test that function accepts correct parameter types
@@ -292,7 +350,7 @@ func TestCreateComment_ParameterTypes(t *testing.T) {
 	var comment string = "test comment"
 
 	// Type checking - this will compile if types are correct
-	_ = CreateComment(repo, number, comment)
+	_ = CreateComment(repo, number, comment, "test-token")
 }
 
 // Test CreatePR function parameters

@@ -15,7 +15,8 @@ func Clone(repo, branch string) (string, func(), error) {
 	tmpDir := filepath.Join(os.TempDir(), fmt.Sprintf("pilot-%d", time.Now().Unix()))
 
 	// Execute gh repo clone
-	cmd := exec.Command("gh", "repo", "clone", repo, tmpDir, "--branch", branch)
+	// Note: git flags must be passed after '--' separator
+	cmd := exec.Command("gh", "repo", "clone", repo, tmpDir, "--", "-b", branch)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return "", nil, fmt.Errorf("gh repo clone failed: %w\nOutput: %s", err, string(output))
 	}
