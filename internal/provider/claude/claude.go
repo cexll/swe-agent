@@ -40,8 +40,16 @@ type Provider struct {
 
 // NewProvider creates a new Claude provider
 func NewProvider(apiKey, model string) *Provider {
-	// Set environment variable for Claude Code CLI
+	// Set environment variables for Claude Code CLI
+	// Support both ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN
 	os.Setenv("ANTHROPIC_API_KEY", apiKey)
+	os.Setenv("ANTHROPIC_AUTH_TOKEN", apiKey)
+
+	// Preserve ANTHROPIC_BASE_URL if already set in environment
+	// This allows using custom API endpoints
+	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
+		log.Printf("[Claude] Using custom API endpoint: %s", baseURL)
+	}
 
 	// Create Claude Code client
 	claudeClient := &claudecli.ClaudeClient{

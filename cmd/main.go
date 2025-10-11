@@ -7,12 +7,17 @@ import (
 
 	"github.com/cexll/swe/internal/config"
 	"github.com/cexll/swe/internal/executor"
+	"github.com/cexll/swe/internal/github"
 	"github.com/cexll/swe/internal/provider"
 	"github.com/cexll/swe/internal/webhook"
 	"github.com/gorilla/mux"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	// Load .env file (ignore error if file doesn't exist)
+	_ = godotenv.Load()
+
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
@@ -22,21 +27,44 @@ func main() {
 	log.Printf("Starting Pilot SWE server...")
 	log.Printf("Port: %d", cfg.Port)
 	log.Printf("Trigger keyword: %s", cfg.TriggerKeyword)
-	log.Printf("Claude model: %s", cfg.ClaudeModel)
+	log.Printf("Provider: %s", cfg.Provider)
+	log.Printf("GitHub App ID: %s", cfg.GitHubAppID)
 
-	// Initialize AI provider (currently Claude, easy to extend)
-	aiProvider, err := provider.NewProvider(&provider.Config{
-		Name:         "claude",
-		ClaudeAPIKey: cfg.ClaudeAPIKey,
-		ClaudeModel:  cfg.ClaudeModel,
-	})
+	// Initialize GitHub App authentication
+	appAuth := &github.AppAuth{
+		AppID:      cfg.GitHubAppID,
+		PrivateKey: cfg.GitHubPrivateKey,
+	}
+
+	// Initialize AI provider based on configuration
+	var aiProvider provider.Provider
+
+	switch cfg.Provider {
+	case "claude":
+		log.Printf("Claude model: %s", cfg.ClaudeModel)
+		aiProvider, err = provider.NewProvider(&provider.Config{
+			Name:         "claude",
+			ClaudeAPIKey: cfg.ClaudeAPIKey,
+			ClaudeModel:  cfg.ClaudeModel,
+		})
+	case "codex":
+		log.Printf("Codex model: %s", cfg.CodexModel)
+		aiProvider, err = provider.NewProvider(&provider.Config{
+			Name:        "codex",
+			CodexAPIKey: cfg.CodexAPIKey,
+			CodexModel:  cfg.CodexModel,
+		})
+	default:
+		log.Fatalf("Unsupported provider: %s", cfg.Provider)
+	}
+
 	if err != nil {
 		log.Fatalf("Failed to initialize AI provider: %v", err)
 	}
 	log.Printf("AI Provider: %s", aiProvider.Name())
 
 	// Initialize executor
-	exec := executor.New(aiProvider)
+	exec := executor.New(aiProvider, appAuth)
 
 	// Initialize webhook handler
 	handler := webhook.NewHandler(cfg.GitHubWebhookSecret, cfg.TriggerKeyword, exec)
