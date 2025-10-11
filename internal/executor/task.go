@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cexll/swe/internal/concurrency"
 	"github.com/cexll/swe/internal/github"
 	"github.com/cexll/swe/internal/provider"
 	"github.com/cexll/swe/internal/provider/claude"
@@ -18,20 +19,50 @@ import (
 
 // Executor executes pilot tasks
 type Executor struct {
-	provider provider.Provider
-	appAuth  *github.AppAuth
+	provider  provider.Provider
+	appAuth   *github.AppAuth
+	lockMgr   *concurrency.Manager
 }
 
 // New creates a new executor
-func New(p provider.Provider, appAuth *github.AppAuth) *Executor {
+func New(p provider.Provider, appAuth *github.AppAuth, lockMgr *concurrency.Manager) *Executor {
 	return &Executor{
 		provider: p,
 		appAuth:  appAuth,
+		lockMgr:  lockMgr,
 	}
 }
 
 // Execute executes a pilot task
 func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
+	// Generate lock key: "owner/repo#number"
+	lockKey := fmt.Sprintf("%s#%d", task.Repo, task.Number)
+	
+	log.Printf("Attempting to acquire lock for %s", lockKey)
+	
+	// Try to acquire lock - fast-fail if already locked
+	if !e.lockMgr.TryAcquire(lockKey) {
+		errMsg := fmt.Sprintf("Another task is already running for %s. Please wait for it to complete.", lockKey)
+		log.Printf("Lock acquisition failed for %s", lockKey)
+		
+		// Try to get token to post busy notification
+		installToken, err := e.appAuth.GetInstallationToken(task.Repo)
+		if err != nil {
+			// If we can't even get a token, just log and return
+			log.Printf("Failed to get token for busy notification: %v", err)
+			return fmt.Errorf("%s", errMsg)
+		}
+		
+		return e.notifyBusy(task, installToken.Token)
+	}
+	
+	// Ensure lock is always released
+	defer func() {
+		e.lockMgr.Release(lockKey)
+		log.Printf("Released lock for %s", lockKey)
+	}()
+	
+	log.Printf("Lock acquired for %s, starting task execution", lockKey)
 	log.Printf("Starting task execution for %s#%d", task.Repo, task.Number)
 
 	// 0. Get GitHub App installation token
@@ -79,20 +110,31 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 		return e.notifyError(task, installToken.Token, fmt.Sprintf("%s error: %v", e.provider.Name(), err))
 	}
 
-	// Check if there are file changes
-	if len(result.Files) == 0 {
-		// No file changes, just post the AI's response as a comment
-		log.Printf("%s provided response without file changes (analysis/answer)", e.provider.Name())
+	log.Printf("%s completed (cost: $%.4f)", e.provider.Name(), result.CostUSD)
+
+	// 3. Apply file changes if provider returned file list
+	if len(result.Files) > 0 {
+		log.Printf("%s returned %d file changes, applying them", e.provider.Name(), len(result.Files))
+		if err := e.applyChanges(workdir, result.Files); err != nil {
+			return e.notifyError(task, installToken.Token, fmt.Sprintf("Failed to apply changes: %v", err))
+		}
+	} else {
+		log.Printf("%s did not return file list, checking git status for direct modifications", e.provider.Name())
+	}
+
+	// 3.5. Detect actual file changes using git (works for both direct modifications and applied changes)
+	hasChanges, err := e.detectGitChanges(workdir)
+	if err != nil {
+		return e.notifyError(task, installToken.Token, fmt.Sprintf("Failed to detect changes: %v", err))
+	}
+
+	if !hasChanges {
+		// No actual file changes detected, just post the AI's response as a comment
+		log.Printf("No file changes detected in working directory (analysis/answer only)")
 		return e.notifyResponse(task, installToken.Token, result)
 	}
 
-	log.Printf("%s generated %d file changes (cost: $%.4f)", e.provider.Name(), len(result.Files), result.CostUSD)
-
-	// 3. Apply file changes
-	log.Printf("Applying file changes")
-	if err := e.applyChanges(workdir, result.Files); err != nil {
-		return e.notifyError(task, installToken.Token, fmt.Sprintf("Failed to apply changes: %v", err))
-	}
+	log.Printf("File changes detected in working directory, proceeding with commit")
 
 	// 4. Create branch and commit changes
 	branchName := fmt.Sprintf("pilot/%d-%d", task.Number, time.Now().Unix())
@@ -131,6 +173,20 @@ func (e *Executor) applyChanges(workdir string, changes []claude.FileChange) err
 		log.Printf("Applied changes to %s", change.Path)
 	}
 	return nil
+}
+
+// detectGitChanges checks if there are any uncommitted changes in the working directory
+func (e *Executor) detectGitChanges(workdir string) (bool, error) {
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = workdir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("git status failed: %w\nOutput: %s", err, string(output))
+	}
+
+	// If output is empty, no changes detected
+	hasChanges := len(strings.TrimSpace(string(output))) > 0
+	return hasChanges, nil
 }
 
 // commitAndPush commits changes and pushes to remote
@@ -233,4 +289,22 @@ Pilot is now processing your request...
 
 	log.Printf("Posting start notification to %s#%d", task.Repo, task.Number)
 	return github.CreateComment(task.Repo, task.Number, comment, token)
+}
+
+// notifyBusy posts a comment indicating the task is busy
+func (e *Executor) notifyBusy(task *webhook.Task, token string) error {
+	comment := `### ⏳ Task Queue Busy
+
+Another task is currently running for this issue/PR. Please wait for it to complete before issuing a new command.
+
+---
+*Generated by Pilot SWE*`
+
+	log.Printf("Posting busy notification to %s#%d", task.Repo, task.Number)
+	if err := github.CreateComment(task.Repo, task.Number, comment, token); err != nil {
+		log.Printf("Failed to post busy comment: %v", err)
+		return fmt.Errorf("task is busy and failed to post notification: %w", err)
+	}
+	
+	return fmt.Errorf("task is busy: another command is already running for %s#%d", task.Repo, task.Number)
 }
