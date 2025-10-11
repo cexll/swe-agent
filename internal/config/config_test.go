@@ -21,6 +21,8 @@ func TestLoad(t *testing.T) {
 				"ANTHROPIC_API_KEY":     "sk-ant-test",
 				"PORT":                  "8080",
 				"CLAUDE_MODEL":          "claude-3-opus-20240229",
+				"CODEX_API_KEY":         "sk-codex-test",
+				"CODEX_MODEL":           "gpt-5-codex-plus",
 				"TRIGGER_KEYWORD":       "/test",
 			},
 			wantErr: false,
@@ -33,6 +35,12 @@ func TestLoad(t *testing.T) {
 				}
 				if cfg.ClaudeModel != "claude-3-opus-20240229" {
 					t.Errorf("ClaudeModel = %s, want claude-3-opus-20240229", cfg.ClaudeModel)
+				}
+				if cfg.CodexAPIKey != "sk-codex-test" {
+					t.Errorf("CodexAPIKey = %s, want sk-codex-test", cfg.CodexAPIKey)
+				}
+				if cfg.CodexModel != "gpt-5-codex-plus" {
+					t.Errorf("CodexModel = %s, want gpt-5-codex-plus", cfg.CodexModel)
 				}
 				if cfg.TriggerKeyword != "/test" {
 					t.Errorf("TriggerKeyword = %s, want /test", cfg.TriggerKeyword)
@@ -54,6 +62,12 @@ func TestLoad(t *testing.T) {
 				}
 				if cfg.ClaudeModel != "claude-3-5-sonnet-20241022" {
 					t.Errorf("ClaudeModel = %s, want default", cfg.ClaudeModel)
+				}
+				if cfg.CodexModel != "gpt-5-codex" {
+					t.Errorf("CodexModel = %s, want gpt-5-codex (default)", cfg.CodexModel)
+				}
+				if cfg.CodexAPIKey != "" {
+					t.Errorf("CodexAPIKey = %s, want empty default", cfg.CodexAPIKey)
 				}
 				if cfg.TriggerKeyword != "/pilot" {
 					t.Errorf("TriggerKeyword = %s, want /pilot (default)", cfg.TriggerKeyword)
@@ -153,6 +167,7 @@ func TestConfig_validate(t *testing.T) {
 				GitHubAppID:         "123456",
 				GitHubPrivateKey:    "test-key",
 				GitHubWebhookSecret: "test-secret",
+				Provider:            "claude",
 				ClaudeAPIKey:        "sk-ant-test",
 			},
 			wantErr: false,
@@ -193,9 +208,10 @@ func TestConfig_validate(t *testing.T) {
 				GitHubAppID:         "123456",
 				GitHubPrivateKey:    "test-key",
 				GitHubWebhookSecret: "test-secret",
+				Provider:            "claude",
 			},
 			wantErr: true,
-			errMsg:  "ANTHROPIC_API_KEY is required",
+			errMsg:  "ANTHROPIC_API_KEY is required for claude provider",
 		},
 	}
 

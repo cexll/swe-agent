@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 )
@@ -16,9 +17,16 @@ type Config struct {
 	GitHubPrivateKey    string
 	GitHubWebhookSecret string
 
+	// AI Provider selection
+	Provider string // "claude" or "codex"
+
 	// Claude settings
 	ClaudeAPIKey string
 	ClaudeModel  string
+
+	// Codex settings
+	CodexAPIKey string
+	CodexModel  string
 
 	// Trigger settings
 	TriggerKeyword string
@@ -31,8 +39,11 @@ func Load() (*Config, error) {
 		GitHubAppID:         os.Getenv("GITHUB_APP_ID"),
 		GitHubPrivateKey:    os.Getenv("GITHUB_PRIVATE_KEY"),
 		GitHubWebhookSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
+		Provider:            getEnv("PROVIDER", "claude"),
 		ClaudeAPIKey:        os.Getenv("ANTHROPIC_API_KEY"),
 		ClaudeModel:         getEnv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022"),
+		CodexAPIKey:         os.Getenv("CODEX_API_KEY"),
+		CodexModel:          getEnv("CODEX_MODEL", "gpt-5-codex"),
 		TriggerKeyword:      getEnv("TRIGGER_KEYWORD", "/pilot"),
 	}
 
@@ -55,9 +66,22 @@ func (c *Config) validate() error {
 	if c.GitHubWebhookSecret == "" {
 		return fmt.Errorf("GITHUB_WEBHOOK_SECRET is required")
 	}
-	if c.ClaudeAPIKey == "" {
-		return fmt.Errorf("ANTHROPIC_API_KEY is required")
+
+	// Validate provider-specific configuration
+	switch c.Provider {
+	case "claude":
+		if c.ClaudeAPIKey == "" {
+			return fmt.Errorf("ANTHROPIC_API_KEY is required for claude provider")
+		}
+	case "codex":
+		// Codex API key is optional (can use default credentials)
+		if c.CodexAPIKey == "" {
+			log.Printf("Warning: CODEX_API_KEY not set, using default codex credentials")
+		}
+	default:
+		return fmt.Errorf("invalid provider: %s (must be 'claude' or 'codex')", c.Provider)
 	}
+
 	return nil
 }
 
