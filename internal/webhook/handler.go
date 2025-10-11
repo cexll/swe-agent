@@ -74,7 +74,15 @@ func (h *Handler) HandleIssueComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Check if comment contains trigger keyword
+	// 4. Check if comment is from a bot (prevent infinite loops)
+	if event.Comment.User.Type == "Bot" {
+		log.Printf("Ignoring comment from bot: %s", event.Comment.User.Login)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Bot comment ignored"))
+		return
+	}
+
+	// 5. Check if comment contains trigger keyword
 	if !strings.Contains(event.Comment.Body, h.triggerKeyword) {
 		log.Printf("Comment does not contain trigger keyword '%s'", h.triggerKeyword)
 		w.WriteHeader(http.StatusOK)
@@ -82,7 +90,7 @@ func (h *Handler) HandleIssueComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. Extract prompt from comment
+	// 6. Extract prompt from comment
 	prompt := extractPrompt(event.Comment.Body, h.triggerKeyword)
 	if prompt == "" {
 		log.Printf("No prompt found after trigger keyword")
@@ -91,10 +99,10 @@ func (h *Handler) HandleIssueComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 6. Check if this is a PR or issue
+	// 7. Check if this is a PR or issue
 	isPR := event.Issue.PullRequest != nil
 
-	// 7. Create task
+	// 8. Create task
 	task := &Task{
 		Repo:       event.Repository.FullName,
 		Number:     event.Issue.Number,
@@ -107,7 +115,7 @@ func (h *Handler) HandleIssueComment(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Received task: repo=%s, number=%d, prompt=%s", task.Repo, task.Number, task.Prompt)
 
-	// 8. Execute asynchronously (return 202 immediately)
+	// 9. Execute asynchronously (return 202 immediately)
 	w.WriteHeader(http.StatusAccepted)
 	w.Write([]byte(fmt.Sprintf("Task accepted for processing: %s", prompt)))
 
