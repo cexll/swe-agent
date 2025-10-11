@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/cexll/swe/internal/provider/claude"
+	"github.com/cexll/swe/internal/provider/codex"
 )
 
 // Config contains provider configuration
@@ -15,9 +16,9 @@ type Config struct {
 	ClaudeAPIKey string
 	ClaudeModel  string
 
-	// Future: Codex configuration
-	// CodexAPIKey string
-	// CodexModel  string
+	// Codex configuration
+	CodexAPIKey string
+	CodexModel  string
 
 	// Future: Gemini configuration
 	// GeminiAPIKey string
@@ -38,6 +39,13 @@ func NewProvider(cfg *Config) (Provider, error) {
 		}
 		return claude.NewProvider(cfg.ClaudeAPIKey, model), nil
 
+	case "codex":
+		model := cfg.CodexModel
+		if model == "" {
+			model = "gpt-5-codex"
+		}
+		return codex.NewProvider(cfg.CodexAPIKey, model), nil
+
 	// Future providers can be added here without modifying existing code
 	// case "codex":
 	//     return codex.NewProvider(cfg.CodexAPIKey, cfg.CodexModel), nil
@@ -47,6 +55,6 @@ func NewProvider(cfg *Config) (Provider, error) {
 	//     return amp.NewProvider(cfg.AMPConfig), nil
 
 	default:
-		return nil, fmt.Errorf("unknown provider: %s (supported: claude)", cfg.Name)
+		return nil, fmt.Errorf("unknown provider: %s (supported: claude, codex)", cfg.Name)
 	}
 }

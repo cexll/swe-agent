@@ -46,7 +46,7 @@ func TestNewProvider(t *testing.T) {
 				Name: "unknown",
 			},
 			wantErr:     true,
-			errContains: "unknown provider: unknown",
+			errContains: "unknown provider: unknown (supported: claude, codex)",
 		},
 		{
 			name: "empty provider name",
@@ -57,12 +57,12 @@ func TestNewProvider(t *testing.T) {
 			errContains: "unknown provider",
 		},
 		{
-			name: "codex provider (not yet implemented)",
+			name: "codex provider default model",
 			cfg: &Config{
 				Name: "codex",
 			},
-			wantErr:     true,
-			errContains: "unknown provider: codex",
+			wantErr:   false,
+			checkName: "codex",
 		},
 		{
 			name: "gemini provider (not yet implemented)",
@@ -70,7 +70,7 @@ func TestNewProvider(t *testing.T) {
 				Name: "gemini",
 			},
 			wantErr:     true,
-			errContains: "unknown provider: gemini",
+			errContains: "unknown provider: gemini (supported: claude, codex)",
 		},
 		{
 			name: "amp provider (not yet implemented)",
@@ -78,7 +78,7 @@ func TestNewProvider(t *testing.T) {
 				Name: "amp",
 			},
 			wantErr:     true,
-			errContains: "unknown provider: amp",
+			errContains: "unknown provider: amp (supported: claude, codex)",
 		},
 	}
 
