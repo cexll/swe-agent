@@ -79,20 +79,31 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 		return e.notifyError(task, installToken.Token, fmt.Sprintf("%s error: %v", e.provider.Name(), err))
 	}
 
-	// Check if there are file changes
-	if len(result.Files) == 0 {
-		// No file changes, just post the AI's response as a comment
-		log.Printf("%s provided response without file changes (analysis/answer)", e.provider.Name())
+	log.Printf("%s completed (cost: $%.4f)", e.provider.Name(), result.CostUSD)
+
+	// 3. Apply file changes if provider returned file list
+	if len(result.Files) > 0 {
+		log.Printf("%s returned %d file changes, applying them", e.provider.Name(), len(result.Files))
+		if err := e.applyChanges(workdir, result.Files); err != nil {
+			return e.notifyError(task, installToken.Token, fmt.Sprintf("Failed to apply changes: %v", err))
+		}
+	} else {
+		log.Printf("%s did not return file list, checking git status for direct modifications", e.provider.Name())
+	}
+
+	// 3.5. Detect actual file changes using git (works for both direct modifications and applied changes)
+	hasChanges, err := e.detectGitChanges(workdir)
+	if err != nil {
+		return e.notifyError(task, installToken.Token, fmt.Sprintf("Failed to detect changes: %v", err))
+	}
+
+	if !hasChanges {
+		// No actual file changes detected, just post the AI's response as a comment
+		log.Printf("No file changes detected in working directory (analysis/answer only)")
 		return e.notifyResponse(task, installToken.Token, result)
 	}
 
-	log.Printf("%s generated %d file changes (cost: $%.4f)", e.provider.Name(), len(result.Files), result.CostUSD)
-
-	// 3. Apply file changes
-	log.Printf("Applying file changes")
-	if err := e.applyChanges(workdir, result.Files); err != nil {
-		return e.notifyError(task, installToken.Token, fmt.Sprintf("Failed to apply changes: %v", err))
-	}
+	log.Printf("File changes detected in working directory, proceeding with commit")
 
 	// 4. Create branch and commit changes
 	branchName := fmt.Sprintf("pilot/%d-%d", task.Number, time.Now().Unix())
@@ -131,6 +142,20 @@ func (e *Executor) applyChanges(workdir string, changes []claude.FileChange) err
 		log.Printf("Applied changes to %s", change.Path)
 	}
 	return nil
+}
+
+// detectGitChanges checks if there are any uncommitted changes in the working directory
+func (e *Executor) detectGitChanges(workdir string) (bool, error) {
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = workdir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("git status failed: %w\nOutput: %s", err, string(output))
+	}
+
+	// If output is empty, no changes detected
+	hasChanges := len(strings.TrimSpace(string(output))) > 0
+	return hasChanges, nil
 }
 
 // commitAndPush commits changes and pushes to remote

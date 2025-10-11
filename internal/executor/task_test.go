@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -459,5 +460,129 @@ func TestProvider_Interface(t *testing.T) {
 	}
 	if resp == nil {
 		t.Error("GenerateCode() returned nil response")
+	}
+}
+
+func TestDetectGitChanges(t *testing.T) {
+	executor := &Executor{}
+
+	tests := []struct {
+		name        string
+		setup       func() (string, error)
+		wantChanges bool
+		wantErr     bool
+	}{
+		{
+			name: "no changes in clean repo",
+			setup: func() (string, error) {
+				tmpDir := t.TempDir()
+				// Initialize git repo
+				if err := os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("initial"), 0644); err != nil {
+					return "", err
+				}
+				cmds := [][]string{
+					{"git", "init"},
+					{"git", "config", "user.name", "Test"},
+					{"git", "config", "user.email", "test@test.com"},
+					{"git", "add", "."},
+					{"git", "commit", "-m", "initial"},
+				}
+				for _, args := range cmds {
+					cmd := exec.Command(args[0], args[1:]...)
+					cmd.Dir = tmpDir
+					if err := cmd.Run(); err != nil {
+						return "", err
+					}
+				}
+				return tmpDir, nil
+			},
+			wantChanges: false,
+			wantErr:     false,
+		},
+		{
+			name: "modified file detected",
+			setup: func() (string, error) {
+				tmpDir := t.TempDir()
+				// Initialize git repo
+				if err := os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("initial"), 0644); err != nil {
+					return "", err
+				}
+				cmds := [][]string{
+					{"git", "init"},
+					{"git", "config", "user.name", "Test"},
+					{"git", "config", "user.email", "test@test.com"},
+					{"git", "add", "."},
+					{"git", "commit", "-m", "initial"},
+				}
+				for _, args := range cmds {
+					cmd := exec.Command(args[0], args[1:]...)
+					cmd.Dir = tmpDir
+					if err := cmd.Run(); err != nil {
+						return "", err
+					}
+				}
+				// Modify file
+				if err := os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("modified"), 0644); err != nil {
+					return "", err
+				}
+				return tmpDir, nil
+			},
+			wantChanges: true,
+			wantErr:     false,
+		},
+		{
+			name: "new file detected",
+			setup: func() (string, error) {
+				tmpDir := t.TempDir()
+				// Initialize git repo
+				cmds := [][]string{
+					{"git", "init"},
+					{"git", "config", "user.name", "Test"},
+					{"git", "config", "user.email", "test@test.com"},
+				}
+				for _, args := range cmds {
+					cmd := exec.Command(args[0], args[1:]...)
+					cmd.Dir = tmpDir
+					if err := cmd.Run(); err != nil {
+						return "", err
+					}
+				}
+				// Add new file
+				if err := os.WriteFile(filepath.Join(tmpDir, "new.txt"), []byte("new"), 0644); err != nil {
+					return "", err
+				}
+				return tmpDir, nil
+			},
+			wantChanges: true,
+			wantErr:     false,
+		},
+		{
+			name: "non-git directory",
+			setup: func() (string, error) {
+				return t.TempDir(), nil
+			},
+			wantChanges: false,
+			wantErr:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workdir, err := tt.setup()
+			if err != nil {
+				t.Fatalf("Setup failed: %v", err)
+			}
+
+			hasChanges, err := executor.detectGitChanges(workdir)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("detectGitChanges() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr && hasChanges != tt.wantChanges {
+				t.Errorf("detectGitChanges() hasChanges = %v, want %v", hasChanges, tt.wantChanges)
+			}
+		})
 	}
 }
