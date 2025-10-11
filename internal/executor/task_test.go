@@ -38,7 +38,7 @@ func (m *mockProvider) Name() string {
 
 func TestNew(t *testing.T) {
 	provider := &mockProvider{}
-	executor := New(provider)
+	executor := New(provider, nil)
 
 	if executor == nil {
 		t.Fatal("New() returned nil")
@@ -197,7 +197,7 @@ func TestNotifyError(t *testing.T) {
 
 	// Since notifyError calls github.CreateComment which requires gh CLI,
 	// we can only test that it returns an error containing our message
-	err := executor.notifyError(task, errorMsg)
+	err := executor.notifyError(task, "test-token", errorMsg)
 	if err == nil {
 		t.Error("notifyError() should return an error")
 	}
@@ -228,7 +228,7 @@ func TestNotifySuccess(t *testing.T) {
 
 	// Since notifySuccess calls github.CreateComment which requires gh CLI,
 	// we can only test that it's callable without panic
-	err := executor.notifySuccess(task, result, prURL)
+	err := executor.notifySuccess(task, "test-token", result, prURL)
 	// Error is expected since gh CLI is not available in test environment
 	// We just verify it doesn't panic
 	_ = err
@@ -430,7 +430,7 @@ func TestNotifySuccess_MessageFormat(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := executor.notifySuccess(task, tt.result, tt.prURL)
+			err := executor.notifySuccess(task, "test-token", tt.result, tt.prURL)
 			// Error is expected since gh CLI is not available
 			_ = err
 		})

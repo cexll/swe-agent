@@ -192,7 +192,7 @@ func TestCreatePRLink_ComprehensiveURLs(t *testing.T) {
 func TestExecutor_Initialization(t *testing.T) {
 	provider := &mockProvider{name: "test"}
 
-	executor := New(provider)
+	executor := New(provider, nil)
 
 	if executor == nil {
 		t.Fatal("New() returned nil")
