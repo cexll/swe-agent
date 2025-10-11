@@ -16,9 +16,10 @@ type Config struct {
 	ClaudeAPIKey string
 	ClaudeModel  string
 
-	// Codex configuration
-	CodexAPIKey string
-	CodexModel  string
+	// Codex configuration (uses OpenAI-compatible environment variables)
+	OpenAIAPIKey  string
+	OpenAIBaseURL string
+	CodexModel    string
 
 	// Future: Gemini configuration
 	// GeminiAPIKey string
@@ -44,7 +45,7 @@ func NewProvider(cfg *Config) (Provider, error) {
 		if model == "" {
 			model = "gpt-5-codex"
 		}
-		return codex.NewProvider(cfg.CodexAPIKey, model), nil
+		return codex.NewProvider(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL, model), nil
 
 	// Future providers can be added here without modifying existing code
 	// case "codex":

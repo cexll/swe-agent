@@ -21,7 +21,8 @@ func TestLoad(t *testing.T) {
 				"ANTHROPIC_API_KEY":     "sk-ant-test",
 				"PORT":                  "8080",
 				"CLAUDE_MODEL":          "claude-3-opus-20240229",
-				"CODEX_API_KEY":         "sk-codex-test",
+				"OPENAI_API_KEY":        "sk-openai-test",
+				"OPENAI_BASE_URL":       "https://api.example.com/v1",
 				"CODEX_MODEL":           "gpt-5-codex-plus",
 				"TRIGGER_KEYWORD":       "/test",
 			},
@@ -36,8 +37,11 @@ func TestLoad(t *testing.T) {
 				if cfg.ClaudeModel != "claude-3-opus-20240229" {
 					t.Errorf("ClaudeModel = %s, want claude-3-opus-20240229", cfg.ClaudeModel)
 				}
-				if cfg.CodexAPIKey != "sk-codex-test" {
-					t.Errorf("CodexAPIKey = %s, want sk-codex-test", cfg.CodexAPIKey)
+				if cfg.OpenAIAPIKey != "sk-openai-test" {
+					t.Errorf("OpenAIAPIKey = %s, want sk-openai-test", cfg.OpenAIAPIKey)
+				}
+				if cfg.OpenAIBaseURL != "https://api.example.com/v1" {
+					t.Errorf("OpenAIBaseURL = %s, want https://api.example.com/v1", cfg.OpenAIBaseURL)
 				}
 				if cfg.CodexModel != "gpt-5-codex-plus" {
 					t.Errorf("CodexModel = %s, want gpt-5-codex-plus", cfg.CodexModel)
@@ -66,8 +70,11 @@ func TestLoad(t *testing.T) {
 				if cfg.CodexModel != "gpt-5-codex" {
 					t.Errorf("CodexModel = %s, want gpt-5-codex (default)", cfg.CodexModel)
 				}
-				if cfg.CodexAPIKey != "" {
-					t.Errorf("CodexAPIKey = %s, want empty default", cfg.CodexAPIKey)
+				if cfg.OpenAIAPIKey != "" {
+					t.Errorf("OpenAIAPIKey = %s, want empty default", cfg.OpenAIAPIKey)
+				}
+				if cfg.OpenAIBaseURL != "" {
+					t.Errorf("OpenAIBaseURL = %s, want empty default", cfg.OpenAIBaseURL)
 				}
 				if cfg.TriggerKeyword != "/pilot" {
 					t.Errorf("TriggerKeyword = %s, want /pilot (default)", cfg.TriggerKeyword)

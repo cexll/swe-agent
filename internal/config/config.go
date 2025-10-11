@@ -24,9 +24,10 @@ type Config struct {
 	ClaudeAPIKey string
 	ClaudeModel  string
 
-	// Codex settings
-	CodexAPIKey string
-	CodexModel  string
+	// Codex settings (uses OpenAI-compatible environment variables)
+	OpenAIAPIKey  string
+	OpenAIBaseURL string // Optional: custom API endpoint
+	CodexModel    string
 
 	// Trigger settings
 	TriggerKeyword string
@@ -42,7 +43,8 @@ func Load() (*Config, error) {
 		Provider:            getEnv("PROVIDER", "claude"),
 		ClaudeAPIKey:        os.Getenv("ANTHROPIC_API_KEY"),
 		ClaudeModel:         getEnv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022"),
-		CodexAPIKey:         os.Getenv("CODEX_API_KEY"),
+		OpenAIAPIKey:        os.Getenv("OPENAI_API_KEY"),
+		OpenAIBaseURL:       os.Getenv("OPENAI_BASE_URL"),
 		CodexModel:          getEnv("CODEX_MODEL", "gpt-5-codex"),
 		TriggerKeyword:      getEnv("TRIGGER_KEYWORD", "/pilot"),
 	}
@@ -74,9 +76,9 @@ func (c *Config) validate() error {
 			return fmt.Errorf("ANTHROPIC_API_KEY is required for claude provider")
 		}
 	case "codex":
-		// Codex API key is optional (can use default credentials)
-		if c.CodexAPIKey == "" {
-			log.Printf("Warning: CODEX_API_KEY not set, using default codex credentials")
+		// OpenAI API key is optional (can use default credentials)
+		if c.OpenAIAPIKey == "" {
+			log.Printf("Warning: OPENAI_API_KEY not set, using default OpenAI credentials")
 		}
 	default:
 		return fmt.Errorf("invalid provider: %s (must be 'claude' or 'codex')", c.Provider)

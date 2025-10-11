@@ -25,20 +25,27 @@ var execCommandContext = exec.CommandContext
 
 // Provider implements the AI provider interface for Codex MCP
 type Provider struct {
-	model  string
-	apiKey string
+	model   string
+	apiKey  string
+	baseURL string
 }
 
 // NewProvider creates a new Codex provider
-func NewProvider(apiKey, model string) *Provider {
+func NewProvider(apiKey, baseURL, model string) *Provider {
 	if apiKey != "" {
 		// OPENAI_API_KEY is used by Codex MCP, keep aligned with CLI expectation
 		os.Setenv("OPENAI_API_KEY", apiKey)
 	}
 
+	if baseURL != "" {
+		// OPENAI_BASE_URL allows custom API endpoints (e.g., proxies, local deployments)
+		os.Setenv("OPENAI_BASE_URL", baseURL)
+	}
+
 	return &Provider{
-		model:  model,
-		apiKey: apiKey,
+		model:   model,
+		apiKey:  apiKey,
+		baseURL: baseURL,
 	}
 }
 
@@ -117,6 +124,9 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 	env := os.Environ()
 	if p.apiKey != "" {
 		env = append(env, "OPENAI_API_KEY="+p.apiKey)
+	}
+	if p.baseURL != "" {
+		env = append(env, "OPENAI_BASE_URL="+p.baseURL)
 	}
 	cmd.Env = env
 

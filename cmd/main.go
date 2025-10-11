@@ -49,10 +49,14 @@ func main() {
 		})
 	case "codex":
 		log.Printf("Codex model: %s", cfg.CodexModel)
+		if cfg.OpenAIBaseURL != "" {
+			log.Printf("Using custom OpenAI Base URL: %s", cfg.OpenAIBaseURL)
+		}
 		aiProvider, err = provider.NewProvider(&provider.Config{
-			Name:        "codex",
-			CodexAPIKey: cfg.CodexAPIKey,
-			CodexModel:  cfg.CodexModel,
+			Name:          "codex",
+			OpenAIAPIKey:  cfg.OpenAIAPIKey,
+			OpenAIBaseURL: cfg.OpenAIBaseURL,
+			CodexModel:    cfg.CodexModel,
 		})
 	default:
 		log.Fatalf("Unsupported provider: %s", cfg.Provider)

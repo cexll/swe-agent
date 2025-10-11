@@ -5,7 +5,7 @@ import (
 )
 
 func TestNewProvider_Name(t *testing.T) {
-	provider := NewProvider("", "gpt-5-codex")
+	provider := NewProvider("", "", "gpt-5-codex")
 	if provider.Name() != "codex" {
 		t.Fatalf("Name() = %s, want codex", provider.Name())
 	}
@@ -14,10 +14,15 @@ func TestNewProvider_Name(t *testing.T) {
 func TestNewProvider_APIKey(t *testing.T) {
 	// Test that API key is set in environment
 	testKey := "test-api-key"
-	provider := NewProvider(testKey, "gpt-5-codex")
+	testBaseURL := "https://api.example.com"
+	provider := NewProvider(testKey, testBaseURL, "gpt-5-codex")
 
 	if provider.apiKey != testKey {
 		t.Errorf("apiKey = %s, want %s", provider.apiKey, testKey)
+	}
+
+	if provider.baseURL != testBaseURL {
+		t.Errorf("baseURL = %s, want %s", provider.baseURL, testBaseURL)
 	}
 
 	if provider.model != "gpt-5-codex" {
