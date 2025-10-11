@@ -1,6 +1,6 @@
 # Pilot SWE - Software Engineering Agent
 
-[![Go Version](https://img.shields.io/badge/Go-1.21%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![Test Coverage](https://img.shields.io/badge/coverage-65.3%25-brightgreen)](./TEST_COVERAGE_REPORT.md)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-cexll%2Fswe-181717?logo=github)](https://github.com/cexll/swe)
@@ -38,17 +38,17 @@ GitHub App webhook 服务，通过 `/pilot` 命令触发 AI 自动完成代码�
 | **测试覆盖率** | 65.3% ([详细报告](./TEST_COVERAGE_REPORT.md)) |
 | **测试文件**   | 8 个测试文件，95+ 测试函数                    |
 | **编译产物**   | 8.3MB 单一二进制文件                          |
-| **依赖**       | Minimal - Go 1.21+, Claude CLI, gh CLI        |
+| **依赖**       | Minimal - Go 1.25+, Claude CLI, gh CLI        |
 | **性能**       | 启动 ~100ms，内存 ~50MB                       |
 
 ## 快速开始
 
 ### 前置要求
 
-- Go 1.21+
+- Go 1.25+
 - [Claude Code CLI](https://github.com/anthropics/claude-code)
 - [GitHub CLI](https://cli.github.com/)
-- Claude API Key
+- Claude API Key (或 Codex API Key)
 
 ### 安装
 
@@ -78,9 +78,16 @@ GITHUB_APP_ID=123456
 GITHUB_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n..."
 GITHUB_WEBHOOK_SECRET=your-webhook-secret
 
-# Claude API
+# AI Provider 配置 (二选一)
+# 选项 1: Claude
+PROVIDER=claude
 ANTHROPIC_API_KEY=sk-ant-xxx
 CLAUDE_MODEL=claude-3-5-sonnet-20241022
+
+# 选项 2: Codex
+# PROVIDER=codex
+# CODEX_API_KEY=your-codex-key
+# CODEX_MODEL=gpt-5-codex
 
 # 可选配置
 TRIGGER_KEYWORD=/pilot
@@ -230,13 +237,18 @@ swe/
 │   │   ├── provider.go                  # Provider 接口定义
 │   │   ├── factory.go                   # Provider 工厂
 │   │   ├── factory_test.go              # 工厂测试 (100% 覆盖)
-│   │   └── claude/
-│   │       ├── claude.go                # Claude Provider 实现
-│   │       └── claude_test.go           # Claude 测试 (65.6% 覆盖)
+│   │   ├── claude/                      # Claude Provider 实现
+│   │   │   ├── claude.go
+│   │   │   └── claude_test.go           # (65.6% 覆盖)
+│   │   └── codex/                       # Codex Provider 实现
+│   │       ├── codex.go
+│   │       └── codex_test.go
 │   ├── github/
+│   │   ├── auth.go                      # GitHub App 认证
 │   │   ├── clone.go                     # gh repo clone
 │   │   ├── comment.go                   # gh issue comment
 │   │   ├── pr.go                        # gh pr create
+│   │   ├── auth_test.go
 │   │   └── github_test.go               # GitHub 操作测试 (63.2% 覆盖)
 │   └── executor/
 │       ├── task.go                      # 任务执行器（核心流程）
@@ -247,6 +259,7 @@ swe/
 ├── .gitignore                           # Git 忽略文件
 ├── go.mod                               # Go 模块定义
 ├── go.sum                               # Go 依赖锁定
+├── CLAUDE.md                            # Claude Code 开发指南
 ├── README.md                            # 项目文档
 └── TEST_COVERAGE_REPORT.md              # 测试覆盖率详细报告
 ```
@@ -345,6 +358,8 @@ go tool cover -func=coverage.out
 
 ## 💻 开发
 
+> 💡 **开发者提示**: 查看 [CLAUDE.md](./CLAUDE.md) 获取完整的开发指南，包括架构说明、测试策略和代码规范。
+
 ### 构建
 
 ```bash
@@ -423,10 +438,19 @@ services:
 
 ## 📦 依赖
 
-- **Go 1.21+** - 编译运行环境
+- **Go 1.25+** - 编译运行环境
 - **Claude Code CLI** - AI 代码生成（通过 [lancekrogers/claude-code-go](https://github.com/lancekrogers/claude-code-go)）
 - **GitHub CLI (`gh`)** - Git 操作
 - **Gorilla Mux** - HTTP 路由
+
+### AI Provider 支持
+
+当前支持以下 AI provider：
+
+- **Claude** (Anthropic) - 默认 provider，需要 `ANTHROPIC_API_KEY`
+- **Codex** - 需要 `CODEX_API_KEY`
+
+通过环境变量 `PROVIDER=claude` 或 `PROVIDER=codex` 切换。
 
 ## ⚡ 当前能力
 
@@ -435,6 +459,7 @@ services:
 - ✅ 响应 `issue_comment` 事件中的 `/pilot` 命令
 - ✅ HMAC SHA-256 webhook 签名验证（防伪造）
 - ✅ 调用 Claude Code CLI 生成代码修改
+- ✅ 多 Provider 支持：Claude + Codex
 - ✅ 自动 clone、修改、commit、push 到新分支
 - ✅ 创建 PR 链接并回复到原评论
 - ✅ Provider 接口抽象（易于扩展到其他 AI）
@@ -448,7 +473,6 @@ services:
 - ❌ 不支持并发控制（同一 PR 同时多个命令会冲突）
 - ❌ 不支持进度追踪（无法实时更新评论）
 - ❌ 不支持任务队列（webhook 超时后无重试）
-- ❌ 仅支持 Claude provider（Codex/Gemini 待实现）
 
 ## 🗺️ 路线图
 
@@ -463,11 +487,10 @@ services:
 
 ### v0.3 - 功能扩展
 
-- [ ] **多 AI Provider**
-  - [ ] OpenAI Codex provider
+- [ ] **更多 AI Provider**
   - [ ] Google Gemini provider
-  - [ ] AMP provider
-  - [ ] 可配置 provider 选择
+  - [ ] 其他 LLM provider
+  - [ ] 可配置 provider 选择策略
 - [ ] **Web UI** - 任务监控、配置管理界面
 - [ ] **指标和监控** - Prometheus metrics + Grafana
 - [ ] **一键部署** - Railway/Render/Vercel 部署按钮
