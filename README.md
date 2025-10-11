@@ -1,6 +1,24 @@
 # Pilot SWE - Software Engineering Agent
 
+[![Go Version](https://img.shields.io/badge/Go-1.21%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Test Coverage](https://img.shields.io/badge/coverage-65.3%25-brightgreen)](./TEST_COVERAGE_REPORT.md)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![GitHub](https://img.shields.io/badge/GitHub-cexll%2Fswe-181717?logo=github)](https://github.com/cexll/swe)
+
 GitHub App webhook 服务，通过 `/pilot` 命令触发 AI 自动完成代码修改任务。
+
+> 🎯 **核心理念**: 用 AI 赋能开发者，让代码修改变得像评论一样简单。
+
+## 📖 目录
+
+- [特性](#-特性)
+- [快速开始](#快速开始)
+- [使用方法](#使用方法)
+- [架构设计](#️-架构设计)
+- [测试](#-测试)
+- [开发](#-开发)
+- [部署](#-部署)
+- [路线图](#️-路线图)
 
 ## ✨ 特性
 
@@ -10,15 +28,47 @@ GitHub App webhook 服务，通过 `/pilot` 命令触发 AI 自动完成代码�
 - 📦 **自动化流程** - Clone → AI 修改 → Commit → Push → 创建 PR 链接
 - 🎯 **可配置触发词** - 默认 `/pilot`，可自定义
 - 🎨 **Clean Architecture** - Provider 接口抽象，易于扩展
+- ✅ **高测试覆盖率** - 65.3% 单元测试覆盖率，8 个测试文件
 
 ## 📊 项目统计
 
-- **代码量：** 12 个 Go 文件，~800 行代码
-- **编译产物：** 8.3MB 单一二进制文件
-- **依赖：** Minimal - Go 1.21+, Claude Code CLI, GitHub CLI
-- **性能：** 启动时间 ~100ms，内存占用 ~50MB
+| 指标           | 数值                                          |
+| -------------- | --------------------------------------------- |
+| **代码量**     | 12 个 Go 文件，~800 行代码                    |
+| **测试覆盖率** | 65.3% ([详细报告](./TEST_COVERAGE_REPORT.md)) |
+| **测试文件**   | 8 个测试文件，95+ 测试函数                    |
+| **编译产物**   | 8.3MB 单一二进制文件                          |
+| **依赖**       | Minimal - Go 1.21+, Claude CLI, gh CLI        |
+| **性能**       | 启动 ~100ms，内存 ~50MB                       |
 
 ## 快速开始
+
+### 前置要求
+
+- Go 1.21+
+- [Claude Code CLI](https://github.com/anthropics/claude-code)
+- [GitHub CLI](https://cli.github.com/)
+- Claude API Key
+
+### 安装
+
+```bash
+# 1. 克隆项目
+git clone git@github.com:cexll/swe.git
+cd swe
+
+# 2. 安装依赖
+go mod download
+
+# 3. 复制环境变量模板
+cp .env.example .env
+
+# 4. 编辑 .env 填入你的配置
+# GITHUB_APP_ID=your-app-id
+# GITHUB_PRIVATE_KEY="your-private-key"
+# GITHUB_WEBHOOK_SECRET=your-webhook-secret
+# ANTHROPIC_API_KEY=sk-ant-xxx
+```
 
 ### 环境变量
 
@@ -40,77 +90,67 @@ PORT=3000
 ### 本地运行
 
 ```bash
-# 1. 克隆项目
-git clone <repo-url>
-cd swe
+# 加载环境变量
+source .env  # 或使用 export 逐个设置
 
-# 2. 安装依赖
-go mod download
-
-# 3. 设置环境变量
-export ANTHROPIC_API_KEY=sk-ant-xxx
-export GITHUB_APP_ID=123456
-# ... 其他环境变量
-
-# 4. 运行
+# 运行服务
 go run cmd/main.go
 ```
 
-### Docker 部署
+服务启动后，访问：
 
-```bash
-# 构建镜像
-docker build -t pilot-swe .
-
-# 运行容器
-docker run -d \
-  -p 3000:3000 \
-  -e GITHUB_APP_ID=123456 \
-  -e GITHUB_PRIVATE_KEY="$(cat private-key.pem)" \
-  -e GITHUB_WEBHOOK_SECRET=secret \
-  -e ANTHROPIC_API_KEY=sk-ant-xxx \
-  --name pilot-swe \
-  pilot-swe
-```
+- 🏠 服务信息: http://localhost:3000/
+- ❤️ 健康检查: http://localhost:3000/health
+- 🔗 Webhook: http://localhost:3000/webhook
 
 ## 使用方法
 
 ### 1. 配置 GitHub App
 
-1. 创建 GitHub App：https://github.com/settings/apps/new
-2. 权限设置：
+1. **创建 GitHub App**: https://github.com/settings/apps/new
+2. **权限设置**:
    - Repository permissions:
-     - Contents: Read & Write
-     - Issues: Read & Write
-     - Pull requests: Read & Write
+     - ✅ Contents: Read & Write
+     - ✅ Issues: Read & Write
+     - ✅ Pull requests: Read & Write
    - Subscribe to events:
-     - Issue comments
-3. Webhook 设置：
+     - ✅ Issue comments
+3. **Webhook 设置**:
    - URL: `https://your-domain.com/webhook`
    - Secret: 生成一个随机密钥
-4. 安装到仓库
+   - Content type: `application/json`
+4. **安装到仓库**
 
 ### 2. 在 Issue/PR 评论中触发
 
-```markdown
+在任何 Issue 或 PR 中评论：
+
+```
 /pilot fix the typo in README.md
+```
 
+```
 /pilot add error handling to the main function
+```
 
+```
 /pilot refactor the database connection code
 ```
 
 ### 3. Pilot 自动执行
 
-1. ✅ Clone 仓库
-2. ✅ 调用 Claude API 生成修改
-3. ✅ 应用修改并 commit
-4. ✅ Push 到新分支
-5. ✅ 回复评论，包含 PR 创建链接
+Pilot 会自动完成以下流程：
+
+1. ✅ **Clone 仓库** - 下载最新代码
+2. ✅ **AI 生成** - 调用 Claude 生成修改
+3. ✅ **应用修改** - 写入文件系统
+4. ✅ **Commit** - 提交到新分支
+5. ✅ **Push** - 推送到远程
+6. ✅ **回复评论** - 提供 PR 创建链接
 
 ### 4. 查看结果
 
-Pilot 会在原评论下回复：
+Pilot 会在原评论下自动回复：
 
 ```markdown
 ### ✅ Task Completed Successfully
@@ -142,6 +182,12 @@ _Generated by Pilot SWE_
 
 **Body:** GitHub issue_comment event payload
 
+**Response:**
+
+- `202 Accepted`: 任务已接受，后台处理中
+- `401 Unauthorized`: 签名验证失败
+- `400 Bad Request`: 请求格式错误
+
 ### GET /health
 
 健康检查端点
@@ -169,35 +215,45 @@ _Generated by Pilot SWE_
 ```
 swe/
 ├── cmd/
-│   └── main.go                    # HTTP 服务器入口
+│   └── main.go                          # HTTP 服务器入口
 ├── internal/
 │   ├── config/
-│   │   └── config.go              # 配置管理
+│   │   ├── config.go                    # 配置管理
+│   │   └── config_test.go               # 配置测试 (100% 覆盖)
 │   ├── webhook/
-│   │   ├── handler.go             # Webhook 事件处理
-│   │   ├── verify.go              # HMAC 签名验证
-│   │   └── types.go               # Webhook payload 类型
+│   │   ├── handler.go                   # Webhook 事件处理
+│   │   ├── verify.go                    # HMAC 签名验证
+│   │   ├── types.go                     # Webhook payload 类型
+│   │   ├── handler_test.go              # 处理器测试 (96.6% 覆盖)
+│   │   └── verify_test.go               # 验证测试 (100% 覆盖)
 │   ├── provider/
-│   │   ├── provider.go            # Provider 接口定义
-│   │   ├── factory.go             # Provider 工厂
+│   │   ├── provider.go                  # Provider 接口定义
+│   │   ├── factory.go                   # Provider 工厂
+│   │   ├── factory_test.go              # 工厂测试 (100% 覆盖)
 │   │   └── claude/
-│   │       └── claude.go          # Claude Provider 实现
+│   │       ├── claude.go                # Claude Provider 实现
+│   │       └── claude_test.go           # Claude 测试 (65.6% 覆盖)
 │   ├── github/
-│   │   ├── clone.go               # gh repo clone
-│   │   ├── comment.go             # gh issue comment
-│   │   └── pr.go                  # gh pr create
+│   │   ├── clone.go                     # gh repo clone
+│   │   ├── comment.go                   # gh issue comment
+│   │   ├── pr.go                        # gh pr create
+│   │   └── github_test.go               # GitHub 操作测试 (63.2% 覆盖)
 │   └── executor/
-│       └── task.go                # 任务执行器（核心流程）
-├── Dockerfile
-├── .env.example
-├── .gitignore
-├── go.mod
-└── README.md
+│       ├── task.go                      # 任务执行器（核心流程）
+│       ├── task_test.go                 # 任务测试
+│       └── executor_extended_test.go    # 扩展测试 (48.2% 覆盖)
+├── Dockerfile                           # Docker 构建文件
+├── .env.example                         # 环境变量模板
+├── .gitignore                           # Git 忽略文件
+├── go.mod                               # Go 模块定义
+├── go.sum                               # Go 依赖锁定
+├── README.md                            # 项目文档
+└── TEST_COVERAGE_REPORT.md              # 测试覆盖率详细报告
 ```
 
 ### 架构亮点（Linus 风格）
 
-#### 1. **Provider 抽象** - 消除特殊分支
+#### 1. Provider 抽象 - 消除特殊分支
 
 ```go
 // 好品味的设计：无 if provider == "claude" 分支
@@ -218,7 +274,7 @@ provider.NewProvider(&Config{
 // 零修改现有代码！
 ```
 
-#### 2. **清晰的数据流**
+#### 2. 清晰的数据流
 
 ```
 GitHub Webhook
@@ -234,7 +290,7 @@ GitHub Webhook
   Comment (反馈)
 ```
 
-#### 3. **错误处理策略**
+#### 3. 错误处理策略
 
 ```go
 // 失败时自动回复错误评论到 GitHub
@@ -246,18 +302,129 @@ if err != nil {
 
 ### 核心组件
 
-| 组件            | 职责                                         | 文件数 |
-| --------------- | -------------------------------------------- | ------ |
-| Webhook Handler | 接收、验证、解析 GitHub 事件                 | 3      |
-| Provider        | AI 代码生成抽象层                            | 3      |
-| Executor        | 任务编排（Clone → Generate → Commit → Push） | 1      |
-| GitHub Ops      | Git 操作封装（基于 gh CLI）                  | 3      |
-| Config          | 环境变量管理和验证                           | 1      |
+| 组件            | 职责                                         | 文件数 | 测试覆盖率 |
+| --------------- | -------------------------------------------- | ------ | ---------- |
+| Webhook Handler | 接收、验证、解析 GitHub 事件                 | 3      | 96.6%      |
+| Provider        | AI 代码生成抽象层                            | 3      | 100%       |
+| Executor        | 任务编排（Clone → Generate → Commit → Push） | 1      | 48.2%      |
+| GitHub Ops      | Git 操作封装（基于 gh CLI）                  | 3      | 63.2%      |
+| Config          | 环境变量管理和验证                           | 1      | 100%       |
+
+## 🧪 测试
+
+### 运行测试
+
+```bash
+# 运行所有测试
+go test ./...
+
+# 运行测试并显示覆盖率
+go test ./... -cover
+
+# 生成覆盖率报告
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
+
+# 查看详细覆盖率
+go tool cover -func=coverage.out
+```
+
+### 测试覆盖率
+
+| 包                       | 覆盖率    | 状态        |
+| ------------------------ | --------- | ----------- |
+| internal/config          | 100.0%    | ✅ 优秀     |
+| internal/provider        | 100.0%    | ✅ 优秀     |
+| internal/webhook         | 96.6%     | ✅ 优秀     |
+| internal/provider/claude | 65.6%     | ⚠️ 良好     |
+| internal/github          | 63.2%     | ⚠️ 良好     |
+| internal/executor        | 48.2%     | ⚠️ 需改进   |
+| **总体**                 | **65.3%** | **✅ 良好** |
+
+详细测试报告请查看 [TEST_COVERAGE_REPORT.md](./TEST_COVERAGE_REPORT.md)
+
+## 💻 开发
+
+### 构建
+
+```bash
+# 本地构建
+go build -o pilot-swe cmd/main.go
+
+# 运行
+./pilot-swe
+```
+
+### 代码格式化
+
+```bash
+# 格式化代码
+go fmt ./...
+
+# 代码检查
+go vet ./...
+
+# 整理依赖
+go mod tidy
+```
+
+### 添加新的 AI Provider
+
+1. 在 `internal/provider/<name>/` 创建目录
+2. 实现 `Provider` 接口：
+   ```go
+   type Provider interface {
+       GenerateCode(ctx, req) (*CodeResponse, error)
+       Name() string
+   }
+   ```
+3. 在 `factory.go` 添加 case
+4. 添加测试文件
+5. 更新文档
+
+## 🐳 部署
+
+### Docker 部署
+
+```bash
+# 构建镜像
+docker build -t pilot-swe .
+
+# 运行容器
+docker run -d \
+  -p 3000:3000 \
+  -e GITHUB_APP_ID=123456 \
+  -e GITHUB_PRIVATE_KEY="$(cat private-key.pem)" \
+  -e GITHUB_WEBHOOK_SECRET=secret \
+  -e ANTHROPIC_API_KEY=sk-ant-xxx \
+  --name pilot-swe \
+  pilot-swe
+```
+
+### Docker Compose
+
+```yaml
+version: "3.8"
+
+services:
+  pilot-swe:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - GITHUB_APP_ID=${GITHUB_APP_ID}
+      - GITHUB_PRIVATE_KEY=${GITHUB_PRIVATE_KEY}
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CLAUDE_MODEL=claude-3-5-sonnet-20241022
+      - TRIGGER_KEYWORD=/pilot
+    restart: unless-stopped
+```
 
 ## 📦 依赖
 
 - **Go 1.21+** - 编译运行环境
-- **Claude Code CLI** - AI 代码生成（通过 lancekrogers/claude-code-go）
+- **Claude Code CLI** - AI 代码生成（通过 [lancekrogers/claude-code-go](https://github.com/lancekrogers/claude-code-go)）
 - **GitHub CLI (`gh`)** - Git 操作
 - **Gorilla Mux** - HTTP 路由
 
@@ -273,6 +440,7 @@ if err != nil {
 - ✅ Provider 接口抽象（易于扩展到其他 AI）
 - ✅ Docker 部署支持
 - ✅ 错误自动通知到 GitHub 评论
+- ✅ 65.3% 测试覆盖率
 
 ### ❌ 当前限制
 
@@ -312,39 +480,17 @@ if err != nil {
 - [ ] **Webhook 重放** - 手动重试失败的任务
 - [ ] **多仓库管理** - 统一配置多个仓库
 
-## 安全注意事项
+## 🔒 安全注意事项
 
-1. ✅ **Webhook 签名验证** - 使用 HMAC SHA-256
-2. ✅ **常量时间比较** - 防止时序攻击
-3. ⚠️ **API 密钥管理** - 使用环境变量或密钥管理服务
-4. ⚠️ **速率限制** - 建议添加（v0.2）
-5. ⚠️ **并发控制** - 建议添加（v0.2）
+| 项目             | 状态      | 说明                       |
+| ---------------- | --------- | -------------------------- |
+| Webhook 签名验证 | ✅ 已实现 | HMAC SHA-256               |
+| 常量时间比较     | ✅ 已实现 | 防止时序攻击               |
+| API 密钥管理     | ⚠️ 建议   | 使用环境变量或密钥管理服务 |
+| 速率限制         | ❌ 待实现 | v0.2 计划                  |
+| 并发控制         | ❌ 待实现 | v0.2 计划                  |
 
-## 限制（v0.1 MVP）
-
-- ❌ 不支持 PR review comments
-- ❌ 不支持并发执行（同一 PR 多个命令）
-- ❌ 不支持进度追踪（实时更新评论）
-- ❌ 不支持任务队列
-- ❌ 不支持除 Claude 外的其他 AI provider
-
-## 路线图
-
-### v0.2
-
-- [ ] PR review comments 支持
-- [ ] 队列系统和并发控制
-- [ ] 速率限制
-- [ ] 进度追踪（实时更新评论）
-
-### v0.3
-
-- [ ] 支持多 AI provider（Codex, Gemini, AMP）
-- [ ] Web UI 管理界面
-- [ ] 指标和监控
-- [ ] 一键部署（Railway/Vercel）
-
-## 故障排查
+## 🛠️ 故障排查
 
 ### 1. Webhook 未触发
 
@@ -353,6 +499,7 @@ if err != nil {
 - GitHub App 是否正确安装
 - Webhook URL 是否可访问
 - Webhook secret 是否匹配
+- 查看 GitHub App 的 Recent Deliveries
 
 ### 2. Claude API 错误
 
@@ -361,6 +508,7 @@ if err != nil {
 - `ANTHROPIC_API_KEY` 是否正确
 - API 配额是否用完
 - 网络连接是否正常
+- Claude Code CLI 是否正确安装
 
 ### 3. Git 操作失败
 
@@ -369,6 +517,7 @@ if err != nil {
 - `gh` CLI 是否安装并认证
 - GitHub App 是否有 Contents 写权限
 - 分支名是否冲突
+- 网络连接是否稳定
 
 ## 🎯 设计哲学（Linus 风格）
 
@@ -410,18 +559,13 @@ provider.GenerateCode(req)  // 多态，零分支
 
 欢迎提交 Issue 和 PR！
 
-### 添加新的 AI Provider
+### 贡献流程
 
-1. 在 `internal/provider/<name>/` 创建目录
-2. 实现 `Provider` 接口：
-   ```go
-   type Provider interface {
-       GenerateCode(ctx, req) (*CodeResponse, error)
-       Name() string
-   }
-   ```
-3. 在 `factory.go` 添加 case
-4. 更新文档
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 开启 Pull Request
 
 ### 代码风格
 
@@ -429,14 +573,31 @@ provider.GenerateCode(req)  // 多态，零分支
 - 遵循 Linus 的"好品味"原则
 - 函数不超过 50 行
 - 避免深层嵌套
+- 添加单元测试（目标覆盖率 >75%）
 
 ## 📄 许可证
 
-MIT License
+MIT License - 详见 [LICENSE](LICENSE) 文件
 
 ## 🙏 致谢
 
 - [Claude Code](https://github.com/anthropics/claude-code) - AI 代码助手
 - [lancekrogers/claude-code-go](https://github.com/lancekrogers/claude-code-go) - Go SDK
 - [GitHub CLI](https://cli.github.com/) - Git 操作工具
+- [Gorilla Mux](https://github.com/gorilla/mux) - HTTP 路由库
 - Linus Torvalds - "Good taste" 编程哲学
+
+## 📞 联系方式
+
+- **Issues**: [GitHub Issues](https://github.com/cexll/swe/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/cexll/swe/discussions)
+
+---
+
+<div align="center">
+
+**如果这个项目对你有帮助，请给个 ⭐️ Star！**
+
+Made with ❤️ by [cexll](https://github.com/cexll)
+
+</div>
