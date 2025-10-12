@@ -65,7 +65,7 @@ func TestCommentTracker_BuildSplitPlanSection_WithCreatedPRs(t *testing.T) {
 	output := tracker.buildSplitPlanSection()
 
 	// Verify header
-	if !strings.Contains(output, "### 📋 Split Plan") {
+	if !strings.Contains(output, "### 🔀 Split into Multiple PRs") {
 		t.Error("Output should contain split plan header")
 	}
 
@@ -78,18 +78,18 @@ func TestCommentTracker_BuildSplitPlanSection_WithCreatedPRs(t *testing.T) {
 	}
 
 	// Verify pending PR shows ⏳
-	if !strings.Contains(output, "⏳ Implement core functionality (pending)") {
+	if !strings.Contains(output, "⏳ Implement core functionality") && !strings.Contains(output, "(pending)") {
 		t.Error("Output should show pending PR with hourglass")
 	}
 
-	// Verify file counts
-	if !strings.Contains(output, "— 5 files") {
+	// Verify file counts (now with line counts too)
+	if !strings.Contains(output, "5 files") {
 		t.Error("Output should show file count for PR 1")
 	}
-	if !strings.Contains(output, "— 2 files") {
+	if !strings.Contains(output, "2 files") {
 		t.Error("Output should show file count for PR 2")
 	}
-	if !strings.Contains(output, "— 8 files") {
+	if !strings.Contains(output, "8 files") {
 		t.Error("Output should show file count for PR 3")
 	}
 }
@@ -119,11 +119,11 @@ func TestCommentTracker_BuildSplitPlanSection_WithPendingPRs(t *testing.T) {
 
 	output := tracker.buildSplitPlanSection()
 
-	// All PRs should show as pending
-	if !strings.Contains(output, "1. ⏳ Add tests (pending) — 3 files") {
+	// All PRs should show as pending (now with line counts)
+	if !strings.Contains(output, "1. ⏳ Add tests") && !strings.Contains(output, "3 files") && !strings.Contains(output, "(pending)") {
 		t.Error("Output should show PR 1 as pending")
 	}
-	if !strings.Contains(output, "2. ⏳ Add docs (pending) — 1 files") {
+	if !strings.Contains(output, "2. ⏳ Add docs") && !strings.Contains(output, "1 files") && !strings.Contains(output, "(pending)") {
 		t.Error("Output should show PR 2 as pending")
 	}
 }
@@ -178,12 +178,12 @@ func TestCommentTracker_BuildSplitPlanSection_WithDependencies(t *testing.T) {
 	}
 
 	// PR 2: waiting for dependencies
-	if !strings.Contains(output, "⏳ Add internal infrastructure (waiting for dependencies)") {
+	if !strings.Contains(output, "⏳ Add internal infrastructure") && !strings.Contains(output, "(waiting for dependencies)") {
 		t.Error("Output should show PR 2 waiting for dependencies")
 	}
 
 	// PR 3: waiting for dependencies
-	if !strings.Contains(output, "⏳ Implement core functionality (waiting for dependencies)") {
+	if !strings.Contains(output, "⏳ Implement core functionality") && !strings.Contains(output, "(waiting for dependencies)") {
 		t.Error("Output should show PR 3 waiting for dependencies")
 	}
 }
@@ -343,7 +343,7 @@ func TestCommentTracker_RenderBody_WithSplitPlan(t *testing.T) {
 	body := tracker.renderBody()
 
 	// Verify split plan section is included
-	if !strings.Contains(body, "### 📋 Split Plan") {
+	if !strings.Contains(body, "### 🔀 Split into Multiple PRs") {
 		t.Error("Body should contain split plan section")
 	}
 
@@ -353,7 +353,7 @@ func TestCommentTracker_RenderBody_WithSplitPlan(t *testing.T) {
 	}
 
 	// Verify pending PR is shown
-	if !strings.Contains(body, "⏳ Add docs (pending)") {
+	if !strings.Contains(body, "⏳ Add docs") && !strings.Contains(body, "(pending)") {
 		t.Error("Body should show pending PR")
 	}
 

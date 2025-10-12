@@ -278,7 +278,16 @@ func (t *CommentTracker) buildSplitPlanSection() string {
 	}
 
 	var lines []string
-	lines = append(lines, "### 📋 Split Plan")
+
+	// Add AI-generated summary at the top if available
+	if t.State.Summary != "" && t.State.Summary != fmt.Sprintf("Split into %d PRs", len(plan.SubPRs)) {
+		lines = append(lines, "### 📝 Changes Summary")
+		lines = append(lines, "")
+		lines = append(lines, t.State.Summary)
+		lines = append(lines, "")
+	}
+
+	lines = append(lines, "### 🔀 Split into Multiple PRs")
 	lines = append(lines, "")
 
 	for i, subPR := range plan.SubPRs {
@@ -291,16 +300,22 @@ func (t *CommentTracker) buildSplitPlanSection() string {
 			}
 		}
 
-		var status string
-		if createdPR != nil && createdPR.Status == "created" {
-			status = fmt.Sprintf("✅ [%s](%s)", subPR.Name, createdPR.URL)
-		} else if len(subPR.DependsOn) > 0 {
-			status = fmt.Sprintf("⏳ %s (waiting for dependencies)", subPR.Name)
-		} else {
-			status = fmt.Sprintf("⏳ %s (pending)", subPR.Name)
+		// Calculate total lines for this sub-PR
+		totalLines := 0
+		for _, file := range subPR.Files {
+			totalLines += strings.Count(file.Content, "\n") + 1
 		}
 
-		lines = append(lines, fmt.Sprintf("%d. %s — %d files", i+1, status, len(subPR.Files)))
+		var status string
+		if createdPR != nil && createdPR.Status == "created" {
+			status = fmt.Sprintf("✅ [%s](%s) — %d files, ~%d lines", subPR.Name, createdPR.URL, len(subPR.Files), totalLines)
+		} else if len(subPR.DependsOn) > 0 {
+			status = fmt.Sprintf("⏳ %s — %d files, ~%d lines (waiting for dependencies)", subPR.Name, len(subPR.Files), totalLines)
+		} else {
+			status = fmt.Sprintf("⏳ %s — %d files, ~%d lines (pending)", subPR.Name, len(subPR.Files), totalLines)
+		}
+
+		lines = append(lines, fmt.Sprintf("%d. %s", i+1, status))
 	}
 
 	return strings.Join(lines, "\n")

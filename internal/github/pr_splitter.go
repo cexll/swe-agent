@@ -270,14 +270,32 @@ func (s *PRSplitter) generateSubPRName(category PRCategory, fileCount int, partN
 	}
 }
 
-// generateSubPRDescription generates a description for a sub-PR
+// generateSubPRDescription generates a detailed description for a sub-PR
 func (s *PRSplitter) generateSubPRDescription(category PRCategory, files []claude.FileChange) string {
-	filePaths := make([]string, len(files))
-	for i, file := range files {
-		filePaths[i] = file.Path
+	var lines []string
+
+	// Add category header
+	categoryName := s.getCategoryDisplayName(category)
+	lines = append(lines, fmt.Sprintf("## %s", categoryName))
+	lines = append(lines, "")
+
+	// Calculate total lines
+	totalLines := 0
+
+	// Add file-level details with line counts
+	lines = append(lines, "### Files Changed")
+	for _, file := range files {
+		lineCount := strings.Count(file.Content, "\n") + 1
+		totalLines += lineCount
+		lines = append(lines, fmt.Sprintf("- `%s` (%d lines)", file.Path, lineCount))
 	}
 
-	return fmt.Sprintf("Category: %s\nFiles: %s", category, strings.Join(filePaths, ", "))
+	lines = append(lines, "")
+	lines = append(lines, fmt.Sprintf("**Summary:** %d files, ~%d lines", len(files), totalLines))
+	lines = append(lines, "")
+	lines = append(lines, "**Context:** This PR is part of a larger change. See the full task description in the original issue.")
+
+	return strings.Join(lines, "\n")
 }
 
 // getCategoryPriority returns the priority for a category (lower = earlier)
@@ -294,6 +312,24 @@ func (s *PRSplitter) getCategoryPriority(category PRCategory) int {
 		return p
 	}
 	return 5 // Unknown categories last
+}
+
+// getCategoryDisplayName returns human-readable category name
+func (s *PRSplitter) getCategoryDisplayName(category PRCategory) string {
+	switch category {
+	case CategoryTests:
+		return "Test Infrastructure"
+	case CategoryDocs:
+		return "Documentation Updates"
+	case CategoryInternal:
+		return "Internal Infrastructure"
+	case CategoryCore:
+		return "Core Functionality"
+	case CategoryCmd:
+		return "Command Line Interface"
+	default:
+		return "Changes"
+	}
 }
 
 // setDependencies sets dependency relationships between sub-PRs

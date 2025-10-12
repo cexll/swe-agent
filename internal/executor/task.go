@@ -377,6 +377,9 @@ func (e *Executor) executeMultiPR(
 ) error {
 	log.Printf("Executing multi-PR workflow with %d sub-PRs", len(plan.SubPRs))
 
+	// Store AI-generated summary in tracker state (will be displayed in split plan section)
+	tracker.State.Summary = result.Summary
+
 	// Update tracker to show split plan
 	tracker.SetSplitPlan(plan)
 	if err := tracker.Update(token); err != nil {
