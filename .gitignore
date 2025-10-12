@@ -2,3 +2,5 @@
 pilot-swe
 *.log
 swe
+
+.claude
