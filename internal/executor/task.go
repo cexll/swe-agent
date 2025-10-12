@@ -132,6 +132,17 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 	log.Printf("Calling %s provider (prompt length: %d chars)", e.provider.Name(), len(task.Prompt))
 	e.addLog(task, "info", "Calling %s provider", e.provider.Name())
 
+	// Record git status before calling Claude for comparison
+	preClaudeStatus := ""
+	if os.Getenv("DEBUG_GIT_DETECTION") == "true" {
+		cmd := exec.Command("git", "status", "--porcelain", "--untracked-files=all")
+		cmd.Dir = workdir
+		if output, err := cmd.CombinedOutput(); err == nil {
+			preClaudeStatus = strings.TrimSpace(string(output))
+			log.Printf("[Pre-Claude] Git status:\n%s", preClaudeStatus)
+		}
+	}
+
 	// Build context
 	context := map[string]string{
 		"issue_title": task.IssueTitle,
@@ -150,6 +161,21 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 	log.Printf("%s completed (cost: $%.4f)", e.provider.Name(), result.CostUSD)
 	e.addLog(task, "info", "%s completed (cost: $%.4f)", e.provider.Name(), result.CostUSD)
 
+	// Record git status after calling Claude for comparison
+	if os.Getenv("DEBUG_GIT_DETECTION") == "true" {
+		cmd := exec.Command("git", "status", "--porcelain", "--untracked-files=all")
+		cmd.Dir = workdir
+		if output, err := cmd.CombinedOutput(); err == nil {
+			postClaudeStatus := strings.TrimSpace(string(output))
+			log.Printf("[Post-Claude] Git status:\n%s", postClaudeStatus)
+			if preClaudeStatus != postClaudeStatus {
+				log.Printf("[Git Comparison] Status changed during Claude execution")
+			} else {
+				log.Printf("[Git Comparison] No status changes from Claude execution")
+			}
+		}
+	}
+
 	// 4. Apply file changes if provider returned file list
 	if len(result.Files) > 0 {
 		log.Printf("%s returned %d file changes, applying them", e.provider.Name(), len(result.Files))
@@ -166,6 +192,20 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 	hasChanges, err := e.detectGitChanges(workdir)
 	if err != nil {
 		return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to detect changes: %v", err))
+	}
+
+	// 5.1. If no changes detected but we had file responses, try alternative detection
+	if !hasChanges && len(result.Files) > 0 {
+		log.Printf("Git detected no changes but we have %d file responses - performing manual verification", len(result.Files))
+		e.addLog(task, "info", "Performing manual file verification")
+
+		manualChanges := e.detectManualChanges(workdir, result.Files)
+		if len(manualChanges) > 0 {
+			log.Printf("Manual verification found %d actual file changes", len(manualChanges))
+			hasChanges = true
+		} else {
+			log.Printf("Manual verification confirmed no actual changes were made")
+		}
 	}
 
 	if !hasChanges {
@@ -243,13 +283,35 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 	return nil
 }
 
-// applyChanges writes file changes to disk
+// applyChanges writes file changes to disk with enhanced validation and logging
 func (e *Executor) applyChanges(workdir string, changes []claude.FileChange) error {
-	for _, change := range changes {
+	log.Printf("Applying %d file changes to %s", len(changes), workdir)
+
+	successCount := 0
+	for i, change := range changes {
 		filePath := filepath.Join(workdir, change.Path)
 
+		// Debug logging
+		if os.Getenv("DEBUG_GIT_DETECTION") == "true" || os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
+			log.Printf("[File Write %d/%d] Processing: %s", i+1, len(changes), change.Path)
+			log.Printf("[File Write %d/%d] Content length: %d chars", i+1, len(changes), len(change.Content))
+		}
+
+		// Validate file path
+		if change.Path == "" {
+			log.Printf("Warning: Skipping empty file path at index %d", i)
+			continue
+		}
+
+		// Check if file already exists
+		existsBefore := false
+		if _, err := os.Stat(filePath); err == nil {
+			existsBefore = true
+		}
+
 		// Ensure directory exists
-		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		dir := filepath.Dir(filePath)
+		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory for %s: %w", change.Path, err)
 		}
 
@@ -258,23 +320,87 @@ func (e *Executor) applyChanges(workdir string, changes []claude.FileChange) err
 			return fmt.Errorf("failed to write file %s: %w", change.Path, err)
 		}
 
-		log.Printf("Applied changes to %s", change.Path)
+		// Verify file was written correctly
+		if writtenContent, err := os.ReadFile(filePath); err != nil {
+			return fmt.Errorf("failed to verify written file %s: %w", change.Path, err)
+		} else if string(writtenContent) != change.Content {
+			return fmt.Errorf("file content mismatch for %s: expected %d chars, got %d chars",
+				change.Path, len(change.Content), len(writtenContent))
+		}
+
+		// Log successful write
+		action := "modified"
+		if !existsBefore {
+			action = "created"
+		}
+		log.Printf("Successfully %s %s (%d bytes)", action, change.Path, len(change.Content))
+		successCount++
 	}
+
+	log.Printf("File changes applied: %d successful out of %d requested", successCount, len(changes))
 	return nil
 }
 
 // detectGitChanges checks if there are any uncommitted changes in the working directory
+// Enhanced with untracked files detection and debugging
 func (e *Executor) detectGitChanges(workdir string) (bool, error) {
-	cmd := exec.Command("git", "status", "--porcelain")
+	// Use --untracked-files=all to include new files
+	cmd := exec.Command("git", "status", "--porcelain", "--untracked-files=all")
 	cmd.Dir = workdir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("git status failed: %w\nOutput: %s", err, string(output))
 	}
 
-	// If output is empty, no changes detected
-	hasChanges := len(strings.TrimSpace(string(output))) > 0
+	outputStr := strings.TrimSpace(string(output))
+	hasChanges := len(outputStr) > 0
+
+	// Debug logging if enabled
+	if os.Getenv("DEBUG_GIT_DETECTION") == "true" {
+		log.Printf("[Git Detection] Working directory: %s", workdir)
+		log.Printf("[Git Detection] Command: git status --porcelain --untracked-files=all")
+		log.Printf("[Git Detection] Output length: %d", len(outputStr))
+		if hasChanges {
+			log.Printf("[Git Detection] Changes detected:\n%s", outputStr)
+		} else {
+			log.Printf("[Git Detection] No changes detected")
+		}
+	}
+
 	return hasChanges, nil
+}
+
+// detectManualChanges manually verifies if parsed files actually have changes
+// This is used as a fallback when git detection fails
+func (e *Executor) detectManualChanges(workdir string, parsedFiles []claude.FileChange) []claude.FileChange {
+	var actualChanges []claude.FileChange
+
+	for _, file := range parsedFiles {
+		filePath := filepath.Join(workdir, file.Path)
+
+		// Check if file exists and compare content
+		if existingContent, err := os.ReadFile(filePath); err != nil {
+			if os.IsNotExist(err) {
+				// New file - this is a change
+				if strings.TrimSpace(file.Content) != "" {
+					actualChanges = append(actualChanges, file)
+					log.Printf("[Manual Detection] New file: %s", file.Path)
+				}
+			} else {
+				log.Printf("[Manual Detection] Error reading %s: %v", file.Path, err)
+			}
+		} else {
+			// File exists - check if content is different
+			if string(existingContent) != file.Content {
+				actualChanges = append(actualChanges, file)
+				log.Printf("[Manual Detection] Modified file: %s", file.Path)
+			} else {
+				log.Printf("[Manual Detection] No changes in: %s", file.Path)
+			}
+		}
+	}
+
+	return actualChanges
 }
 
 // commitAndPush commits changes and pushes to remote

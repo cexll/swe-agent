@@ -1999,3 +1999,241 @@ func TestExecutor_Execute_IncludesDiscussionContext(t *testing.T) {
 		t.Fatalf("Expected ListReviewComments to be called once, got %d", len(mockGH.ListReviewCommentsCalls))
 	}
 }
+
+// TestDetectManualChanges tests the new manual change detection functionality
+func TestDetectManualChanges(t *testing.T) {
+	executor := New(&mockProvider{}, nil)
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name        string
+		setup       func(string) []claude.FileChange
+		wantChanges int
+		wantPaths   []string
+	}{
+		{
+			name: "detect new file",
+			setup: func(dir string) []claude.FileChange {
+				return []claude.FileChange{
+					{Path: "new.go", Content: "package main"},
+				}
+			},
+			wantChanges: 1,
+			wantPaths:   []string{"new.go"},
+		},
+		{
+			name: "detect modified file",
+			setup: func(dir string) []claude.FileChange {
+				// Create existing file
+				existingPath := filepath.Join(dir, "existing.go")
+				os.WriteFile(existingPath, []byte("old content"), 0644)
+
+				return []claude.FileChange{
+					{Path: "existing.go", Content: "new content"},
+				}
+			},
+			wantChanges: 1,
+			wantPaths:   []string{"existing.go"},
+		},
+		{
+			name: "ignore unchanged file",
+			setup: func(dir string) []claude.FileChange {
+				// Create existing file with same content
+				existingPath := filepath.Join(dir, "unchanged.go")
+				content := "same content"
+				os.WriteFile(existingPath, []byte(content), 0644)
+
+				return []claude.FileChange{
+					{Path: "unchanged.go", Content: content},
+				}
+			},
+			wantChanges: 0,
+			wantPaths:   []string{},
+		},
+		{
+			name: "mix of changed and unchanged files",
+			setup: func(dir string) []claude.FileChange {
+				// Create one existing file
+				existingPath := filepath.Join(dir, "existing.go")
+				os.WriteFile(existingPath, []byte("old content"), 0644)
+
+				// Create another existing file with same content as expected
+				unchangedPath := filepath.Join(dir, "unchanged.go")
+				sameContent := "same content"
+				os.WriteFile(unchangedPath, []byte(sameContent), 0644)
+
+				return []claude.FileChange{
+					{Path: "existing.go", Content: "new content"}, // Changed
+					{Path: "unchanged.go", Content: sameContent},  // Unchanged
+					{Path: "new.go", Content: "package main"},     // New
+				}
+			},
+			wantChanges: 2,
+			wantPaths:   []string{"existing.go", "new.go"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create fresh test directory
+			testDir := filepath.Join(tmpDir, tt.name)
+			os.MkdirAll(testDir, 0755)
+
+			parsedFiles := tt.setup(testDir)
+			changes := executor.detectManualChanges(testDir, parsedFiles)
+
+			if len(changes) != tt.wantChanges {
+				t.Errorf("detectManualChanges() returned %d changes, want %d", len(changes), tt.wantChanges)
+			}
+
+			// Check that we got the expected file paths
+			gotPaths := make([]string, len(changes))
+			for i, change := range changes {
+				gotPaths[i] = change.Path
+			}
+
+			for _, expectedPath := range tt.wantPaths {
+				found := false
+				for _, gotPath := range gotPaths {
+					if gotPath == expectedPath {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("Expected path %s not found in results: %v", expectedPath, gotPaths)
+				}
+			}
+		})
+	}
+}
+
+// TestDetectGitChangesWithDebug tests enhanced git detection with debug logging
+func TestDetectGitChangesWithDebug(t *testing.T) {
+	// Enable debug logging
+	oldValue := os.Getenv("DEBUG_GIT_DETECTION")
+	os.Setenv("DEBUG_GIT_DETECTION", "true")
+	defer func() {
+		if oldValue == "" {
+			os.Unsetenv("DEBUG_GIT_DETECTION")
+		} else {
+			os.Setenv("DEBUG_GIT_DETECTION", oldValue)
+		}
+	}()
+
+	executor := New(&mockProvider{}, nil)
+
+	tests := []struct {
+		name       string
+		setup      func(string) error
+		wantChange bool
+	}{
+		{
+			name: "detect untracked file",
+			setup: func(dir string) error {
+				// Initialize git repo
+				if err := exec.Command("git", "init").Run(); err != nil {
+					return err
+				}
+				if err := exec.Command("git", "config", "user.name", "Test").Run(); err != nil {
+					return err
+				}
+				if err := exec.Command("git", "config", "user.email", "test@test.com").Run(); err != nil {
+					return err
+				}
+
+				// Create untracked file
+				return os.WriteFile(filepath.Join(dir, "untracked.go"), []byte("package main"), 0644)
+			},
+			wantChange: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			originalDir, _ := os.Getwd()
+			os.Chdir(tmpDir)
+			defer os.Chdir(originalDir)
+
+			if err := tt.setup(tmpDir); err != nil {
+				t.Skipf("Setup failed: %v", err)
+			}
+
+			hasChanges, err := executor.detectGitChanges(tmpDir)
+			if err != nil {
+				t.Errorf("detectGitChanges() error = %v", err)
+			}
+
+			if hasChanges != tt.wantChange {
+				t.Errorf("detectGitChanges() = %v, want %v", hasChanges, tt.wantChange)
+			}
+		})
+	}
+}
+
+// TestApplyChangesEnhanced tests the enhanced applyChanges with validation
+func TestApplyChangesEnhanced(t *testing.T) {
+	executor := New(&mockProvider{}, nil)
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name      string
+		changes   []claude.FileChange
+		wantError bool
+		validate  func(string) error
+	}{
+		{
+			name: "successful file creation with validation",
+			changes: []claude.FileChange{
+				{Path: "test.go", Content: "package test\n\nfunc Test() {}\n"},
+			},
+			wantError: false,
+			validate: func(dir string) error {
+				content, err := os.ReadFile(filepath.Join(dir, "test.go"))
+				if err != nil {
+					return err
+				}
+				expected := "package test\n\nfunc Test() {}\n"
+				if string(content) != expected {
+					return fmt.Errorf("content mismatch: got %q, want %q", string(content), expected)
+				}
+				return nil
+			},
+		},
+		{
+			name: "handle empty file path gracefully",
+			changes: []claude.FileChange{
+				{Path: "", Content: "some content"},
+				{Path: "valid.go", Content: "package main"},
+			},
+			wantError: false, // Should skip empty path, continue with valid one
+			validate: func(dir string) error {
+				// Should only create the valid file
+				if _, err := os.Stat(filepath.Join(dir, "valid.go")); err != nil {
+					return fmt.Errorf("valid.go should exist: %v", err)
+				}
+				return nil
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testDir := filepath.Join(tmpDir, tt.name)
+			os.MkdirAll(testDir, 0755)
+
+			err := executor.applyChanges(testDir, tt.changes)
+
+			if (err != nil) != tt.wantError {
+				t.Errorf("applyChanges() error = %v, wantError %v", err, tt.wantError)
+			}
+
+			if tt.validate != nil {
+				if err := tt.validate(testDir); err != nil {
+					t.Errorf("Validation failed: %v", err)
+				}
+			}
+		})
+	}
+}
