@@ -121,10 +121,10 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 
 	args := []string{
 		"exec",
-		"-m", p.model,                               // Model selection
+		"-m", p.model, // Model selection
 		"--dangerously-bypass-approvals-and-sandbox", // Skip all confirmation prompts
-		"-C", repoPath,                              // Working directory
-		prompt,                                      // Initial instructions
+		"-C", repoPath, // Working directory
+		prompt, // Initial instructions
 	}
 
 	cmd := execCommandContext(ctx, codexCommand, args...)

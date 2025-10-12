@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -533,5 +534,174 @@ package test
 				}
 			}
 		})
+	}
+}
+
+func TestListRepoFiles_ErrorConditions(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func() (string, error)
+		cleanup func(string)
+		wantErr bool
+	}{
+		{
+			name: "symlink in directory",
+			setup: func() (string, error) {
+				tmpDir := t.TempDir()
+				// Create a file
+				file := filepath.Join(tmpDir, "target.txt")
+				if err := os.WriteFile(file, []byte("target"), 0644); err != nil {
+					return "", err
+				}
+				// Create symlink
+				link := filepath.Join(tmpDir, "link.txt")
+				if err := os.Symlink(file, link); err != nil {
+					return "", err
+				}
+				return tmpDir, nil
+			},
+			wantErr: false, // Should handle symlinks gracefully
+		},
+		{
+			name: "directory with permission issues",
+			setup: func() (string, error) {
+				// This test is platform-dependent and may not work on all systems
+				tmpDir := t.TempDir()
+				// Create subdirectory
+				subdir := filepath.Join(tmpDir, "restricted")
+				if err := os.Mkdir(subdir, 0755); err != nil {
+					return "", err
+				}
+				// Create file in subdirectory
+				file := filepath.Join(subdir, "file.txt")
+				if err := os.WriteFile(file, []byte("content"), 0644); err != nil {
+					return "", err
+				}
+				// Try to restrict permissions (may not work on all platforms)
+				if err := os.Chmod(subdir, 0000); err != nil {
+					return "", err
+				}
+				return tmpDir, nil
+			},
+			cleanup: func(dir string) {
+				// Restore permissions for cleanup
+				subdir := filepath.Join(dir, "restricted")
+				os.Chmod(subdir, 0755)
+			},
+			wantErr: true, // Should error on permission denied
+		},
+		{
+			name: "empty directory with .git only",
+			setup: func() (string, error) {
+				tmpDir := t.TempDir()
+				gitDir := filepath.Join(tmpDir, ".git")
+				if err := os.Mkdir(gitDir, 0755); err != nil {
+					return "", err
+				}
+				// Create files in .git (should be ignored)
+				if err := os.WriteFile(filepath.Join(gitDir, "config"), []byte("config"), 0644); err != nil {
+					return "", err
+				}
+				return tmpDir, nil
+			},
+			wantErr: false, // Should return empty list
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, err := tt.setup()
+			if err != nil {
+				t.Skipf("Setup failed: %v", err)
+			}
+
+			if tt.cleanup != nil {
+				defer tt.cleanup(dir)
+			}
+
+			files, err := listRepoFiles(dir)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("listRepoFiles() should return error")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("listRepoFiles() unexpected error: %v", err)
+				}
+				// Verify no .git files are included
+				for _, file := range files {
+					if strings.Contains(file, ".git") {
+						t.Errorf("listRepoFiles() should not include .git files, found: %s", file)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestListRepoFiles_LargeDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create many files
+	numFiles := 100
+	for i := 0; i < numFiles; i++ {
+		filename := filepath.Join(tmpDir, fmt.Sprintf("file%03d.txt", i))
+		if err := os.WriteFile(filename, []byte(fmt.Sprintf("content %d", i)), 0644); err != nil {
+			t.Fatalf("Failed to create file: %v", err)
+		}
+	}
+
+	files, err := listRepoFiles(tmpDir)
+	if err != nil {
+		t.Fatalf("listRepoFiles() error: %v", err)
+	}
+
+	if len(files) != numFiles {
+		t.Errorf("listRepoFiles() returned %d files, want %d", len(files), numFiles)
+	}
+}
+
+func TestListRepoFiles_MixedContent(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create mix of files and directories
+	structure := map[string]string{
+		"README.md":            "readme",
+		"src/main.go":          "package main",
+		"src/utils/util.go":    "package utils",
+		"docs/guide.md":        "guide",
+		".gitignore":           "*.log",    // Should be ignored (hidden)
+		".github/workflow.yml": "workflow", // Should be ignored
+	}
+
+	for path, content := range structure {
+		fullPath := filepath.Join(tmpDir, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			t.Fatalf("Failed to create directory: %v", err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+			t.Fatalf("Failed to create file: %v", err)
+		}
+	}
+
+	files, err := listRepoFiles(tmpDir)
+	if err != nil {
+		t.Fatalf("listRepoFiles() error: %v", err)
+	}
+
+	// Should include non-hidden files (including files in hidden directories like .github)
+	// Note: listRepoFiles skips hidden files but not files inside hidden directories
+	expectedFiles := []string{"README.md", "src/main.go", "src/utils/util.go", "docs/guide.md", ".github/workflow.yml"}
+	if len(files) != len(expectedFiles) {
+		t.Errorf("listRepoFiles() returned %d files, want %d files", len(files), len(expectedFiles))
+		t.Logf("Got files: %v", files)
+	}
+
+	// Verify no hidden files
+	for _, file := range files {
+		if strings.HasPrefix(filepath.Base(file), ".") {
+			t.Errorf("listRepoFiles() should not include hidden files, found: %s", file)
+		}
 	}
 }
