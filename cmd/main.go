@@ -76,7 +76,11 @@ func main() {
 	// Setup router
 	r := mux.NewRouter()
 
-	// Webhook endpoint
+	// Webhook endpoints
+	r.HandleFunc("/webhook/issue_comment", handler.HandleIssueComment).Methods("POST")
+	r.HandleFunc("/webhook/review_comment", handler.HandleReviewComment).Methods("POST")
+	
+	// Legacy endpoint - keep for backward compatibility
 	r.HandleFunc("/webhook", handler.HandleIssueComment).Methods("POST")
 
 	// Health check endpoint
@@ -89,13 +93,14 @@ func main() {
 	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"service":"pilot-swe","status":"running","trigger":"%s"}`, cfg.TriggerKeyword)
+		fmt.Fprintf(w, `{"service":"pilot-swe","status":"running","trigger":"%s","endpoints":["/webhook/issue_comment","/webhook/review_comment"]}`, cfg.TriggerKeyword)
 	}).Methods("GET")
 
 	// Start server
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	log.Printf("Server listening on %s", addr)
-	log.Printf("Webhook endpoint: http://localhost%s/webhook", addr)
+	log.Printf("Issue comment webhook: http://localhost%s/webhook/issue_comment", addr)
+	log.Printf("Review comment webhook: http://localhost%s/webhook/review_comment", addr)
 	log.Printf("Health check: http://localhost%s/health", addr)
 
 	if err := http.ListenAndServe(addr, r); err != nil {
