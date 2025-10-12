@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 
 	"github.com/cexll/swe/internal/config"
+	"github.com/cexll/swe/internal/dispatcher"
 	"github.com/cexll/swe/internal/executor"
 	"github.com/cexll/swe/internal/github"
 	"github.com/cexll/swe/internal/provider"
+	"github.com/cexll/swe/internal/taskstore"
+	"github.com/cexll/swe/internal/web"
 	"github.com/cexll/swe/internal/webhook"
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
@@ -29,6 +33,10 @@ func main() {
 	log.Printf("Trigger keyword: %s", cfg.TriggerKeyword)
 	log.Printf("Provider: %s", cfg.Provider)
 	log.Printf("GitHub App ID: %s", cfg.GitHubAppID)
+	log.Printf("Dispatcher workers: %d, queue size: %d, max attempts: %d", cfg.DispatcherWorkers, cfg.DispatcherQueueSize, cfg.DispatcherMaxAttempts)
+
+	// Initialize in-memory task store for UI
+	taskStore := taskstore.NewStore()
 
 	// Initialize GitHub App authentication
 	appAuth := &github.AppAuth{
@@ -69,15 +77,38 @@ func main() {
 
 	// Initialize executor
 	exec := executor.New(aiProvider, appAuth)
+	exec.WithStore(taskStore)
+
+	// Initialize dispatcher (task queue with retries)
+	dispatcherConfig := dispatcher.Config{
+		Workers:           cfg.DispatcherWorkers,
+		QueueSize:         cfg.DispatcherQueueSize,
+		MaxAttempts:       cfg.DispatcherMaxAttempts,
+		InitialBackoff:    cfg.DispatcherRetryInitial,
+		BackoffMultiplier: cfg.DispatcherBackoffMultiplier,
+		MaxBackoff:        cfg.DispatcherRetryMax,
+	}
+	taskDispatcher := dispatcher.New(exec, dispatcherConfig)
+	defer taskDispatcher.Shutdown(context.Background())
 
 	// Initialize webhook handler
-	handler := webhook.NewHandler(cfg.GitHubWebhookSecret, cfg.TriggerKeyword, exec)
+	handler := webhook.NewHandler(cfg.GitHubWebhookSecret, cfg.TriggerKeyword, taskDispatcher, taskStore)
+
+	// Initialize web UI handler
+	webHandler, err := web.NewHandler(taskStore)
+	if err != nil {
+		log.Fatalf("Failed to initialize web handler: %v", err)
+	}
 
 	// Setup router
 	r := mux.NewRouter()
 
 	// Webhook endpoint
-	r.HandleFunc("/webhook", handler.HandleIssueComment).Methods("POST")
+	r.HandleFunc("/webhook", handler.Handle).Methods("POST")
+
+	// Task UI endpoints
+	r.HandleFunc("/tasks", webHandler.ListTasks).Methods("GET")
+	r.HandleFunc("/tasks/{id}", webHandler.TaskDetail).Methods("GET")
 
 	// Health check endpoint
 	r.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -97,6 +128,7 @@ func main() {
 	log.Printf("Server listening on %s", addr)
 	log.Printf("Webhook endpoint: http://localhost%s/webhook", addr)
 	log.Printf("Health check: http://localhost%s/health", addr)
+	log.Printf("Tasks UI: http://localhost%s/tasks", addr)
 
 	if err := http.ListenAndServe(addr, r); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
