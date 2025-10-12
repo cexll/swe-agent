@@ -16,17 +16,34 @@ import (
 	"github.com/cexll/swe/internal/webhook"
 )
 
+// CloneFunc is a function type for cloning repositories
+type CloneFunc func(repo, branch string) (workdir string, cleanup func(), err error)
+
 // Executor executes pilot tasks
 type Executor struct {
 	provider provider.Provider
-	appAuth  *github.AppAuth
+	appAuth  github.AuthProvider
+	ghClient github.GHClient
+	cloneFn  CloneFunc
 }
 
 // New creates a new executor
-func New(p provider.Provider, appAuth *github.AppAuth) *Executor {
+func New(p provider.Provider, appAuth github.AuthProvider) *Executor {
 	return &Executor{
 		provider: p,
 		appAuth:  appAuth,
+		ghClient: github.NewRealGHClient(),
+		cloneFn:  github.Clone,
+	}
+}
+
+// NewWithClient creates a new executor with a custom gh client (useful for testing)
+func NewWithClient(p provider.Provider, appAuth github.AuthProvider, ghClient github.GHClient) *Executor {
+	return &Executor{
+		provider: p,
+		appAuth:  appAuth,
+		ghClient: ghClient,
+		cloneFn:  github.Clone,
 	}
 }
 
@@ -38,30 +55,37 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 	log.Printf("Authenticating as GitHub App for %s", task.Repo)
 	installToken, err := e.appAuth.GetInstallationToken(task.Repo)
 	if err != nil {
-		return e.notifyError(task, "", fmt.Sprintf("Failed to authenticate: %v", err))
+		return fmt.Errorf("failed to authenticate: %v", err)
 	}
 	log.Printf("Successfully authenticated (token expires at %s)", installToken.ExpiresAt.Format(time.RFC3339))
 
-	// Notify user that task has started
-	if err := e.notifyStart(task, installToken.Token); err != nil {
-		log.Printf("Warning: Failed to post start notification: %v", err)
+	// 1. Create tracking comment
+	tracker := github.NewCommentTrackerWithClient(task.Repo, task.Number, task.Username, e.ghClient)
+	tracker.State.StartTime = time.Now()
+	tracker.State.OriginalBody = task.Prompt
+
+	if err := tracker.Create(installToken.Token); err != nil {
+		log.Printf("Warning: Failed to create tracking comment: %v", err)
+		// Continue execution even if comment creation fails
+	} else {
+		log.Printf("Created tracking comment (ID: %d)", tracker.CommentID)
 	}
 
 	// Add "swe" label to the issue for tracking
-	if err := github.AddLabel(task.Repo, task.Number, "swe", installToken.Token); err != nil {
+	if err := e.ghClient.AddLabel(task.Repo, task.Number, "swe", installToken.Token); err != nil {
 		log.Printf("Warning: Failed to add label: %v", err)
 	}
 
-	// 1. Clone repository
+	// 2. Clone repository
 	log.Printf("Cloning repository %s (branch: %s)", task.Repo, task.Branch)
-	workdir, cleanup, err := github.Clone(task.Repo, task.Branch)
+	workdir, cleanup, err := e.cloneFn(task.Repo, task.Branch)
 	if err != nil {
-		return e.notifyError(task, installToken.Token, fmt.Sprintf("Failed to clone repository: %v", err))
+		return e.handleError(tracker, installToken.Token, fmt.Sprintf("Failed to clone repository: %v", err))
 	}
 	defer cleanup()
 	log.Printf("Repository cloned to %s", workdir)
 
-	// 2. Call AI provider to generate changes
+	// 3. Call AI provider to generate changes
 	log.Printf("Calling %s provider with prompt: %s", e.provider.Name(), task.Prompt)
 
 	// Build context
@@ -76,52 +100,65 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 		Context:  context,
 	})
 	if err != nil {
-		return e.notifyError(task, installToken.Token, fmt.Sprintf("%s error: %v", e.provider.Name(), err))
+		return e.handleError(tracker, installToken.Token, fmt.Sprintf("%s error: %v", e.provider.Name(), err))
 	}
 
 	log.Printf("%s completed (cost: $%.4f)", e.provider.Name(), result.CostUSD)
 
-	// 3. Apply file changes if provider returned file list
+	// 4. Apply file changes if provider returned file list
 	if len(result.Files) > 0 {
 		log.Printf("%s returned %d file changes, applying them", e.provider.Name(), len(result.Files))
 		if err := e.applyChanges(workdir, result.Files); err != nil {
-			return e.notifyError(task, installToken.Token, fmt.Sprintf("Failed to apply changes: %v", err))
+			return e.handleError(tracker, installToken.Token, fmt.Sprintf("Failed to apply changes: %v", err))
 		}
 	} else {
 		log.Printf("%s did not return file list, checking git status for direct modifications", e.provider.Name())
 	}
 
-	// 3.5. Detect actual file changes using git (works for both direct modifications and applied changes)
+	// 5. Detect actual file changes using git
 	hasChanges, err := e.detectGitChanges(workdir)
 	if err != nil {
-		return e.notifyError(task, installToken.Token, fmt.Sprintf("Failed to detect changes: %v", err))
+		return e.handleError(tracker, installToken.Token, fmt.Sprintf("Failed to detect changes: %v", err))
 	}
 
 	if !hasChanges {
-		// No actual file changes detected, just post the AI's response as a comment
+		// No actual file changes detected, just post the AI's response
 		log.Printf("No file changes detected in working directory (analysis/answer only)")
-		return e.notifyResponse(task, installToken.Token, result)
+		return e.handleResponseOnly(tracker, installToken.Token, result)
 	}
 
 	log.Printf("File changes detected in working directory, proceeding with commit")
 
-	// 4. Create branch and commit changes
+	// 6. Create branch and commit changes
 	branchName := fmt.Sprintf("pilot/%d-%d", task.Number, time.Now().Unix())
 	log.Printf("Creating branch %s and committing changes", branchName)
 	if err := e.commitAndPush(workdir, branchName, result.Summary); err != nil {
-		return e.notifyError(task, installToken.Token, fmt.Sprintf("Failed to commit/push: %v", err))
+		return e.handleError(tracker, installToken.Token, fmt.Sprintf("Failed to commit/push: %v", err))
 	}
 
-	// 5. Create PR (don't actually create it, just return a create PR link)
+	// 7. Create PR link
 	log.Printf("Creating PR from %s to %s", branchName, task.Branch)
 	prURL, err := e.createPRLink(task.Repo, branchName, task.Branch, result.Summary)
 	if err != nil {
-		return e.notifyError(task, installToken.Token, fmt.Sprintf("Failed to create PR: %v", err))
+		return e.handleError(tracker, installToken.Token, fmt.Sprintf("Failed to create PR: %v", err))
 	}
 	log.Printf("PR link created: %s", prURL)
 
-	// 6. Post success comment
-	return e.notifySuccess(task, installToken.Token, result, prURL)
+	// 8. Build branch URL
+	branchURL := fmt.Sprintf("https://github.com/%s/tree/%s", task.Repo, branchName)
+
+	// 9. Update tracking comment with success
+	tracker.MarkEnd()
+	tracker.SetCompleted(result.Summary, e.extractFilePaths(result.Files), result.CostUSD)
+	tracker.SetBranch(branchName, branchURL)
+	tracker.SetPRURL(prURL)
+
+	if err := tracker.Update(installToken.Token); err != nil {
+		log.Printf("Warning: Failed to update tracking comment: %v", err)
+	}
+
+	log.Printf("Task completed successfully")
+	return nil
 }
 
 // applyChanges writes file changes to disk
@@ -189,73 +226,36 @@ func (e *Executor) createPRLink(repo, head, base, title string) (string, error) 
 	return prURL, nil
 }
 
-// notifySuccess posts a success comment to the issue/PR
-func (e *Executor) notifySuccess(task *webhook.Task, token string, result *claude.CodeResponse, prURL string) error {
-	// Format file list
-	fileList := make([]string, len(result.Files))
-	for i, file := range result.Files {
-		fileList[i] = fmt.Sprintf("- `%s`", file.Path)
-	}
+// handleError updates the tracking comment with error details and returns the error
+func (e *Executor) handleError(tracker *github.CommentTracker, token, errorMsg string) error {
+	tracker.MarkEnd()
+	tracker.SetFailed(errorMsg)
 
-	comment := fmt.Sprintf(`### ✅ Task Completed Successfully
-
-**Summary:** %s
-
-**Modified Files:** (%d)
-%s
-
-**Next Step:**
-[🚀 Click here to create Pull Request](%s)
-
----
-*Generated by Pilot SWE*`, result.Summary, len(result.Files), strings.Join(fileList, "\n"), prURL)
-
-	log.Printf("Posting success comment to %s#%d", task.Repo, task.Number)
-	return github.CreateComment(task.Repo, task.Number, comment, token)
-}
-
-// notifyError posts an error comment to the issue/PR
-func (e *Executor) notifyError(task *webhook.Task, token string, errorMsg string) error {
-	comment := fmt.Sprintf(`### ❌ Task Failed
-
-**Error:** %s
-
-Please check the error message and try again.
-
----
-*Generated by Pilot SWE*`, errorMsg)
-
-	log.Printf("Posting error comment to %s#%d: %s", task.Repo, task.Number, errorMsg)
-	if err := github.CreateComment(task.Repo, task.Number, comment, token); err != nil {
-		log.Printf("Failed to post error comment: %v", err)
-		return fmt.Errorf("%s (also failed to post comment: %w)", errorMsg, err)
+	if err := tracker.Update(token); err != nil {
+		log.Printf("Warning: Failed to update tracking comment with error: %v", err)
 	}
 
 	return fmt.Errorf("%s", errorMsg)
 }
 
-// notifyResponse posts an AI response without file changes (analysis/answer/recommendations)
-func (e *Executor) notifyResponse(task *webhook.Task, token string, result *claude.CodeResponse) error {
-	comment := fmt.Sprintf(`### 💬 AI Response
+// handleResponseOnly updates the tracking comment with AI response (no code changes)
+func (e *Executor) handleResponseOnly(tracker *github.CommentTracker, token string, result *claude.CodeResponse) error {
+	tracker.MarkEnd()
+	tracker.SetCompleted(result.Summary, nil, result.CostUSD)
 
-%s
+	if err := tracker.Update(token); err != nil {
+		log.Printf("Warning: Failed to update tracking comment: %v", err)
+	}
 
----
-*Generated by Pilot SWE • Cost: $%.4f*`, result.Summary, result.CostUSD)
-
-	log.Printf("Posting AI response to %s#%d", task.Repo, task.Number)
-	return github.CreateComment(task.Repo, task.Number, comment, token)
+	log.Printf("Task completed (response only, no code changes)")
+	return nil
 }
 
-// notifyStart posts a comment indicating the task has started
-func (e *Executor) notifyStart(task *webhook.Task, token string) error {
-	comment := `### 🤖 Task Started
-
-Pilot is now processing your request...
-
----
-*Generated by Pilot SWE*`
-
-	log.Printf("Posting start notification to %s#%d", task.Repo, task.Number)
-	return github.CreateComment(task.Repo, task.Number, comment, token)
+// extractFilePaths extracts file paths from FileChange array
+func (e *Executor) extractFilePaths(files []claude.FileChange) []string {
+	paths := make([]string, len(files))
+	for i, file := range files {
+		paths[i] = file.Path
+	}
+	return paths
 }
