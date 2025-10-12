@@ -174,7 +174,7 @@ func TestRetryWithBackoffCustom_ExponentialBackoff(t *testing.T) {
 	attempts := 0
 	startTime := time.Now()
 
-	err := retryWithBackoffCustom(2, 100*time.Millisecond, func() error {
+	err := retryWithBackoffCustom(2, 50*time.Millisecond, func() error {
 		attempts++
 		return errors.New("timeout") // Retryable error
 	})
@@ -185,10 +185,10 @@ func TestRetryWithBackoffCustom_ExponentialBackoff(t *testing.T) {
 		t.Error("Expected error, got nil")
 	}
 
-	// Should wait: 100ms + 200ms = 300ms minimum
+	// Should wait: 50ms + 100ms = 150ms minimum
 	// Allow some tolerance for execution time
-	if duration < 300*time.Millisecond {
-		t.Errorf("Expected at least 300ms delay, got %v", duration)
+	if duration < 150*time.Millisecond {
+		t.Errorf("Expected at least 150ms delay, got %v", duration)
 	}
 
 	if attempts != 3 {

@@ -1,13 +1,41 @@
 package github
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
+// skipIfNetworkUnavailable skips the test if GitHub CLI is not available or network is unreachable
+// or if integration tests are disabled
+func skipIfNetworkUnavailable(t *testing.T) {
+	// Skip integration tests unless explicitly enabled
+	if os.Getenv("RUN_INTEGRATION_TESTS") != "true" {
+		t.Skip("Integration tests disabled, set RUN_INTEGRATION_TESTS=true to enable")
+	}
+	
+	// Check if gh CLI is available
+	if _, err := exec.LookPath("gh"); err != nil {
+		t.Skip("gh CLI not available")
+	}
+	
+	// Quick connectivity check with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	cmd := exec.CommandContext(ctx, "gh", "api", "/user")
+	if err := cmd.Run(); err != nil {
+		t.Skip("GitHub API not accessible or not authenticated")
+	}
+}
+
 func TestClone_ErrorHandling(t *testing.T) {
+	skipIfNetworkUnavailable(t)
+	
 	tests := []struct {
 		name    string
 		repo    string
@@ -85,6 +113,8 @@ func TestClone_ErrorHandling(t *testing.T) {
 }
 
 func TestClone_WorkdirFormat(t *testing.T) {
+	skipIfNetworkUnavailable(t)
+	
 	// Test that workdir has expected format
 	repo := "octocat/Hello-World"
 	branch := "master"
@@ -113,6 +143,8 @@ func TestClone_WorkdirFormat(t *testing.T) {
 }
 
 func TestClone_CleanupFunction(t *testing.T) {
+	skipIfNetworkUnavailable(t)
+	
 	// Test cleanup function behavior
 	repo := "octocat/Hello-World"
 	branch := "master"
@@ -143,6 +175,8 @@ func TestClone_CleanupFunction(t *testing.T) {
 }
 
 func TestClone_GitDirectoryExists(t *testing.T) {
+	skipIfNetworkUnavailable(t)
+	
 	repo := "octocat/Hello-World"
 	branch := "master"
 
@@ -163,6 +197,8 @@ func TestClone_GitDirectoryExists(t *testing.T) {
 }
 
 func TestClone_RetryLogic(t *testing.T) {
+	skipIfNetworkUnavailable(t)
+	
 	// This test verifies retry logic is in place
 	// We can't easily test actual retries without mocking, but we can verify
 	// the function signature and error handling
