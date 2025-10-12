@@ -95,12 +95,17 @@ func (t *CommentTracker) renderBody() string {
 		sections = append(sections, state.OriginalBody)
 	}
 
+	// Add split plan section if present
+	if state.SplitPlan != nil {
+		sections = append(sections, "", t.buildSplitPlanSection())
+	}
+
 	// Add summary for completed tasks
 	if state.IsCompleted() && state.Summary != "" {
 		sections = append(sections, "", "**Summary:** "+state.Summary)
 
-		// Add modified files if available
-		if len(state.ModifiedFiles) > 0 {
+		// Add modified files if available (only for non-split workflows)
+		if len(state.ModifiedFiles) > 0 && state.SplitPlan == nil {
 			sections = append(sections, "", t.buildModifiedFilesList())
 		}
 	}
@@ -245,4 +250,58 @@ func (t *CommentTracker) SetJobURL(jobURL string) {
 func (t *CommentTracker) MarkEnd() {
 	now := time.Now()
 	t.State.EndTime = &now
+}
+
+// SetSplitPlan sets the split plan for multi-PR workflow
+func (t *CommentTracker) SetSplitPlan(plan *SplitPlan) {
+	t.State.SplitPlan = plan
+}
+
+// AddCreatedPR adds a created PR to the tracking list
+func (t *CommentTracker) AddCreatedPR(pr CreatedPR) {
+	t.State.CreatedPRs = append(t.State.CreatedPRs, pr)
+}
+
+// SetCompletedWithSplit marks the task as completed with split workflow
+func (t *CommentTracker) SetCompletedWithSplit(plan *SplitPlan, createdPRs []CreatedPR, costUSD float64) {
+	t.State.Status = StatusCompleted
+	t.State.Summary = fmt.Sprintf("Split into %d PRs", len(plan.SubPRs))
+	t.State.CreatedPRs = createdPRs
+	t.State.CostUSD = costUSD
+}
+
+// buildSplitPlanSection builds the split plan display section
+func (t *CommentTracker) buildSplitPlanSection() string {
+	plan := t.State.SplitPlan
+	if plan == nil {
+		return ""
+	}
+
+	var lines []string
+	lines = append(lines, "### 📋 Split Plan")
+	lines = append(lines, "")
+
+	for i, subPR := range plan.SubPRs {
+		// Find corresponding created PR
+		var createdPR *CreatedPR
+		for j := range t.State.CreatedPRs {
+			if t.State.CreatedPRs[j].Index == i {
+				createdPR = &t.State.CreatedPRs[j]
+				break
+			}
+		}
+
+		var status string
+		if createdPR != nil && createdPR.Status == "created" {
+			status = fmt.Sprintf("✅ [%s](%s)", subPR.Name, createdPR.URL)
+		} else if len(subPR.DependsOn) > 0 {
+			status = fmt.Sprintf("⏳ %s (waiting for dependencies)", subPR.Name)
+		} else {
+			status = fmt.Sprintf("⏳ %s (pending)", subPR.Name)
+		}
+
+		lines = append(lines, fmt.Sprintf("%d. %s — %d files", i+1, status, len(subPR.Files)))
+	}
+
+	return strings.Join(lines, "\n")
 }
