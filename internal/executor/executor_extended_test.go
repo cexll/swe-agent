@@ -135,7 +135,8 @@ func TestCreatePRLink_ComprehensiveURLs(t *testing.T) {
 			wantContains: []string{
 				"github.com/facebook/react",
 				"compare",
-				"main...feature/hooks",
+				"main...feature%2Fhooks",
+				"title=Add+new+hooks",
 			},
 		},
 		{
@@ -147,6 +148,7 @@ func TestCreatePRLink_ComprehensiveURLs(t *testing.T) {
 			wantContains: []string{
 				"github.com/user/project",
 				"develop...fix",
+				"title=Fix+bug+%23123+%26+improve+performance",
 			},
 		},
 		{
@@ -156,7 +158,8 @@ func TestCreatePRLink_ComprehensiveURLs(t *testing.T) {
 			base:  "main",
 			title: "Implement advanced caching",
 			wantContains: []string{
-				"feature/implement-advanced-caching-mechanism",
+				"feature%2Fimplement-advanced-caching-mechanism",
+				"title=Implement+advanced+caching",
 			},
 		},
 	}

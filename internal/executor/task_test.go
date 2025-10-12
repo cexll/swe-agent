@@ -310,6 +310,7 @@ func TestCreatePRLink_URLFormat(t *testing.T) {
 				"https://github.com/owner/repo/compare/",
 				"main...feature",
 				"expand=1",
+				"title=Add+feature",
 			},
 		},
 		{
@@ -321,6 +322,18 @@ func TestCreatePRLink_URLFormat(t *testing.T) {
 			wantSubstr: []string{
 				"github.com",
 				"compare",
+				"title=Fix+bug+%23123",
+			},
+		},
+		{
+			name:  "branch with slash encodes correctly",
+			repo:  "owner/repo",
+			head:  "pilot/123-456",
+			base:  "release/v1",
+			title: "Feature work",
+			wantSubstr: []string{
+				"release%2Fv1...pilot%2F123-456",
+				"title=Feature+work",
 			},
 		},
 	}
@@ -547,7 +560,7 @@ func TestHandleError(t *testing.T) {
 	errorMsg := "test error message"
 
 	// handleError should return an error
-	err := executor.handleError(tracker, "test-token", errorMsg)
+	err := executor.handleError(nil, tracker, "test-token", errorMsg)
 
 	if err == nil {
 		t.Error("handleError() should return an error")
@@ -583,7 +596,7 @@ func TestHandleResponseOnly(t *testing.T) {
 	}
 
 	// handleResponseOnly should return nil error
-	err := executor.handleResponseOnly(tracker, "test-token", result)
+	err := executor.handleResponseOnly(nil, tracker, "test-token", result)
 
 	if err != nil {
 		t.Errorf("handleResponseOnly() unexpected error = %v", err)
@@ -801,7 +814,7 @@ func TestExecutor_HandleError_Integration(t *testing.T) {
 	tracker := github.NewCommentTrackerWithClient("owner/repo", 123, "user", mockGH)
 	tracker.CommentID = 999 // Simulate already created comment
 
-	err := executor.handleError(tracker, "token", "test error message")
+	err := executor.handleError(nil, tracker, "token", "test error message")
 
 	// Should return the error
 	if err == nil {
@@ -838,7 +851,7 @@ func TestExecutor_HandleResponseOnly_Integration(t *testing.T) {
 		Files:   []claude.FileChange{},
 	}
 
-	err := executor.handleResponseOnly(tracker, "token", result)
+	err := executor.handleResponseOnly(nil, tracker, "token", result)
 
 	if err != nil {
 		t.Errorf("handleResponseOnly() unexpected error: %v", err)
@@ -1245,9 +1258,9 @@ func TestExecutor_Execute_CloneFailure(t *testing.T) {
 		t.Errorf("Error should mention clone failure, got: %v", err)
 	}
 
-	// Should have updated comment with error
-	if len(mockGH.UpdateCommentCalls) != 1 {
-		t.Errorf("Expected 1 UpdateComment call for error, got %d", len(mockGH.UpdateCommentCalls))
+	// Should update once for working status and once for error details
+	if len(mockGH.UpdateCommentCalls) != 2 {
+		t.Errorf("Expected 2 UpdateComment calls (status + error), got %d", len(mockGH.UpdateCommentCalls))
 	}
 }
 
@@ -1324,14 +1337,14 @@ func TestExecutor_Execute_NoFileChanges_WithMockClone(t *testing.T) {
 		t.Errorf("Execute() should succeed for response-only (no code changes): %v", err)
 	}
 
-	// Should have updated comment with completed status
-	if len(mockGH.UpdateCommentCalls) != 1 {
-		t.Errorf("Expected 1 UpdateComment call, got %d", len(mockGH.UpdateCommentCalls))
+	// Should have updated comment for status transition and completion summary
+	if len(mockGH.UpdateCommentCalls) != 2 {
+		t.Errorf("Expected 2 UpdateComment calls, got %d", len(mockGH.UpdateCommentCalls))
 	}
 
-	// Verify the update call contains the summary
+	// Verify the final update call contains the summary
 	if len(mockGH.UpdateCommentCalls) > 0 {
-		call := mockGH.UpdateCommentCalls[0]
+		call := mockGH.UpdateCommentCalls[len(mockGH.UpdateCommentCalls)-1]
 		if !strings.Contains(call.Body, "Analysis") {
 			t.Error("Update comment should contain the analysis summary")
 		}
@@ -1449,9 +1462,9 @@ func TestExecutor_Execute_ProviderGenerateError_WithMockClone(t *testing.T) {
 		t.Errorf("Error should mention provider failure, got: %v", err)
 	}
 
-	// Should have updated comment with error
-	if len(mockGH.UpdateCommentCalls) != 1 {
-		t.Errorf("Expected 1 UpdateComment call for error, got %d", len(mockGH.UpdateCommentCalls))
+	// Should update once for status and once for error
+	if len(mockGH.UpdateCommentCalls) != 2 {
+		t.Errorf("Expected 2 UpdateComment calls (status + error), got %d", len(mockGH.UpdateCommentCalls))
 	}
 }
 
@@ -1597,9 +1610,9 @@ func TestExecutor_Execute_UpdateCommentWarning_WithMockClone(t *testing.T) {
 		t.Errorf("Execute() should succeed even when UpdateComment fails: %v", err)
 	}
 
-	// UpdateComment should have been called
-	if len(mockGH.UpdateCommentCalls) != 1 {
-		t.Errorf("Expected 1 UpdateComment call, got %d", len(mockGH.UpdateCommentCalls))
+	// UpdateComment should have been called twice (status + final response)
+	if len(mockGH.UpdateCommentCalls) != 2 {
+		t.Errorf("Expected 2 UpdateComment calls, got %d", len(mockGH.UpdateCommentCalls))
 	}
 }
 
@@ -1753,5 +1766,236 @@ func TestExecutor_Execute_AddLabelWarning_WithMockClone(t *testing.T) {
 	// AddLabel should have been called
 	if len(mockGH.AddLabelCalls) != 1 {
 		t.Errorf("Expected 1 AddLabel call, got %d", len(mockGH.AddLabelCalls))
+	}
+}
+
+func TestFormatDiscussion(t *testing.T) {
+	issueComments := []github.IssueComment{
+		{
+			Author:    "alice",
+			Body:      "Initial analysis",
+			CreatedAt: time.Date(2025, 10, 10, 10, 0, 0, 0, time.UTC),
+		},
+	}
+	reviewComments := []github.ReviewComment{
+		{
+			Author:    "bob",
+			Body:      "Looks good overall",
+			Path:      "main.go",
+			CreatedAt: time.Date(2025, 10, 10, 11, 0, 0, 0, time.UTC),
+		},
+	}
+
+	section := formatDiscussion(issueComments, reviewComments)
+
+	if !strings.Contains(section, "## Discussion") {
+		t.Fatalf("Discussion section missing header: %q", section)
+	}
+	if !strings.Contains(section, "@alice") || !strings.Contains(section, "@bob") {
+		t.Fatalf("Discussion section missing authors: %q", section)
+	}
+	if !strings.Contains(section, "_File: main.go_") {
+		t.Fatalf("Discussion section missing review metadata: %q", section)
+	}
+
+	idxAlice := strings.Index(section, "@alice")
+	idxBob := strings.Index(section, "@bob")
+	if idxAlice == -1 || idxBob == -1 || idxAlice > idxBob {
+		t.Fatalf("Discussion entries not ordered chronologically: %q", section)
+	}
+}
+
+func TestFormatDiscussion_WithDiffHunk(t *testing.T) {
+	reviewComments := []github.ReviewComment{
+		{
+			Author:    "reviewer",
+			Body:      "This looks wrong",
+			Path:      "internal/app/handler.go",
+			DiffHunk:  "@@ -10,7 +10,7 @@\n func Process() error {\n-\treturn nil\n+\treturn fmt.Errorf(\"not implemented\")\n }",
+			CreatedAt: time.Date(2025, 10, 10, 12, 0, 0, 0, time.UTC),
+		},
+	}
+
+	section := formatDiscussion(nil, reviewComments)
+
+	// Should contain file path
+	if !strings.Contains(section, "_File: internal/app/handler.go_") {
+		t.Fatalf("Discussion section missing file path: %q", section)
+	}
+
+	// Should contain diff hunk as code block
+	if !strings.Contains(section, "```diff") {
+		t.Fatalf("Discussion section missing diff code block: %q", section)
+	}
+	if !strings.Contains(section, "return fmt.Errorf") {
+		t.Fatalf("Discussion section missing diff content: %q", section)
+	}
+	if !strings.Contains(section, "```\nThis looks wrong") {
+		t.Fatalf("Diff code block not properly closed before comment body: %q", section)
+	}
+}
+
+func TestInjectDiscussionWithSeparator(t *testing.T) {
+	base := "# Issue: Bug\n\nSteps to reproduce\n\n---\n\nFix it quickly"
+	discussion := "## Discussion\n\n@alice (2025-10-12T01:00:00Z):\nInvestigating now"
+
+	result := injectDiscussion(base, discussion)
+
+	if strings.Count(result, "## Discussion") != 1 {
+		t.Fatalf("Expected single discussion section, got: %q", result)
+	}
+	sepIndex := strings.Index(result, "\n\n---\n\n")
+	discIndex := strings.Index(result, "## Discussion")
+	if discIndex == -1 || sepIndex == -1 || discIndex > sepIndex {
+		t.Fatalf("Discussion section not inserted before user instruction: %q", result)
+	}
+}
+
+func TestComposeDiscussionSection(t *testing.T) {
+	mockGH := github.NewMockGHClient()
+	mockGH.ListIssueCommentsFunc = func(repo string, number int, token string) ([]github.IssueComment, error) {
+		return []github.IssueComment{
+			{
+				Author:    "alice",
+				Body:      "First comment",
+				CreatedAt: time.Date(2025, 10, 9, 8, 0, 0, 0, time.UTC),
+			},
+		}, nil
+	}
+
+	exec := &Executor{ghClient: mockGH}
+	task := &webhook.Task{
+		Repo:   "owner/repo",
+		Number: 1,
+	}
+
+	section := exec.composeDiscussionSection(task, "token")
+	if section == "" {
+		t.Fatal("composeDiscussionSection() returned empty string")
+	}
+	if len(mockGH.ListIssueCommentsCalls) != 1 {
+		t.Fatalf("Expected ListIssueComments to be called once, got %d", len(mockGH.ListIssueCommentsCalls))
+	}
+	if len(mockGH.ListReviewCommentsCalls) != 0 {
+		t.Fatalf("Review comments should not be fetched for issues, got %d calls", len(mockGH.ListReviewCommentsCalls))
+	}
+}
+
+func TestComposeDiscussionSection_PRIncludesReviews(t *testing.T) {
+	mockGH := github.NewMockGHClient()
+	mockGH.ListIssueCommentsFunc = func(repo string, number int, token string) ([]github.IssueComment, error) {
+		return []github.IssueComment{
+			{
+				Author:    "alice",
+				Body:      "General comment",
+				CreatedAt: time.Date(2025, 10, 9, 8, 0, 0, 0, time.UTC),
+			},
+		}, nil
+	}
+	mockGH.ListReviewCommentsFunc = func(repo string, number int, token string) ([]github.ReviewComment, error) {
+		return []github.ReviewComment{
+			{
+				Author:    "bob",
+				Body:      "Inline suggestion",
+				Path:      "main.go",
+				CreatedAt: time.Date(2025, 10, 9, 9, 0, 0, 0, time.UTC),
+			},
+		}, nil
+	}
+
+	exec := &Executor{ghClient: mockGH}
+	task := &webhook.Task{
+		Repo:   "owner/repo",
+		Number: 42,
+		IsPR:   true,
+	}
+
+	section := exec.composeDiscussionSection(task, "token")
+	if !strings.Contains(section, "Inline suggestion") {
+		t.Fatalf("Review comment missing from discussion: %q", section)
+	}
+	if len(mockGH.ListReviewCommentsCalls) != 1 {
+		t.Fatalf("Expected ListReviewComments to be called once, got %d", len(mockGH.ListReviewCommentsCalls))
+	}
+}
+
+func TestExecutor_Execute_IncludesDiscussionContext(t *testing.T) {
+	mockGH := github.NewMockGHClient()
+	mockGH.CreateCommentFunc = func(repo string, number int, body, token string) (int, error) {
+		return 12345, nil
+	}
+	mockGH.ListIssueCommentsFunc = func(repo string, number int, token string) ([]github.IssueComment, error) {
+		return []github.IssueComment{
+			{
+				Author:    "alice",
+				Body:      "Please handle edge cases",
+				CreatedAt: time.Date(2025, 10, 10, 10, 0, 0, 0, time.UTC),
+			},
+		}, nil
+	}
+	mockGH.ListReviewCommentsFunc = func(repo string, number int, token string) ([]github.ReviewComment, error) {
+		return []github.ReviewComment{
+			{
+				Author:    "bob",
+				Body:      "Nit: rename variable",
+				Path:      "main.go",
+				CreatedAt: time.Date(2025, 10, 10, 11, 0, 0, 0, time.UTC),
+			},
+		}, nil
+	}
+
+	mockAuth := &mockAppAuth{}
+
+	var capturedPrompt string
+	mockProvider := &mockProvider{
+		generateFunc: func(ctx context.Context, req *claude.CodeRequest) (*claude.CodeResponse, error) {
+			capturedPrompt = req.Prompt
+			return nil, fmt.Errorf("stop after prompt capture")
+		},
+	}
+
+	mockClone := func(repo, branch string) (string, func(), error) {
+		return t.TempDir(), func() {}, nil
+	}
+
+	executor := NewWithClient(mockProvider, mockAuth, mockGH)
+	executor.cloneFn = mockClone
+
+	task := &webhook.Task{
+		Repo:       "owner/repo",
+		Number:     777,
+		Branch:     "main",
+		Prompt:     "# Issue: Login bug\n\nFix login crash\n\n---\n\nImplement fix ASAP",
+		IssueTitle: "Login bug",
+		IssueBody:  "Fix login crash",
+		IsPR:       true,
+		Username:   "tester",
+	}
+
+	err := executor.Execute(context.Background(), task)
+	if err == nil || !strings.Contains(err.Error(), "stop after prompt capture") {
+		t.Fatalf("Execute() should return provider error, got %v", err)
+	}
+
+	if !strings.Contains(capturedPrompt, "## Discussion") {
+		t.Fatalf("Provider prompt missing discussion section: %q", capturedPrompt)
+	}
+	if !strings.Contains(capturedPrompt, "Please handle edge cases") {
+		t.Fatalf("Issue comment not included in prompt: %q", capturedPrompt)
+	}
+	if !strings.Contains(capturedPrompt, "Nit: rename variable") {
+		t.Fatalf("Review comment not included in prompt: %q", capturedPrompt)
+	}
+	if strings.Index(capturedPrompt, "## Discussion") > strings.Index(capturedPrompt, "Implement fix ASAP") {
+		t.Fatalf("Discussion section should appear before user instructions: %q", capturedPrompt)
+	}
+	if strings.Count(capturedPrompt, "\n\n---\n\n") != 1 {
+		t.Fatalf("Instruction separator should remain single occurrence: %q", capturedPrompt)
+	}
+	if len(mockGH.ListIssueCommentsCalls) != 1 {
+		t.Fatalf("Expected ListIssueComments to be called once, got %d", len(mockGH.ListIssueCommentsCalls))
+	}
+	if len(mockGH.ListReviewCommentsCalls) != 1 {
+		t.Fatalf("Expected ListReviewComments to be called once, got %d", len(mockGH.ListReviewCommentsCalls))
 	}
 }
