@@ -8,7 +8,7 @@ import (
 
 const (
 	// Default retry configuration for GitHub operations
-	defaultMaxRetries   = 3
+	defaultMaxRetries   = 10
 	defaultInitialDelay = 1 * time.Second
 )
 

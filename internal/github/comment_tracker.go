@@ -130,6 +130,8 @@ func (t *CommentTracker) buildHeader() string {
 	}
 
 	switch state.Status {
+	case StatusQueued:
+		return fmt.Sprintf("⏳ **Pilot queued @%s's task...**", username)
 	case StatusWorking:
 		return fmt.Sprintf("🤖 **Pilot is working on @%s's task...**", username)
 
@@ -214,6 +216,11 @@ func (t *CommentTracker) buildFooter() string {
 // SetWorking sets the task status to working
 func (t *CommentTracker) SetWorking() {
 	t.State.Status = StatusWorking
+}
+
+// SetQueued sets the task status to queued
+func (t *CommentTracker) SetQueued() {
+	t.State.Status = StatusQueued
 }
 
 // SetCompleted sets the task status to completed

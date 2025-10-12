@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 )
 
 // GHClient is an interface for GitHub CLI operations
@@ -18,6 +19,12 @@ type GHClient interface {
 	// GetCommentBody retrieves the current body of a comment
 	GetCommentBody(repo string, commentID int, token string) (string, error)
 
+	// ListIssueComments retrieves all issue comments for the given issue/PR
+	ListIssueComments(repo string, number int, token string) ([]IssueComment, error)
+
+	// ListReviewComments retrieves all review comments for the given PR
+	ListReviewComments(repo string, number int, token string) ([]ReviewComment, error)
+
 	// AddLabel adds a label to an issue/PR
 	AddLabel(repo string, number int, label, token string) error
 
@@ -26,6 +33,22 @@ type GHClient interface {
 
 	// CreatePR creates a pull request
 	CreatePR(workdir, repo, head, base, title, body string) (string, error)
+}
+
+// IssueComment represents a GitHub issue or PR conversation comment
+type IssueComment struct {
+	Author    string
+	Body      string
+	CreatedAt time.Time
+}
+
+// ReviewComment represents a GitHub pull request review comment
+type ReviewComment struct {
+	Author    string
+	Body      string
+	Path      string
+	DiffHunk  string
+	CreatedAt time.Time
 }
 
 // RealGHClient is the production implementation using gh CLI
@@ -131,6 +154,104 @@ func (c *RealGHClient) GetCommentBody(repo string, commentID int, token string) 
 	return body, err
 }
 
+// ListIssueComments retrieves issue comments for a given issue/PR
+func (c *RealGHClient) ListIssueComments(repo string, number int, token string) ([]IssueComment, error) {
+	var comments []IssueComment
+	err := retryWithBackoff(func() error {
+		args := []string{
+			"api",
+			fmt.Sprintf("/repos/%s/issues/%d/comments", repo, number),
+		}
+
+		oldToken := os.Getenv("GITHUB_TOKEN")
+		os.Setenv("GITHUB_TOKEN", token)
+		defer os.Setenv("GITHUB_TOKEN", oldToken)
+
+		output, err := c.runner.Run("gh", args...)
+		if err != nil {
+			return fmt.Errorf("gh api list issue comments failed: %w\nOutput: %s", err, string(output))
+		}
+
+		var raw []struct {
+			Body      string `json:"body"`
+			CreatedAt string `json:"created_at"`
+			User      struct {
+				Login string `json:"login"`
+			} `json:"user"`
+		}
+		if err := json.Unmarshal(output, &raw); err != nil {
+			return fmt.Errorf("failed to parse issue comments: %w", err)
+		}
+
+		comments = make([]IssueComment, 0, len(raw))
+		for _, item := range raw {
+			createdAt, err := time.Parse(time.RFC3339, item.CreatedAt)
+			if err != nil {
+				createdAt = time.Time{}
+			}
+			comments = append(comments, IssueComment{
+				Author:    item.User.Login,
+				Body:      item.Body,
+				CreatedAt: createdAt,
+			})
+		}
+		return nil
+	})
+
+	return comments, err
+}
+
+// ListReviewComments retrieves review comments for a given PR
+func (c *RealGHClient) ListReviewComments(repo string, number int, token string) ([]ReviewComment, error) {
+	var comments []ReviewComment
+	err := retryWithBackoff(func() error {
+		args := []string{
+			"api",
+			fmt.Sprintf("/repos/%s/pulls/%d/comments", repo, number),
+		}
+
+		oldToken := os.Getenv("GITHUB_TOKEN")
+		os.Setenv("GITHUB_TOKEN", token)
+		defer os.Setenv("GITHUB_TOKEN", oldToken)
+
+		output, err := c.runner.Run("gh", args...)
+		if err != nil {
+			return fmt.Errorf("gh api list review comments failed: %w\nOutput: %s", err, string(output))
+		}
+
+		var raw []struct {
+			Body      string `json:"body"`
+			Path      string `json:"path"`
+			DiffHunk  string `json:"diff_hunk"`
+			CreatedAt string `json:"created_at"`
+			User      struct {
+				Login string `json:"login"`
+			} `json:"user"`
+		}
+		if err := json.Unmarshal(output, &raw); err != nil {
+			return fmt.Errorf("failed to parse review comments: %w", err)
+		}
+
+		comments = make([]ReviewComment, 0, len(raw))
+		for _, item := range raw {
+			createdAt, err := time.Parse(time.RFC3339, item.CreatedAt)
+			if err != nil {
+				createdAt = time.Time{}
+			}
+			comments = append(comments, ReviewComment{
+				Author:    item.User.Login,
+				Body:      item.Body,
+				Path:      item.Path,
+				DiffHunk:  item.DiffHunk,
+				CreatedAt: createdAt,
+			})
+		}
+		return nil
+	})
+
+	return comments, err
+}
+
 // AddLabel adds a label to an issue/PR
 func (c *RealGHClient) AddLabel(repo string, number int, label, token string) error {
 	return retryWithBackoff(func() error {
@@ -191,12 +312,14 @@ func (c *RealGHClient) CreatePR(workdir, repo, head, base, title, body string) (
 
 // MockGHClient is a mock implementation for testing
 type MockGHClient struct {
-	CreateCommentFunc  func(repo string, number int, body, token string) (int, error)
-	UpdateCommentFunc  func(repo string, commentID int, body, token string) error
-	GetCommentBodyFunc func(repo string, commentID int, token string) (string, error)
-	AddLabelFunc       func(repo string, number int, label, token string) error
-	CloneFunc          func(repo, branch, destDir string) error
-	CreatePRFunc       func(workdir, repo, head, base, title, body string) (string, error)
+	CreateCommentFunc      func(repo string, number int, body, token string) (int, error)
+	UpdateCommentFunc      func(repo string, commentID int, body, token string) error
+	GetCommentBodyFunc     func(repo string, commentID int, token string) (string, error)
+	ListIssueCommentsFunc  func(repo string, number int, token string) ([]IssueComment, error)
+	ListReviewCommentsFunc func(repo string, number int, token string) ([]ReviewComment, error)
+	AddLabelFunc           func(repo string, number int, label, token string) error
+	CloneFunc              func(repo, branch, destDir string) error
+	CreatePRFunc           func(workdir, repo, head, base, title, body string) (string, error)
 
 	// Track calls
 	CreateCommentCalls []struct {
@@ -215,6 +338,16 @@ type MockGHClient struct {
 		Repo      string
 		CommentID int
 		Token     string
+	}
+	ListIssueCommentsCalls []struct {
+		Repo   string
+		Number int
+		Token  string
+	}
+	ListReviewCommentsCalls []struct {
+		Repo   string
+		Number int
+		Token  string
 	}
 	AddLabelCalls []struct {
 		Repo   string
@@ -287,6 +420,36 @@ func (m *MockGHClient) GetCommentBody(repo string, commentID int, token string) 
 	}
 
 	return "mock comment body", nil
+}
+
+// ListIssueComments mock implementation
+func (m *MockGHClient) ListIssueComments(repo string, number int, token string) ([]IssueComment, error) {
+	m.ListIssueCommentsCalls = append(m.ListIssueCommentsCalls, struct {
+		Repo   string
+		Number int
+		Token  string
+	}{repo, number, token})
+
+	if m.ListIssueCommentsFunc != nil {
+		return m.ListIssueCommentsFunc(repo, number, token)
+	}
+
+	return nil, nil
+}
+
+// ListReviewComments mock implementation
+func (m *MockGHClient) ListReviewComments(repo string, number int, token string) ([]ReviewComment, error) {
+	m.ListReviewCommentsCalls = append(m.ListReviewCommentsCalls, struct {
+		Repo   string
+		Number int
+		Token  string
+	}{repo, number, token})
+
+	if m.ListReviewCommentsFunc != nil {
+		return m.ListReviewCommentsFunc(repo, number, token)
+	}
+
+	return nil, nil
 }
 
 // AddLabel mock implementation

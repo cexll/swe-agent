@@ -9,6 +9,7 @@ import (
 type CommentStatus string
 
 const (
+	StatusQueued    CommentStatus = "queued"
 	StatusWorking   CommentStatus = "working"
 	StatusCompleted CommentStatus = "completed"
 	StatusFailed    CommentStatus = "failed"
@@ -78,7 +79,7 @@ func (s *CommentState) Duration() string {
 
 // IsInProgress returns true if the task is still running
 func (s *CommentState) IsInProgress() bool {
-	return s.Status == StatusWorking
+	return s.Status == StatusWorking || s.Status == StatusQueued
 }
 
 // IsCompleted returns true if the task finished successfully

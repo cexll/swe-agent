@@ -47,6 +47,13 @@ func TestCommentTracker_SetMethods(t *testing.T) {
 		t.Errorf("After SetWorking, status = %v, want %v", tracker.State.Status, StatusWorking)
 	}
 
+	// Test SetQueued
+	trackerQueued := NewCommentTracker("owner/repo", 789, "user")
+	trackerQueued.SetQueued()
+	if trackerQueued.State.Status != StatusQueued {
+		t.Errorf("After SetQueued, status = %v, want %v", trackerQueued.State.Status, StatusQueued)
+	}
+
 	// Test SetCompleted
 	files := []string{"file1.go", "file2.go"}
 	tracker.SetCompleted("test summary", files, 0.05)
@@ -125,6 +132,16 @@ func TestCommentTracker_BuildHeader(t *testing.T) {
 				"🤖",
 				"Pilot is working",
 				"@alice",
+			},
+		},
+		{
+			name:     "queued status",
+			status:   StatusQueued,
+			username: "zoe",
+			wantContains: []string{
+				"⏳",
+				"queued",
+				"@zoe",
 			},
 		},
 		{
