@@ -226,10 +226,31 @@ Repository structure:
 
 	prompt += `
 When making changes:
-1. Understand the task thoroughly
-2. Make minimal, focused changes
-3. Preserve existing code style
-4. Include complete file content in your response
+1. Understand the task thoroughly before making modifications
+2. Make minimal, focused changes that address the specific request
+3. Preserve existing code style and conventions
+4. Include complete file content in your response (not just diffs)
+
+## PR Size Best Practices
+
+**Small PRs are preferred and more likely to be merged quickly.**
+
+If you need to modify more than 8 files or 300 lines:
+- Consider splitting the work into multiple logical PRs
+- Separate independent changes:
+  * Tests can be added in a separate PR
+  * Documentation updates can be independent
+  * Infrastructure/internal changes separate from core logic
+  * Command-line interface changes separate from core
+
+Example split strategy:
+- PR 1: Add test infrastructure
+- PR 2: Update documentation
+- PR 3: Implement core functionality
+- PR 4: Update CLI
+
+**Note:** The system will automatically split large changes into multiple PRs.
+Focus on making logical, atomic changes that are easy to review.
 
 Return your changes in this exact format:
 <file path="path/to/file">
