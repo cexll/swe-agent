@@ -99,17 +99,20 @@ GitHub Webhook (issue_comment event)
 ### Core Components
 
 #### 1. Webhook Handler (`internal/webhook/`)
+
 - **handler.go**: HTTP endpoint for GitHub webhooks, event parsing
 - **verify.go**: HMAC SHA-256 signature verification (constant-time comparison)
 - **types.go**: GitHub webhook payload types
 
 #### 2. Provider System (`internal/provider/`)
+
 - **provider.go**: Interface definition for AI backends
 - **factory.go**: Provider factory pattern for instantiation
 - **claude/**: Claude Code implementation
 - **codex/**: Codex implementation (multi-provider support)
 
 Provider interface enables zero-branch polymorphism:
+
 ```go
 type Provider interface {
     GenerateCode(ctx, req) (*CodeResponse, error)
@@ -118,6 +121,7 @@ type Provider interface {
 ```
 
 #### 3. Task Executor (`internal/executor/`)
+
 - **task.go**: Orchestrates the full workflow:
   1. Clone repository
   2. Call AI provider
@@ -126,12 +130,14 @@ type Provider interface {
   5. Post comment with PR link
 
 #### 4. GitHub Operations (`internal/github/`)
+
 - **auth.go**: GitHub App JWT token generation and installation token exchange
 - **clone.go**: Repository cloning via `gh repo clone`
 - **comment.go**: Comment posting via `gh issue comment`
 - **pr.go**: PR creation URL generation
 
 #### 5. Configuration (`internal/config/`)
+
 - **config.go**: Environment variable loading and validation
 - Supports multiple providers (Claude, Codex)
 - Validates required secrets at startup
@@ -186,6 +192,7 @@ Token generation happens per-request to ensure fresh credentials.
 ### Error Handling Strategy
 
 Errors are automatically posted as GitHub comments for user visibility:
+
 ```go
 if err != nil {
     return e.notifyError(task, errorMsg)
@@ -197,6 +204,7 @@ if err != nil {
 ### CLI Tool Dependencies
 
 This project delegates Git operations to CLI tools rather than reimplementing them:
+
 - **`gh` CLI**: All GitHub operations (clone, comment, PR)
 - **`claude` CLI**: AI code generation via lancekrogers/claude-code-go
 
@@ -207,21 +215,25 @@ Ensure both CLIs are installed and available in PATH.
 ### Design Philosophy (Linus-Style)
 
 1. **Good Taste - Eliminate Special Cases**
+
    - Use interfaces over if/else chains
    - Design data structures to make edge cases disappear
    - Prefer polymorphism to conditionals
 
 2. **Shallow Indentation**
+
    - Functions should not exceed 3 levels of indentation
    - Early returns over nested conditionals
    - Extract complex logic into helper functions
 
 3. **Clear Naming**
+
    - Use domain-specific names: `Provider`, `Executor`, `Handler`
    - Avoid generic names: `Manager`, `Service`, `Helper`
    - Package names match their primary type
 
 4. **Error Visibility**
+
    - Don't hide errors in logs
    - Surface errors to users (GitHub comments)
    - Include context in error messages
@@ -241,10 +253,12 @@ Ensure both CLIs are installed and available in PATH.
 ## Multi-Provider Support
 
 Current providers:
+
 - **Claude**: Via `lancekrogers/claude-code-go` SDK
 - **Codex**: Via Codex provider implementation
 
 Provider selection via environment variable:
+
 ```bash
 PROVIDER=claude  # or "codex"
 CLAUDE_API_KEY=sk-ant-xxx
