@@ -1,0 +1,76 @@
+{{define "content"}}
+<div class="task-detail">
+    <div style="margin-bottom: 24px;">
+        <a href="/" style="color: #58a6ff; text-decoration: none; font-size: 14px;">← Back to Tasks</a>
+    </div>
+
+    <div style="background-color: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 24px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+            <h2 style="font-size: 20px; font-weight: 600;">{{.Task.Title}}</h2>
+            <span class="badge status-{{.Task.Status}}">{{.Task.Status}}</span>
+        </div>
+
+        <div style="font-size: 14px; color: #8b949e; margin-bottom: 24px;">
+            <span>{{.Task.Owner}}/{{.Task.Repo}}</span>
+            <span style="margin: 0 8px;">•</span>
+            <span>Issue #{{.Task.IssueNumber}}</span>
+            <span style="margin: 0 8px;">•</span>
+            <span>Created: {{.Task.CreatedAt.Format "2006-01-02 15:04:05"}}</span>
+            <span style="margin: 0 8px;">•</span>
+            <span>Updated: {{.Task.UpdatedAt.Format "2006-01-02 15:04:05"}}</span>
+        </div>
+
+        {{if .Task.ErrorMsg}}
+        <div style="margin-bottom: 24px; padding: 12px 16px; background-color: #5a1e1e; border: 1px solid #8b3838; border-radius: 6px;">
+            <strong style="color: #ff7b72;">Error:</strong>
+            <pre style="margin-top: 8px; white-space: pre-wrap; word-wrap: break-word; font-family: 'SF Mono', monospace; font-size: 13px;">{{.Task.ErrorMsg}}</pre>
+        </div>
+        {{end}}
+
+        {{if .Task.PRURLs}}
+        <div style="margin-bottom: 24px; padding: 12px 16px; background-color: #1e3a1e; border: 1px solid #2ea043; border-radius: 6px;">
+            <strong style="color: #56d364;">Pull Requests:</strong>
+            <div style="margin-top: 8px;">
+                {{range .Task.PRURLs}}
+                <div style="margin-bottom: 4px;">
+                    <a href="{{.}}" style="color: #58a6ff; text-decoration: none; font-size: 14px;" target="_blank">
+                        📝 {{.}}
+                    </a>
+                </div>
+                {{end}}
+            </div>
+        </div>
+        {{end}}
+
+        <div>
+            <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 12px; color: #c9d1d9;">Execution Logs</h3>
+
+            {{if .Task.Logs}}
+            <div style="background-color: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 16px; max-height: 600px; overflow-y: auto;">
+                {{range .Task.Logs}}
+                <div style="margin-bottom: 8px; font-family: 'SF Mono', monospace; font-size: 13px;">
+                    <span style="color: #8b949e;">[{{.Timestamp.Format "15:04:05"}}]</span>
+                    <span style="color: {{if eq .Level "error"}}#ff7b72{{else if eq .Level "success"}}#56d364{{else if eq .Level "info"}}#58a6ff{{else}}#8b949e{{end}}; font-weight: 600;">{{.Level | printf "%-7s"}}</span>
+                    <span style="color: #c9d1d9;">{{.Message}}</span>
+                </div>
+                {{end}}
+            </div>
+            {{else}}
+            <div style="background-color: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 24px; text-align: center;">
+                <p style="color: #8b949e; font-size: 14px;">No logs available</p>
+            </div>
+            {{end}}
+        </div>
+    </div>
+</div>
+
+<style>
+    pre {
+        margin: 0;
+    }
+
+    .task-detail a:hover {
+        text-decoration: underline;
+    }
+</style>
+{{end}}

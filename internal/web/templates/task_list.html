@@ -1,0 +1,65 @@
+{{define "content"}}
+<div class="task-list">
+    <h2 style="margin-bottom: 20px; font-size: 20px; font-weight: 600;">Tasks</h2>
+
+    {{if .Tasks}}
+    <div class="tasks">
+        {{range .Tasks}}
+        <div class="task-item" style="background-color: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; margin-bottom: 12px;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div style="flex: 1;">
+                    <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 8px;">
+                        <a href="/task/{{.ID}}" style="color: #58a6ff; text-decoration: none;">
+                            {{.Title}}
+                        </a>
+                    </h3>
+                    <div style="font-size: 14px; color: #8b949e;">
+                        <span>{{.Owner}}/{{.Repo}}</span>
+                        <span style="margin: 0 8px;">•</span>
+                        <span>Issue #{{.IssueNumber}}</span>
+                        <span style="margin: 0 8px;">•</span>
+                        <span>{{.CreatedAt.Format "2006-01-02 15:04:05"}}</span>
+                    </div>
+                </div>
+                <div>
+                    <span class="badge status-{{.Status}}">{{.Status}}</span>
+                </div>
+            </div>
+
+            {{if .ErrorMsg}}
+            <div style="margin-top: 12px; padding: 8px 12px; background-color: #5a1e1e; border: 1px solid #8b3838; border-radius: 4px; font-size: 14px;">
+                ❌ {{.ErrorMsg}}
+            </div>
+            {{end}}
+
+            {{if .PRURLs}}
+            <div style="margin-top: 12px;">
+                {{range .PRURLs}}
+                <a href="{{.}}" style="color: #58a6ff; text-decoration: none; font-size: 14px; margin-right: 12px;" target="_blank">
+                    📝 View PR
+                </a>
+                {{end}}
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+    </div>
+    {{else}}
+    <div style="background-color: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 48px; text-align: center;">
+        <p style="font-size: 16px; color: #8b949e;">No tasks yet</p>
+        <p style="font-size: 14px; color: #8b949e; margin-top: 8px;">Tasks will appear here when you comment <code style="background-color: #0d1117; padding: 2px 6px; border-radius: 3px;">/code</code> on GitHub issues</p>
+    </div>
+    {{end}}
+</div>
+
+<style>
+    .task-item:hover {
+        border-color: #58a6ff;
+        transition: border-color 0.2s;
+    }
+
+    code {
+        font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+    }
+</style>
+{{end}}

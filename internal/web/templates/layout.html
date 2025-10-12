@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pilot SWE - Task Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background-color: #161b22;
+            border-bottom: 1px solid #30363d;
+            padding: 16px 0;
+            margin-bottom: 24px;
+        }
+
+        header h1 {
+            font-size: 24px;
+            font-weight: 600;
+            color: #58a6ff;
+        }
+
+        header nav {
+            margin-top: 8px;
+        }
+
+        header nav a {
+            color: #58a6ff;
+            text-decoration: none;
+            margin-right: 16px;
+        }
+
+        header nav a:hover {
+            text-decoration: underline;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            color: white;
+        }
+
+        .status-pending { background-color: #6c757d; }
+        .status-running { background-color: #0d6efd; }
+        .status-completed { background-color: #198754; }
+        .status-failed { background-color: #dc3545; }
+
+        footer {
+            margin-top: 48px;
+            padding-top: 24px;
+            border-top: 1px solid #30363d;
+            text-align: center;
+            color: #8b949e;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>🚀 Pilot SWE</h1>
+            <nav>
+                <a href="/">Tasks</a>
+            </nav>
+        </div>
+    </header>
+
+    <div class="container">
+        {{template "content" .}}
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>Powered by Pilot SWE | GitHub App for Automated Code Generation</p>
+        </div>
+    </footer>
+</body>
+</html>
