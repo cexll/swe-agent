@@ -220,6 +220,50 @@ func TestConfig_validate(t *testing.T) {
 			wantErr: true,
 			errMsg:  "ANTHROPIC_API_KEY is required for claude provider",
 		},
+		{
+			name: "valid codex config with OpenAI key",
+			cfg: &Config{
+				GitHubAppID:         "123456",
+				GitHubPrivateKey:    "test-key",
+				GitHubWebhookSecret: "test-secret",
+				Provider:            "codex",
+				OpenAIAPIKey:        "sk-openai-test",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid codex config without OpenAI key (warning logged)",
+			cfg: &Config{
+				GitHubAppID:         "123456",
+				GitHubPrivateKey:    "test-key",
+				GitHubWebhookSecret: "test-secret",
+				Provider:            "codex",
+				OpenAIAPIKey:        "", // Empty, should log warning but not fail
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid provider",
+			cfg: &Config{
+				GitHubAppID:         "123456",
+				GitHubPrivateKey:    "test-key",
+				GitHubWebhookSecret: "test-secret",
+				Provider:            "invalid-provider",
+			},
+			wantErr: true,
+			errMsg:  "invalid provider: invalid-provider (must be 'claude' or 'codex')",
+		},
+		{
+			name: "empty provider (should default but validate will catch)",
+			cfg: &Config{
+				GitHubAppID:         "123456",
+				GitHubPrivateKey:    "test-key",
+				GitHubWebhookSecret: "test-secret",
+				Provider:            "",
+			},
+			wantErr: true,
+			errMsg:  "invalid provider:  (must be 'claude' or 'codex')",
+		},
 	}
 
 	for _, tt := range tests {

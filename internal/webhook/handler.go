@@ -19,6 +19,7 @@ type Task struct {
 	IssueTitle string
 	IssueBody  string
 	IsPR       bool
+	Username   string // User who triggered the task
 }
 
 // Executor interface for task execution
@@ -111,6 +112,7 @@ func (h *Handler) HandleIssueComment(w http.ResponseWriter, r *http.Request) {
 		IssueTitle: event.Issue.Title,
 		IssueBody:  event.Issue.Body,
 		IsPR:       isPR,
+		Username:   event.Comment.User.Login,
 	}
 
 	log.Printf("Received task: repo=%s, number=%d, prompt=%s", task.Repo, task.Number, task.Prompt)
