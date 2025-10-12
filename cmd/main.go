@@ -1,104 +1,90 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
-	"github.com/cexll/swe/internal/config"
-	"github.com/cexll/swe/internal/executor"
-	"github.com/cexll/swe/internal/github"
-	"github.com/cexll/swe/internal/provider"
-	"github.com/cexll/swe/internal/webhook"
 	"github.com/gorilla/mux"
-	"github.com/joho/godotenv"
+	"github.com/stellarlink/pilot-swe/internal/config"
+	"github.com/stellarlink/pilot-swe/internal/executor"
+	"github.com/stellarlink/pilot-swe/internal/store"
+	"github.com/stellarlink/pilot-swe/internal/web"
+	"github.com/stellarlink/pilot-swe/internal/webhook"
 )
 
 func main() {
-	// Load .env file (ignore error if file doesn't exist)
-	_ = godotenv.Load()
-
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	log.Printf("Starting Pilot SWE server...")
-	log.Printf("Port: %d", cfg.Port)
-	log.Printf("Trigger keyword: %s", cfg.TriggerKeyword)
-	log.Printf("Provider: %s", cfg.Provider)
-	log.Printf("GitHub App ID: %s", cfg.GitHubAppID)
-
-	// Initialize GitHub App authentication
-	appAuth := &github.AppAuth{
-		AppID:      cfg.GitHubAppID,
-		PrivateKey: cfg.GitHubPrivateKey,
-	}
-
-	// Initialize AI provider based on configuration
-	var aiProvider provider.Provider
-
-	switch cfg.Provider {
-	case "claude":
-		log.Printf("Claude model: %s", cfg.ClaudeModel)
-		aiProvider, err = provider.NewProvider(&provider.Config{
-			Name:         "claude",
-			ClaudeAPIKey: cfg.ClaudeAPIKey,
-			ClaudeModel:  cfg.ClaudeModel,
-		})
-	case "codex":
-		log.Printf("Codex model: %s", cfg.CodexModel)
-		if cfg.OpenAIBaseURL != "" {
-			log.Printf("Using custom OpenAI Base URL: %s", cfg.OpenAIBaseURL)
-		}
-		aiProvider, err = provider.NewProvider(&provider.Config{
-			Name:          "codex",
-			OpenAIAPIKey:  cfg.OpenAIAPIKey,
-			OpenAIBaseURL: cfg.OpenAIBaseURL,
-			CodexModel:    cfg.CodexModel,
-		})
-	default:
-		log.Fatalf("Unsupported provider: %s", cfg.Provider)
-	}
-
-	if err != nil {
-		log.Fatalf("Failed to initialize AI provider: %v", err)
-	}
-	log.Printf("AI Provider: %s", aiProvider.Name())
+	// Initialize task store
+	taskStore := store.NewTaskStore()
 
 	// Initialize executor
-	exec := executor.New(aiProvider, appAuth)
+	exec, err := executor.NewExecutor(cfg, taskStore)
+	if err != nil {
+		log.Fatalf("Failed to create executor: %v", err)
+	}
 
 	// Initialize webhook handler
-	handler := webhook.NewHandler(cfg.GitHubWebhookSecret, cfg.TriggerKeyword, exec)
+	webhookHandler := webhook.NewHandler(cfg, exec)
+
+	// Initialize web handler
+	webHandler, err := web.NewHandler(taskStore)
+	if err != nil {
+		log.Fatalf("Failed to create web handler: %v", err)
+	}
 
 	// Setup router
 	r := mux.NewRouter()
 
-	// Webhook endpoint
-	r.HandleFunc("/webhook", handler.HandleIssueComment).Methods("POST")
+	// Register routes
+	r.HandleFunc("/webhook", webhookHandler.Handle).Methods("POST")
+	webHandler.RegisterRoutes(r)
 
-	// Health check endpoint
-	r.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	}).Methods("GET")
-
-	// Root endpoint with info
-	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"service":"pilot-swe","status":"running","trigger":"%s"}`, cfg.TriggerKeyword)
-	}).Methods("GET")
-
-	// Start server
-	addr := fmt.Sprintf(":%d", cfg.Port)
-	log.Printf("Server listening on %s", addr)
-	log.Printf("Webhook endpoint: http://localhost%s/webhook", addr)
-	log.Printf("Health check: http://localhost%s/health", addr)
-
-	if err := http.ListenAndServe(addr, r); err != nil {
-		log.Fatalf("Server failed to start: %v", err)
+	// Create server
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "3000"
 	}
+
+	srv := &http.Server{
+		Addr:         fmt.Sprintf(":%s", port),
+		Handler:      r,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Start server in goroutine
+	go func() {
+		log.Printf("Starting server on port %s", port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server failed: %v", err)
+		}
+	}()
+
+	// Graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("Shutting down server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+
+	log.Println("Server exited")
 }
