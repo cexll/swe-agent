@@ -2,14 +2,15 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	claudecli "github.com/lancekrogers/claude-code-go/pkg/claude"
+	"time"
 )
 
 // FileChange represents a file modification
@@ -32,10 +33,16 @@ type CodeResponse struct {
 	CostUSD float64      // Cost in USD
 }
 
+// CLIResult represents the result from Claude CLI
+type CLIResult struct {
+	Result  string  `json:"result"`
+	IsError bool    `json:"isError"`
+	CostUSD float64 `json:"costUSD"`
+}
+
 // Provider implements the AI provider interface for Claude
 type Provider struct {
-	claudeClient *claudecli.ClaudeClient
-	model        string
+	model string
 }
 
 // NewProvider creates a new Claude provider
@@ -51,18 +58,8 @@ func NewProvider(apiKey, model string) *Provider {
 		log.Printf("[Claude] Using custom API endpoint: %s", baseURL)
 	}
 
-	// Create Claude Code client
-	claudeClient := &claudecli.ClaudeClient{
-		BinPath: "claude", // Uses claude from PATH
-		DefaultOptions: &claudecli.RunOptions{
-			Format: claudecli.JSONOutput,
-			Model:  model,
-		},
-	}
-
 	return &Provider{
-		claudeClient: claudeClient,
-		model:        model,
+		model: model,
 	}
 }
 
@@ -71,9 +68,65 @@ func (p *Provider) Name() string {
 	return "claude"
 }
 
+// callClaudeCLI calls the Claude CLI directly with proper working directory
+func callClaudeCLI(workDir, prompt, model string) (*CLIResult, error) {
+	// Build command arguments
+	args := []string{"-p", "--output-format", "json"}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+
+	// Create command
+	cmd := exec.Command("claude", args...)
+	cmd.Dir = workDir // Critical: set working directory to cloned repo
+	cmd.Stdin = strings.NewReader(prompt)
+
+	// Enable debug logging if requested
+	if os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
+		log.Printf("[Claude CLI] Working directory: %s", workDir)
+		log.Printf("[Claude CLI] Command: claude %s", strings.Join(args, " "))
+		log.Printf("[Claude CLI] Prompt length: %d chars", len(prompt))
+	}
+
+	// Execute command
+	start := time.Now()
+	output, err := cmd.CombinedOutput()
+	duration := time.Since(start)
+
+	if err != nil {
+		log.Printf("[Claude CLI] Command failed after %v: %v", duration, err)
+		log.Printf("[Claude CLI] Output: %s", string(output))
+		return nil, fmt.Errorf("claude CLI execution failed: %w\nOutput: %s", err, string(output))
+	}
+
+	log.Printf("[Claude CLI] Command completed in %v", duration)
+
+	// Parse JSON response
+	var result CLIResult
+	if err := json.Unmarshal(output, &result); err != nil {
+		log.Printf("[Claude CLI] Failed to parse JSON response: %v", err)
+		log.Printf("[Claude CLI] Raw output: %s", string(output))
+		return nil, fmt.Errorf("failed to parse claude CLI JSON response: %w", err)
+	}
+
+	if result.IsError {
+		return nil, fmt.Errorf("claude CLI error: %s", result.Result)
+	}
+
+	return &result, nil
+}
+
 // GenerateCode generates code changes using Claude Code CLI
 func (p *Provider) GenerateCode(ctx context.Context, req *CodeRequest) (*CodeResponse, error) {
 	log.Printf("[Claude] Starting code generation (prompt length: %d chars)", len(req.Prompt))
+
+	// Validate working directory
+	if req.RepoPath == "" {
+		return nil, fmt.Errorf("repository path is required")
+	}
+	if _, err := os.Stat(req.RepoPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("repository path does not exist: %s", req.RepoPath)
+	}
 
 	// 1. List repository files
 	files, err := listRepoFiles(req.RepoPath)
@@ -84,49 +137,24 @@ func (p *Provider) GenerateCode(ctx context.Context, req *CodeRequest) (*CodeRes
 	// 2. Build system prompt
 	systemPrompt := buildSystemPrompt(files, req.Context)
 
-	// 3. Build user prompt
-	userPrompt := fmt.Sprintf(`Task: %s
+	// 3. Build full prompt with system and user content
+	fullPrompt := fmt.Sprintf("System: %s\n\nUser: %s", systemPrompt, buildUserPrompt(req.Prompt))
 
-You can choose to either:
+	log.Printf("[Claude] Calling Claude CLI with model: %s in directory: %s", p.model, req.RepoPath)
 
-1. Provide code changes (if modifications are needed):
-<file path="path/to/file.ext">
-<content>
-... full file content here ...
-</content>
-</file>
-
-<summary>
-Brief description of changes made
-</summary>
-
-2. Provide analysis/answer only (if no code changes needed):
-<summary>
-Your analysis, recommendations, or answer here.
-You can include explanations, task lists, or any helpful information.
-</summary>
-
-Make sure to include the COMPLETE file content when providing code changes, not just the changes.`, req.Prompt)
-
-	log.Printf("[Claude] Calling Claude Code CLI with model: %s", p.model)
-
-	// 4. Call Claude Code CLI
-	result, err := p.claudeClient.RunPromptCtx(ctx, userPrompt, &claudecli.RunOptions{
-		Format:       claudecli.JSONOutput,
-		Model:        p.model,
-		SystemPrompt: systemPrompt,
-	})
-
+	// 4. Call Claude CLI with correct working directory
+	result, err := callClaudeCLI(req.RepoPath, fullPrompt, p.model)
 	if err != nil {
-		return nil, fmt.Errorf("Claude Code CLI error: %w", err)
-	}
-
-	if result.IsError {
-		return nil, fmt.Errorf("Claude Code error: %s", result.Result)
+		return nil, fmt.Errorf("Claude CLI error: %w", err)
 	}
 
 	responseText := result.Result
 	log.Printf("[Claude] Response length: %d characters, cost: $%.4f", len(responseText), result.CostUSD)
+
+	// Debug logging if requested
+	if os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
+		log.Printf("[Claude] Raw response: %s", responseText)
+	}
 
 	// 5. Parse response
 	response, err := parseCodeResponse(responseText)
@@ -247,42 +275,181 @@ Brief description of what was changed
 	return prompt
 }
 
+// buildUserPrompt creates the user prompt with task instructions
+func buildUserPrompt(taskPrompt string) string {
+	return fmt.Sprintf(`Task: %s
+
+You can choose to either:
+
+1. Provide code changes (if modifications are needed):
+<file path="path/to/file.ext">
+<content>
+... full file content here ...
+</content>
+</file>
+
+<summary>
+Brief description of changes made
+</summary>
+
+2. Provide analysis/answer only (if no code changes needed):
+<summary>
+Your analysis, recommendations, or answer here.
+You can include explanations, task lists, or any helpful information.
+</summary>
+
+Make sure to include the COMPLETE file content when providing code changes, not just the changes.`, taskPrompt)
+}
+
 // parseCodeResponse extracts file changes and summary from Claude's response
+// Enhanced with multiple format support and debugging
 func parseCodeResponse(response string) (*CodeResponse, error) {
 	result := &CodeResponse{
 		Files: []FileChange{},
 	}
 
-	// Extract file blocks: <file path="..."><content>...</content></file>
-	fileRegex := regexp.MustCompile(`(?s)<file path="([^"]+)">\s*<content>\s*(.*?)\s*</content>\s*</file>`)
-	fileMatches := fileRegex.FindAllStringSubmatch(response, -1)
-
-	for _, match := range fileMatches {
-		if len(match) >= 3 {
-			result.Files = append(result.Files, FileChange{
-				Path:    match[1],
-				Content: match[2],
-			})
-		}
+	// Debug logging if enabled
+	if os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
+		log.Printf("[Parse] Parsing response of %d characters", len(response))
+		log.Printf("[Parse] Response preview: %s...", truncateString(response, 200))
 	}
 
-	// Extract summary: <summary>...</summary>
-	summaryRegex := regexp.MustCompile(`(?s)<summary>\s*(.*?)\s*</summary>`)
-	summaryMatch := summaryRegex.FindStringSubmatch(response)
-	if len(summaryMatch) >= 2 {
-		result.Summary = summaryMatch[1]
-	} else if len(result.Files) == 0 {
-		// No files and no <summary> tag, use raw response as content
-		result.Summary = strings.TrimSpace(response)
-	} else {
-		result.Summary = "Code changes applied"
+	// Primary parsing: XML-style file blocks
+	result.Files = append(result.Files, parseXMLFileBlocks(response)...)
+
+	// Fallback parsing: Markdown code blocks if no XML found
+	if len(result.Files) == 0 {
+		result.Files = append(result.Files, parseMarkdownCodeBlocks(response)...)
 	}
 
-	// Allow responses without file changes (analysis/Q&A/recommendations)
-	// As long as there's meaningful content in the summary
+	// Extract summary
+	result.Summary = extractSummary(response, len(result.Files) > 0)
+
+	// Debug results
+	if os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
+		log.Printf("[Parse] Found %d file changes", len(result.Files))
+		log.Printf("[Parse] Summary: %s", truncateString(result.Summary, 100))
+	}
+
+	// Validation
 	if len(result.Files) == 0 && strings.TrimSpace(result.Summary) == "" {
 		return nil, fmt.Errorf("no content found in response")
 	}
 
 	return result, nil
+}
+
+// parseXMLFileBlocks extracts files from XML-style blocks
+func parseXMLFileBlocks(response string) []FileChange {
+	var files []FileChange
+
+	// Enhanced regex for XML file blocks - more flexible with whitespace
+	fileRegex := regexp.MustCompile(`(?s)<file\s+path=["']([^"']+)["']>\s*<content>\s*(.*?)\s*</content>\s*</file>`)
+	fileMatches := fileRegex.FindAllStringSubmatch(response, -1)
+
+	for _, match := range fileMatches {
+		if len(match) >= 3 {
+			path := strings.TrimSpace(match[1])
+			content := match[2] // Don't trim content as it might be significant
+
+			if path != "" {
+				files = append(files, FileChange{
+					Path:    path,
+					Content: content,
+				})
+			}
+		}
+	}
+
+	return files
+}
+
+// parseMarkdownCodeBlocks extracts files from markdown-style code blocks
+func parseMarkdownCodeBlocks(response string) []FileChange {
+	var files []FileChange
+
+	// Look for patterns like:
+	// ```go filename.go
+	// code content
+	// ```
+	// or
+	// **filename.go:**
+	// ```go
+	// code content
+	// ```
+
+	// Pattern 1: ```language filename (require language, more specific matching)
+	// Only match if there's actually a filename (contains . or /) after language
+	codeBlockRegex1 := regexp.MustCompile("```(\\w+)\\s+([^\\s\\n]*[./][^\\s\\n]*)\\s*\\n([\\s\\S]*?)\\n```")
+	matches1 := codeBlockRegex1.FindAllStringSubmatch(response, -1)
+
+	for _, match := range matches1 {
+		if len(match) >= 4 {
+			// match[1] = language, match[2] = path, match[3] = content
+			path := strings.TrimSpace(match[2])
+			content := match[3]
+
+			// Regex already ensures path contains . or /, so no need to check again
+			files = append(files, FileChange{
+				Path:    path,
+				Content: content,
+			})
+		}
+	}
+
+	// Pattern 2: **filename:** followed by code block
+	headerRegex := regexp.MustCompile(`(?s)\*\*([^*]+)\*\*:?\s*\n` + "`" + `{3}\w*\s*\n(.*?)\n` + "`" + `{3}`)
+	matches2 := headerRegex.FindAllStringSubmatch(response, -1)
+
+	for _, match := range matches2 {
+		if len(match) >= 3 {
+			path := strings.TrimSpace(match[1])
+			// Remove any trailing colon
+			path = strings.TrimSuffix(path, ":")
+			content := match[2]
+
+			// Only consider it a file if path looks like a file path
+			if strings.Contains(path, ".") || strings.Contains(path, "/") {
+				files = append(files, FileChange{
+					Path:    path,
+					Content: content,
+				})
+			}
+		}
+	}
+
+	return files
+}
+
+// extractSummary extracts summary from various formats
+func extractSummary(response string, hasFiles bool) string {
+	// Try <summary> tags first
+	summaryRegex := regexp.MustCompile(`(?s)<summary>\s*(.*?)\s*</summary>`)
+	summaryMatch := summaryRegex.FindStringSubmatch(response)
+	if len(summaryMatch) >= 2 {
+		return strings.TrimSpace(summaryMatch[1])
+	}
+
+	// Try ## Summary or ### Summary headers
+	headerRegex := regexp.MustCompile(`(?s)#+\s*Summary\s*\n(.*?)(?:\n#+|$)`)
+	headerMatch := headerRegex.FindStringSubmatch(response)
+	if len(headerMatch) >= 2 {
+		return strings.TrimSpace(headerMatch[1])
+	}
+
+	// If no files found, use entire response as summary
+	if !hasFiles {
+		return strings.TrimSpace(response)
+	}
+
+	// Default summary for file changes
+	return "Code changes applied"
+}
+
+// truncateString truncates a string for logging
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
