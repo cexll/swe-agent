@@ -2,7 +2,6 @@ package webhook
 
 import (
 	"bytes"
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,19 +11,19 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
 
-// mockExecutor is a mock implementation of Executor
-type mockExecutor struct {
-	executeFunc  func(ctx context.Context, task *Task) error
-	executeCalls int
+type mockDispatcher struct {
+	enqueueFunc  func(task *Task) error
+	enqueueCalls int
+	lastTask     *Task
 }
 
-func (m *mockExecutor) Execute(ctx context.Context, task *Task) error {
-	m.executeCalls++
-	if m.executeFunc != nil {
-		return m.executeFunc(ctx, task)
+func (m *mockDispatcher) Enqueue(task *Task) error {
+	m.enqueueCalls++
+	m.lastTask = task
+	if m.enqueueFunc != nil {
+		return m.enqueueFunc(task)
 	}
 	return nil
 }
@@ -34,67 +33,73 @@ func TestExtractPrompt(t *testing.T) {
 		name           string
 		body           string
 		triggerKeyword string
+		found          bool
 		want           string
 	}{
 		{
 			name:           "simple prompt",
 			body:           "/code fix the typo",
 			triggerKeyword: "/code",
+			found:          true,
 			want:           "fix the typo",
 		},
 		{
 			name:           "multiline comment",
 			body:           "/code add error handling\nSome more context here",
 			triggerKeyword: "/code",
-			want:           "add error handling",
+			found:          true,
+			want:           "add error handling\nSome more context here",
 		},
 		{
 			name:           "no prompt after keyword - should use issue content",
 			body:           "/code",
 			triggerKeyword: "/code",
-			want:           UseIssueContentMarker,
-		},
-		{
-			name:           "/code without content",
-			body:           "/code",
-			triggerKeyword: "/code",
-			want:           UseIssueContentMarker,
+			found:          true,
+			want:           "",
 		},
 		{
 			name:           "/code with only whitespace",
 			body:           "/code   \n\n  ",
 			triggerKeyword: "/code",
-			want:           UseIssueContentMarker,
+			found:          true,
+			want:           "",
 		},
 		{
 			name:           "keyword not found",
 			body:           "just a comment",
 			triggerKeyword: "/code",
+			found:          false,
 			want:           "",
 		},
 		{
 			name:           "custom trigger keyword",
 			body:           "/custom do something",
 			triggerKeyword: "/custom",
+			found:          true,
 			want:           "do something",
 		},
 		{
 			name:           "whitespace handling",
 			body:           "/code    fix bug   ",
 			triggerKeyword: "/code",
+			found:          true,
 			want:           "fix bug",
 		},
 		{
 			name:           "keyword in middle of text",
 			body:           "Hey @someone\n/code refactor code\nThanks!",
 			triggerKeyword: "/code",
-			want:           "refactor code",
+			found:          true,
+			want:           "refactor code\nThanks!",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractPrompt(tt.body, tt.triggerKeyword)
+			got, found := extractPrompt(tt.body, tt.triggerKeyword)
+			if found != tt.found {
+				t.Fatalf("extractPrompt() found = %v, want %v", found, tt.found)
+			}
 			if got != tt.want {
 				t.Errorf("extractPrompt() = %q, want %q", got, tt.want)
 			}
@@ -102,7 +107,7 @@ func TestExtractPrompt(t *testing.T) {
 	}
 }
 
-func TestHandleIssueComment(t *testing.T) {
+func TestHandleWebhook_IssueComment(t *testing.T) {
 	secret := "test-webhook-secret"
 	triggerKeyword := "/code"
 
@@ -144,44 +149,61 @@ func TestHandleIssueComment(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		event          *IssueCommentEvent
-		signature      string
-		expectedStatus int
-		expectedBody   string
-		shouldExecute  bool
+		name            string
+		event           *IssueCommentEvent
+		action          string
+		signature       string
+		expectedStatus  int
+		expectedBody    string
+		shouldEnqueue   bool
+		expectedSummary string
 	}{
 		{
-			name:           "valid trigger on issue",
-			event:          createEvent("/code fix the bug", false),
-			signature:      "", // will be computed
-			expectedStatus: http.StatusAccepted,
-			expectedBody:   "Task accepted",
-			shouldExecute:  true,
+			name:            "valid trigger on issue",
+			event:           createEvent("/code fix the bug", false),
+			expectedStatus:  http.StatusAccepted,
+			expectedBody:    "Task queued",
+			shouldEnqueue:   true,
+			expectedSummary: "**Issue:** Test Issue\n\n**Instruction:**\nfix the bug",
 		},
 		{
-			name:           "valid trigger on PR",
-			event:          createEvent("/code refactor code", true),
-			signature:      "",
-			expectedStatus: http.StatusAccepted,
-			expectedBody:   "Task accepted",
-			shouldExecute:  true,
+			name:            "valid trigger on PR",
+			event:           createEvent("/code refactor code", true),
+			expectedStatus:  http.StatusAccepted,
+			expectedBody:    "Task queued",
+			shouldEnqueue:   true,
+			expectedSummary: "**PR:** Test Issue\n\n**Instruction:**\nrefactor code",
 		},
 		{
 			name:           "no trigger keyword",
 			event:          createEvent("just a regular comment", false),
-			signature:      "",
 			expectedStatus: http.StatusOK,
 			expectedBody:   "No trigger keyword found",
-			shouldExecute:  false,
+			shouldEnqueue:  false,
 		},
 		{
-			name:           "trigger keyword without prompt - should use issue content",
-			event:          createEvent("/code", false),
-			signature:      "",
-			expectedStatus: http.StatusAccepted,
-			expectedBody:   "Task accepted",
-			shouldExecute:  true,
+			name:            "trigger keyword without prompt - should use issue content",
+			event:           createEvent("/code", false),
+			expectedStatus:  http.StatusAccepted,
+			expectedBody:    "Task queued",
+			shouldEnqueue:   true,
+			expectedSummary: "**Issue:** Test Issue",
+		},
+		{
+			name:           "edited comment ignored",
+			event:          createEvent("/code fix bug", false),
+			action:         "edited",
+			expectedStatus: http.StatusOK,
+			expectedBody:   "Issue comment action ignored",
+			shouldEnqueue:  false,
+		},
+		{
+			name:           "deleted comment ignored",
+			event:          createEvent("/code fix bug", false),
+			action:         "deleted",
+			expectedStatus: http.StatusOK,
+			expectedBody:   "Issue comment action ignored",
+			shouldEnqueue:  false,
 		},
 		{
 			name:           "invalid signature",
@@ -189,127 +211,474 @@ func TestHandleIssueComment(t *testing.T) {
 			signature:      "sha256=invalidsignature",
 			expectedStatus: http.StatusUnauthorized,
 			expectedBody:   "Invalid signature",
-			shouldExecute:  false,
+			shouldEnqueue:  false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create mock executor
-			executor := &mockExecutor{
-				executeFunc: func(ctx context.Context, task *Task) error {
-					// Verify task contents
+			if tt.action != "" {
+				tt.event.Action = tt.action
+			}
+
+			dispatcher := &mockDispatcher{
+				enqueueFunc: func(task *Task) error {
 					if task.Repo != "owner/repo" {
 						t.Errorf("Task.Repo = %s, want owner/repo", task.Repo)
 					}
 					if task.Number != 123 {
 						t.Errorf("Task.Number = %d, want 123", task.Number)
 					}
+					if tt.expectedSummary != "" && task.PromptSummary != tt.expectedSummary {
+						t.Errorf("Task.PromptSummary = %q, want %q", task.PromptSummary, tt.expectedSummary)
+					}
 					return nil
 				},
 			}
 
-			handler := NewHandler(secret, triggerKeyword, executor)
+			handler := NewHandler(secret, triggerKeyword, dispatcher, nil)
 
-			// Marshal event to JSON
 			payload, err := json.Marshal(tt.event)
 			if err != nil {
 				t.Fatalf("Failed to marshal event: %v", err)
 			}
 
-			// Create request
 			req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-GitHub-Event", "issue_comment")
 
-			// Set signature
 			signature := tt.signature
 			if signature == "" {
 				signature = signPayload(payload)
 			}
 			req.Header.Set("X-Hub-Signature-256", signature)
-			req.Header.Set("Content-Type", "application/json")
 
-			// Create response recorder
 			w := httptest.NewRecorder()
+			handler.Handle(w, req)
 
-			// Handle request
-			handler.HandleIssueComment(w, req)
-
-			// Check response status
 			if w.Code != tt.expectedStatus {
 				t.Errorf("Status = %d, want %d", w.Code, tt.expectedStatus)
 			}
 
-			// Check response body
 			body := w.Body.String()
 			if !strings.Contains(body, tt.expectedBody) {
 				t.Errorf("Body = %q, want to contain %q", body, tt.expectedBody)
 			}
 
-			// For async execution, wait a bit for goroutine to execute
-			if tt.shouldExecute {
-				time.Sleep(100 * time.Millisecond)
+			if tt.shouldEnqueue && dispatcher.enqueueCalls == 0 {
+				t.Error("Dispatcher.Enqueue not called when it should have been")
 			}
-
-			// Check if executor was called
-			if tt.shouldExecute && executor.executeCalls == 0 {
-				t.Error("Executor.Execute() not called when it should have been")
-			}
-			if !tt.shouldExecute && executor.executeCalls > 0 {
-				t.Error("Executor.Execute() called when it should not have been")
+			if !tt.shouldEnqueue && dispatcher.enqueueCalls > 0 {
+				t.Error("Dispatcher.Enqueue called when it should not have been")
 			}
 		})
 	}
 }
 
-func TestHandleIssueComment_MalformedPayload(t *testing.T) {
+func TestHandleWebhook_IssueComment_DuplicateIgnored(t *testing.T) {
 	secret := "test-webhook-secret"
-	executor := &mockExecutor{}
-	handler := NewHandler(secret, "/code", executor)
+	triggerKeyword := "/code"
 
-	tests := []struct {
-		name           string
-		payload        []byte
-		signature      string
-		expectedStatus int
-	}{
-		{
-			name:           "invalid JSON",
-			payload:        []byte("not json"),
-			signature:      "",
-			expectedStatus: http.StatusBadRequest,
+	event := &IssueCommentEvent{
+		Action: "created",
+		Issue: Issue{
+			Number: 99,
+			Title:  "Duplicate test",
+			Body:   "Body",
 		},
-		{
-			name:           "empty payload",
-			payload:        []byte(""),
-			signature:      "",
-			expectedStatus: http.StatusBadRequest,
+		Comment: Comment{
+			ID:   555,
+			Body: "/code do work",
+			User: User{Login: "tester", Type: "User"},
+		},
+		Repository: Repository{
+			FullName:      "owner/repo",
+			DefaultBranch: "main",
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Generate signature for payload
-			mac := hmac.New(sha256.New, []byte(secret))
-			mac.Write(tt.payload)
-			signature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("Failed to marshal event: %v", err)
+	}
 
-			req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(tt.payload))
-			req.Header.Set("X-Hub-Signature-256", signature)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+	signature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 
-			w := httptest.NewRecorder()
-			handler.HandleIssueComment(w, req)
+	dispatcher := &mockDispatcher{}
+	handler := NewHandler(secret, triggerKeyword, dispatcher, nil)
 
-			if w.Code != tt.expectedStatus {
-				t.Errorf("Status = %d, want %d", w.Code, tt.expectedStatus)
-			}
-		})
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
+	req.Header.Set("X-Hub-Signature-256", signature)
+	req.Header.Set("X-GitHub-Event", "issue_comment")
+
+	w := httptest.NewRecorder()
+	handler.Handle(w, req)
+
+	if dispatcher.enqueueCalls != 1 {
+		t.Fatalf("Expected first event to enqueue task, got %d", dispatcher.enqueueCalls)
+	}
+
+	req2 := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
+	req2.Header.Set("X-Hub-Signature-256", signature)
+	req2.Header.Set("X-GitHub-Event", "issue_comment")
+
+	w2 := httptest.NewRecorder()
+	handler.Handle(w2, req2)
+
+	if dispatcher.enqueueCalls != 1 {
+		t.Fatalf("Duplicate event should not enqueue new task, got %d", dispatcher.enqueueCalls)
+	}
+
+	if w2.Code != http.StatusOK {
+		t.Fatalf("Duplicate event response status = %d, want %d", w2.Code, http.StatusOK)
+	}
+
+	if !strings.Contains(w2.Body.String(), "Duplicate comment ignored") {
+		t.Fatalf("Duplicate event response body = %q", w2.Body.String())
 	}
 }
 
-func TestHandleIssueComment_SignatureValidation(t *testing.T) {
+func TestHandleWebhook_ReviewComment(t *testing.T) {
 	secret := "test-webhook-secret"
-	executor := &mockExecutor{}
-	handler := NewHandler(secret, "/code", executor)
+	triggerKeyword := "/code"
+
+	event := &PullRequestReviewCommentEvent{
+		Action: "created",
+		Comment: ReviewComment{
+			ID:   10,
+			Body: "/code run linters",
+			User: User{Login: "reviewer", Type: "User"},
+		},
+		PullRequest: PullRequest{
+			Number: 42,
+			Title:  "Improve performance",
+			Body:   "Details about improvements",
+		},
+		Repository: Repository{
+			FullName:      "owner/repo",
+			DefaultBranch: "main",
+		},
+		Sender: User{Login: "reviewer"},
+	}
+	event.PullRequest.Base.Ref = "feature"
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("Failed to marshal event: %v", err)
+	}
+
+	signature := func(payload []byte) string {
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write(payload)
+		return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	}(payload)
+
+	dispatcher := &mockDispatcher{}
+	handler := NewHandler(secret, triggerKeyword, dispatcher, nil)
+
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
+	req.Header.Set("X-Hub-Signature-256", signature)
+	req.Header.Set("X-GitHub-Event", "pull_request_review_comment")
+
+	w := httptest.NewRecorder()
+	handler.Handle(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("Status = %d, want %d", w.Code, http.StatusAccepted)
+	}
+
+	if dispatcher.enqueueCalls != 1 {
+		t.Fatalf("Dispatcher.Enqueue calls = %d, want 1", dispatcher.enqueueCalls)
+	}
+
+	if dispatcher.lastTask == nil {
+		t.Fatal("Expected task to be enqueued")
+	}
+
+	if !dispatcher.lastTask.IsPR {
+		t.Error("Expected task.IsPR to be true for review comment")
+	}
+
+	if dispatcher.lastTask.Branch != "feature" {
+		t.Errorf("Task.Branch = %s, want feature", dispatcher.lastTask.Branch)
+	}
+
+	expectedSummary := "**PR:** Improve performance\n\n**Instruction:**\nrun linters"
+	if dispatcher.lastTask.PromptSummary != expectedSummary {
+		t.Errorf("PromptSummary = %q, want %q", dispatcher.lastTask.PromptSummary, expectedSummary)
+	}
+}
+
+func TestHandleWebhook_ReviewComment_DuplicateIgnored(t *testing.T) {
+	secret := "test-webhook-secret"
+	triggerKeyword := "/code"
+
+	event := &PullRequestReviewCommentEvent{
+		Action: "created",
+		Comment: ReviewComment{
+			ID:   888,
+			Body: "/code run tests",
+			User: User{Login: "reviewer", Type: "User"},
+		},
+		PullRequest: PullRequest{
+			Number: 5,
+			Title:  "Refactor",
+			Body:   "PR body",
+		},
+		Repository: Repository{
+			FullName:      "owner/repo",
+			DefaultBranch: "main",
+		},
+	}
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("Failed to marshal event: %v", err)
+	}
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+	signature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+
+	dispatcher := &mockDispatcher{}
+	handler := NewHandler(secret, triggerKeyword, dispatcher, nil)
+
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
+	req.Header.Set("X-Hub-Signature-256", signature)
+	req.Header.Set("X-GitHub-Event", "pull_request_review_comment")
+
+	w := httptest.NewRecorder()
+	handler.Handle(w, req)
+
+	if dispatcher.enqueueCalls != 1 {
+		t.Fatalf("Expected first review comment to enqueue task, got %d", dispatcher.enqueueCalls)
+	}
+
+	req2 := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
+	req2.Header.Set("X-Hub-Signature-256", signature)
+	req2.Header.Set("X-GitHub-Event", "pull_request_review_comment")
+
+	w2 := httptest.NewRecorder()
+	handler.Handle(w2, req2)
+
+	if dispatcher.enqueueCalls != 1 {
+		t.Fatalf("Duplicate review comment should not enqueue, got %d", dispatcher.enqueueCalls)
+	}
+
+	if w2.Code != http.StatusOK {
+		t.Fatalf("Duplicate review response status = %d, want %d", w2.Code, http.StatusOK)
+	}
+
+	if !strings.Contains(w2.Body.String(), "Duplicate comment ignored") {
+		t.Fatalf("Duplicate review response body = %q", w2.Body.String())
+	}
+}
+
+func TestHandleWebhook_ReviewComment_NoTrigger(t *testing.T) {
+	secret := "test-webhook-secret"
+	triggerKeyword := "/code"
+
+	event := &PullRequestReviewCommentEvent{
+		Action: "created",
+		Comment: ReviewComment{
+			ID:   10,
+			Body: "no trigger here",
+			User: User{Login: "reviewer", Type: "User"},
+		},
+		PullRequest: PullRequest{
+			Number: 42,
+			Title:  "Improve performance",
+			Body:   "Details about improvements",
+		},
+		Repository: Repository{
+			FullName:      "owner/repo",
+			DefaultBranch: "main",
+		},
+		Sender: User{Login: "reviewer"},
+	}
+
+	payload, _ := json.Marshal(event)
+	signature := func(payload []byte) string {
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write(payload)
+		return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	}(payload)
+
+	dispatcher := &mockDispatcher{}
+	handler := NewHandler(secret, triggerKeyword, dispatcher, nil)
+
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
+	req.Header.Set("X-Hub-Signature-256", signature)
+	req.Header.Set("X-GitHub-Event", "pull_request_review_comment")
+
+	w := httptest.NewRecorder()
+	handler.Handle(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	if dispatcher.enqueueCalls != 0 {
+		t.Fatalf("Dispatcher.Enqueue calls = %d, want 0", dispatcher.enqueueCalls)
+	}
+}
+
+func TestHandleWebhook_ReviewComment_IgnoresNonCreated(t *testing.T) {
+	secret := "test-webhook-secret"
+	triggerKeyword := "/code"
+
+	event := &PullRequestReviewCommentEvent{
+		Action: "edited",
+		Comment: ReviewComment{
+			ID:   20,
+			Body: "/code still valid",
+			User: User{Login: "reviewer", Type: "User"},
+		},
+		PullRequest: PullRequest{
+			Number: 7,
+			Title:  "Add feature",
+			Body:   "Feature details",
+		},
+		Repository: Repository{
+			FullName:      "owner/repo",
+			DefaultBranch: "main",
+		},
+		Sender: User{Login: "reviewer"},
+	}
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("Failed to marshal event: %v", err)
+	}
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+
+	dispatcher := &mockDispatcher{}
+	handler := NewHandler(secret, triggerKeyword, dispatcher, nil)
+
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
+	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	req.Header.Set("X-GitHub-Event", "pull_request_review_comment")
+
+	w := httptest.NewRecorder()
+	handler.Handle(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Review comment action ignored") {
+		t.Fatalf("Body = %q, expected message mentioning action ignored", body)
+	}
+
+	if dispatcher.enqueueCalls != 0 {
+		t.Fatalf("Dispatcher.Enqueue calls = %d, want 0", dispatcher.enqueueCalls)
+	}
+}
+
+func TestHandleWebhook_DispatcherError(t *testing.T) {
+	secret := "test-webhook-secret"
+	triggerKeyword := "/code"
+
+	event := &IssueCommentEvent{
+		Action: "created",
+		Issue: Issue{
+			Number: 1,
+			Title:  "Test",
+			Body:   "Test body",
+		},
+		Comment: Comment{
+			ID:   1,
+			Body: "/code do thing",
+			User: User{Login: "tester", Type: "User"},
+		},
+		Repository: Repository{
+			FullName:      "owner/repo",
+			DefaultBranch: "main",
+		},
+	}
+
+	payload, _ := json.Marshal(event)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+
+	dispatcher := &mockDispatcher{
+		enqueueFunc: func(task *Task) error {
+			return io.ErrUnexpectedEOF
+		},
+	}
+
+	handler := NewHandler(secret, triggerKeyword, dispatcher, nil)
+
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
+	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	req.Header.Set("X-GitHub-Event", "issue_comment")
+
+	w := httptest.NewRecorder()
+	handler.Handle(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("Status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestHandleWebhook_QueueFull(t *testing.T) {
+	secret := "test-webhook-secret"
+	triggerKeyword := "/code"
+
+	event := &IssueCommentEvent{
+		Action: "created",
+		Issue: Issue{
+			Number: 1,
+			Title:  "Test",
+			Body:   "Test body",
+		},
+		Comment: Comment{
+			ID:   1,
+			Body: "/code do thing",
+			User: User{Login: "tester", Type: "User"},
+		},
+		Repository: Repository{
+			FullName:      "owner/repo",
+			DefaultBranch: "main",
+		},
+	}
+
+	payload, _ := json.Marshal(event)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+
+	dispatcher := &mockDispatcher{
+		enqueueFunc: func(task *Task) error {
+			return ErrQueueFull
+		},
+	}
+
+	handler := NewHandler(secret, triggerKeyword, dispatcher, nil)
+
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
+	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	req.Header.Set("X-GitHub-Event", "issue_comment")
+
+	w := httptest.NewRecorder()
+	handler.Handle(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("Status = %d, want %d", w.Code, http.StatusServiceUnavailable)
+	}
+
+	if dispatcher.enqueueCalls != 1 {
+		t.Fatalf("Dispatcher.Enqueue calls = %d, want 1", dispatcher.enqueueCalls)
+	}
+}
+
+func TestHandleWebhook_SignatureValidation(t *testing.T) {
+	secret := "test-webhook-secret"
+	handler := NewHandler(secret, "/code", &mockDispatcher{}, nil)
 
 	event := &IssueCommentEvent{
 		Action: "created",
@@ -319,13 +688,13 @@ func TestHandleIssueComment_SignatureValidation(t *testing.T) {
 		},
 		Comment: Comment{
 			Body: "/code test",
+			User: User{Login: "user", Type: "User"},
 		},
 		Repository: Repository{
 			FullName:      "owner/repo",
 			DefaultBranch: "main",
 		},
 	}
-
 	payload, _ := json.Marshal(event)
 
 	tests := []struct {
@@ -353,12 +722,13 @@ func TestHandleIssueComment_SignatureValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
+			req.Header.Set("X-GitHub-Event", "issue_comment")
 			if tt.signature != "" {
 				req.Header.Set("X-Hub-Signature-256", tt.signature)
 			}
 
 			w := httptest.NewRecorder()
-			handler.HandleIssueComment(w, req)
+			handler.Handle(w, req)
 
 			if w.Code != tt.expectedStatus {
 				t.Errorf("Status = %d, want %d", w.Code, tt.expectedStatus)
@@ -370,9 +740,9 @@ func TestHandleIssueComment_SignatureValidation(t *testing.T) {
 func TestNewHandler(t *testing.T) {
 	secret := "test-secret"
 	keyword := "/test"
-	executor := &mockExecutor{}
+	dispatcher := &mockDispatcher{}
 
-	handler := NewHandler(secret, keyword, executor)
+	handler := NewHandler(secret, keyword, dispatcher, nil)
 
 	if handler == nil {
 		t.Fatal("NewHandler() returned nil")
@@ -386,164 +756,58 @@ func TestNewHandler(t *testing.T) {
 		t.Errorf("triggerKeyword = %s, want %s", handler.triggerKeyword, keyword)
 	}
 
-	if handler.executor != executor {
-		t.Error("executor not set correctly")
+	if handler.dispatcher != dispatcher {
+		t.Error("dispatcher not set correctly")
 	}
 }
 
-// TestHandleIssueComment_ErrorReading tests error handling when reading request body
-func TestHandleIssueComment_ErrorReading(t *testing.T) {
-	executor := &mockExecutor{}
-	handler := NewHandler("secret", "/code", executor)
+func TestHandleWebhook_ErrorReading(t *testing.T) {
+	dispatcher := &mockDispatcher{}
+	handler := NewHandler("secret", "/code", dispatcher, nil)
 
-	// Create a reader that always fails
 	errReader := &errorReader{err: io.ErrUnexpectedEOF}
 
 	req := httptest.NewRequest("POST", "/webhook", errReader)
-	req.Header.Set("X-Hub-Signature-256", "sha256=test")
+	req.Header.Set("X-Hub-Signature-256", "sha256=dummy")
+	req.Header.Set("X-GitHub-Event", "issue_comment")
 
 	w := httptest.NewRecorder()
-	handler.HandleIssueComment(w, req)
+	handler.Handle(w, req)
 
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("Status = %d, want %d", w.Code, http.StatusBadRequest)
+		t.Fatalf("Status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
 
-// errorReader is a reader that always returns an error
+func TestHandleWebhook_UnsupportedEvent(t *testing.T) {
+	dispatcher := &mockDispatcher{}
+	handler := NewHandler("secret", "/code", dispatcher, nil)
+
+	event := map[string]string{"ping": "pong"}
+	payload, _ := json.Marshal(event)
+
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
+	mac := hmac.New(sha256.New, []byte("secret"))
+	mac.Write(payload)
+	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	req.Header.Set("X-GitHub-Event", "ping")
+
+	w := httptest.NewRecorder()
+	handler.Handle(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	if dispatcher.enqueueCalls != 0 {
+		t.Fatalf("Dispatcher.Enqueue calls = %d, want 0", dispatcher.enqueueCalls)
+	}
+}
+
 type errorReader struct {
 	err error
 }
 
-func (e *errorReader) Read(p []byte) (n int, err error) {
-	return 0, e.err
-}
-
-// Additional edge case tests
-func TestTask_Validation(t *testing.T) {
-	// Test Task structure
-	task := &Task{
-		Repo:       "owner/repo",
-		Number:     123,
-		Branch:     "main",
-		Prompt:     "fix bug",
-		IssueTitle: "Bug report",
-		IssueBody:  "Description",
-		IsPR:       false,
-	}
-
-	if task.Repo == "" {
-		t.Error("Repo should not be empty")
-	}
-	if task.Number <= 0 {
-		t.Error("Number should be positive")
-	}
-	if task.Branch == "" {
-		t.Error("Branch should not be empty")
-	}
-	if task.Prompt == "" {
-		t.Error("Prompt should not be empty")
-	}
-}
-
-func TestExtractPrompt_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name           string
-		body           string
-		triggerKeyword string
-		want           string
-	}{
-		{
-			name:           "unicode characters",
-			body:           "/code 修复错误",
-			triggerKeyword: "/code",
-			want:           "修复错误",
-		},
-		{
-			name:           "multiple trigger keywords",
-			body:           "/code first\n/code second",
-			triggerKeyword: "/code",
-			want:           "first",
-		},
-		{
-			name:           "trigger at end of message",
-			body:           "Some text before\n/code fix this",
-			triggerKeyword: "/code",
-			want:           "fix this",
-		},
-		{
-			name:           "empty lines after trigger - should use issue content",
-			body:           "/code",
-			triggerKeyword: "/code",
-			want:           UseIssueContentMarker,
-		},
-		{
-			name:           "very long prompt",
-			body:           "/code " + strings.Repeat("a", 1000),
-			triggerKeyword: "/code",
-			want:           strings.Repeat("a", 1000),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := extractPrompt(tt.body, tt.triggerKeyword)
-			if got != tt.want {
-				t.Errorf("extractPrompt() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestHandleIssueComment_ConcurrentRequests(t *testing.T) {
-	secret := "test-secret"
-	executor := &mockExecutor{}
-	handler := NewHandler(secret, "/code", executor)
-
-	event := &IssueCommentEvent{
-		Action: "created",
-		Issue: Issue{
-			Number: 123,
-			Title:  "Test",
-		},
-		Comment: Comment{
-			Body: "/code test concurrent",
-		},
-		Repository: Repository{
-			FullName:      "owner/repo",
-			DefaultBranch: "main",
-		},
-	}
-
-	payload, _ := json.Marshal(event)
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(payload)
-	signature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-
-	// Send multiple concurrent requests
-	const numRequests = 5
-	responses := make([]*httptest.ResponseRecorder, numRequests)
-
-	for i := 0; i < numRequests; i++ {
-		req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
-		req.Header.Set("X-Hub-Signature-256", signature)
-
-		responses[i] = httptest.NewRecorder()
-		handler.HandleIssueComment(responses[i], req)
-	}
-
-	// All requests should be accepted
-	for i, w := range responses {
-		if w.Code != http.StatusAccepted {
-			t.Errorf("Request %d: Status = %d, want %d", i, w.Code, http.StatusAccepted)
-		}
-	}
-
-	// Wait for all goroutines to finish
-	time.Sleep(200 * time.Millisecond)
-
-	// All requests should have triggered execution
-	if executor.executeCalls != numRequests {
-		t.Errorf("Execute called %d times, want %d", executor.executeCalls, numRequests)
-	}
+func (r *errorReader) Read(p []byte) (int, error) {
+	return 0, r.err
 }

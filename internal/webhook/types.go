@@ -10,6 +10,14 @@ type IssueCommentEvent struct {
 	Sender     User       `json:"sender"`
 }
 
+type PullRequestReviewCommentEvent struct {
+	Action      string        `json:"action"`
+	Comment     ReviewComment `json:"comment"`
+	PullRequest PullRequest   `json:"pull_request"`
+	Repository  Repository    `json:"repository"`
+	Sender      User          `json:"sender"`
+}
+
 type Issue struct {
 	Number      int    `json:"number"`
 	Title       string `json:"title"`
@@ -26,11 +34,28 @@ type Comment struct {
 	User User   `json:"user"`
 }
 
+type ReviewComment struct {
+	ID       int64  `json:"id"`
+	Body     string `json:"body"`
+	User     User   `json:"user"`
+	Path     string `json:"path"`
+	DiffHunk string `json:"diff_hunk"`
+}
+
 type Repository struct {
 	FullName      string `json:"full_name"`
 	DefaultBranch string `json:"default_branch"`
 	Owner         User   `json:"owner"`
 	Name          string `json:"name"`
+}
+
+type PullRequest struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	Body   string `json:"body"`
+	Base   struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
 }
 
 type User struct {
