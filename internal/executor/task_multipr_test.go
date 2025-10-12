@@ -119,7 +119,7 @@ func TestExecutor_ExecuteMultiPR_IndependentPRs(t *testing.T) {
 	// Verify split plan was mentioned in comments
 	foundSplitPlan := false
 	for _, call := range mockGH.UpdateCommentCalls {
-		if strings.Contains(call.Body, "Split Plan") || strings.Contains(call.Body, "📋") {
+		if strings.Contains(call.Body, "Split into Multiple PRs") || strings.Contains(call.Body, "🔀") {
 			foundSplitPlan = true
 			break
 		}
