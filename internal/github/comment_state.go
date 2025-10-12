@@ -14,6 +14,17 @@ const (
 	StatusFailed    CommentStatus = "failed"
 )
 
+// CreatedPR represents a PR that was created as part of a split
+type CreatedPR struct {
+	Index      int
+	Name       string
+	BranchName string
+	URL        string
+	BranchURL  string
+	Status     string // "created", "pending", "merged"
+	Category   PRCategory
+}
+
 // CommentState holds all information needed to render a task comment
 // This data structure eliminates special cases by making all states
 // variations of the same structure rather than separate code paths
@@ -42,6 +53,10 @@ type CommentState struct {
 
 	// Error information (only for failed status)
 	ErrorDetails string
+
+	// Multi-PR support (for split plans)
+	SplitPlan  *SplitPlan
+	CreatedPRs []CreatedPR
 }
 
 // Duration calculates the execution duration
