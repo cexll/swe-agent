@@ -55,7 +55,7 @@ func (p *Provider) Name() string {
 
 // GenerateCode generates code changes using Codex MCP CLI
 func (p *Provider) GenerateCode(ctx context.Context, req *claude.CodeRequest) (*claude.CodeResponse, error) {
-	log.Printf("[Codex] Starting code generation for: %s", req.Prompt)
+	log.Printf("[Codex] Starting code generation (prompt length: %d chars)", len(req.Prompt))
 
 	files, err := listRepoFiles(req.RepoPath)
 	if err != nil {
@@ -215,13 +215,24 @@ Repository structure:
 
 `, fileList)
 
-	if len(context) > 0 {
-		prompt += "\nAdditional Context:\n"
-		for key, value := range context {
-			if value != "" {
-				prompt += fmt.Sprintf("- %s: %s\n", key, value)
-			}
+	additionalContext := make([]string, 0, len(context))
+	for key, value := range context {
+		trimmedValue := strings.TrimSpace(value)
+		if trimmedValue == "" {
+			continue
 		}
+		switch key {
+		case "issue_title", "issue_body":
+			continue
+		default:
+			additionalContext = append(additionalContext, fmt.Sprintf("- %s: %s", key, trimmedValue))
+		}
+	}
+
+	if len(additionalContext) > 0 {
+		prompt += "\nAdditional Context:\n"
+		prompt += strings.Join(additionalContext, "\n")
+		prompt += "\n"
 	}
 
 	prompt += `

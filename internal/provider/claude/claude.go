@@ -73,7 +73,7 @@ func (p *Provider) Name() string {
 
 // GenerateCode generates code changes using Claude Code CLI
 func (p *Provider) GenerateCode(ctx context.Context, req *CodeRequest) (*CodeResponse, error) {
-	log.Printf("[Claude] Starting code generation for: %s", req.Prompt)
+	log.Printf("[Claude] Starting code generation (prompt length: %d chars)", len(req.Prompt))
 
 	// 1. List repository files
 	files, err := listRepoFiles(req.RepoPath)
@@ -184,14 +184,25 @@ Repository structure:
 
 `, fileList)
 
-	// Add context if available
-	if len(context) > 0 {
-		prompt += "\nAdditional Context:\n"
-		for key, value := range context {
-			if value != "" {
-				prompt += fmt.Sprintf("- %s: %s\n", key, value)
-			}
+	// Add context if available (excluding issue content which is already part of the main prompt)
+	additionalContext := make([]string, 0, len(context))
+	for key, value := range context {
+		trimmedValue := strings.TrimSpace(value)
+		if trimmedValue == "" {
+			continue
 		}
+		switch key {
+		case "issue_title", "issue_body":
+			continue
+		default:
+			additionalContext = append(additionalContext, fmt.Sprintf("- %s: %s", key, trimmedValue))
+		}
+	}
+
+	if len(additionalContext) > 0 {
+		prompt += "\nAdditional Context:\n"
+		prompt += strings.Join(additionalContext, "\n")
+		prompt += "\n"
 	}
 
 	prompt += `

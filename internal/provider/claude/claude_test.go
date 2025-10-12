@@ -204,6 +204,7 @@ func TestBuildSystemPrompt(t *testing.T) {
 	context := map[string]string{
 		"issue_title": "Fix bug in login",
 		"issue_body":  "The login function crashes",
+		"priority":    "P1",
 	}
 
 	prompt := buildSystemPrompt(files, context)
@@ -215,12 +216,17 @@ func TestBuildSystemPrompt(t *testing.T) {
 		}
 	}
 
-	// Check that context is included
-	if !strings.Contains(prompt, "Fix bug in login") {
-		t.Error("buildSystemPrompt() does not contain issue title")
+	// Issue title/body should be omitted from additional context (already present in main prompt)
+	if strings.Contains(prompt, "Fix bug in login") {
+		t.Error("buildSystemPrompt() should not duplicate issue title in system prompt")
 	}
-	if !strings.Contains(prompt, "The login function crashes") {
-		t.Error("buildSystemPrompt() does not contain issue body")
+	if strings.Contains(prompt, "The login function crashes") {
+		t.Error("buildSystemPrompt() should not duplicate issue body in system prompt")
+	}
+
+	// Custom context should appear
+	if !strings.Contains(prompt, "- priority: P1") {
+		t.Error("buildSystemPrompt() should include non-issue context entries")
 	}
 
 	// Check for key instructions
@@ -258,24 +264,22 @@ func TestBuildSystemPrompt_PartialContext(t *testing.T) {
 	context := map[string]string{
 		"issue_title": "Test issue",
 		"issue_body":  "", // Empty value should be skipped
+		"environment": "staging",
+		"notes":       "", // Empty value should be skipped
 	}
 
 	prompt := buildSystemPrompt(files, context)
 
-	if !strings.Contains(prompt, "Test issue") {
-		t.Error("buildSystemPrompt() does not contain non-empty context value")
+	if !strings.Contains(prompt, "- environment: staging") {
+		t.Error("buildSystemPrompt() should include non-issue context")
 	}
 
-	// Should contain "Additional Context:" but not the empty issue_body
-	lines := strings.Split(prompt, "\n")
-	bodyLineCount := 0
-	for _, line := range lines {
-		if strings.Contains(line, "issue_body") {
-			bodyLineCount++
-		}
+	if strings.Contains(prompt, "Test issue") {
+		t.Error("buildSystemPrompt() should not include issue title in additional context")
 	}
-	if bodyLineCount > 0 {
-		t.Error("buildSystemPrompt() should not include empty context values")
+
+	if strings.Contains(prompt, "notes") {
+		t.Error("buildSystemPrompt() should skip empty context values")
 	}
 }
 
