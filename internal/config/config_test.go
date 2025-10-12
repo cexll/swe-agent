@@ -76,8 +76,8 @@ func TestLoad(t *testing.T) {
 				if cfg.OpenAIBaseURL != "" {
 					t.Errorf("OpenAIBaseURL = %s, want empty default", cfg.OpenAIBaseURL)
 				}
-				if cfg.TriggerKeyword != "/pilot" {
-					t.Errorf("TriggerKeyword = %s, want /pilot (default)", cfg.TriggerKeyword)
+				if cfg.TriggerKeyword != "/code" {
+					t.Errorf("TriggerKeyword = %s, want /code (default)", cfg.TriggerKeyword)
 				}
 			},
 		},

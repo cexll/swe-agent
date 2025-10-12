@@ -78,7 +78,7 @@ docker run -d -p 3000:3000 \
 
 ## Architecture Overview
 
-Pilot SWE is a GitHub App webhook service that responds to `/pilot` commands in issue comments to automatically generate and commit code changes.
+Pilot SWE is a GitHub App webhook service that responds to `/code` commands in issue comments to automatically generate and commit code changes.
 
 ### Request Flow
 

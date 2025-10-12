@@ -10,6 +10,11 @@ import (
 	"strings"
 )
 
+const (
+	// UseIssueContentMarker is returned by extractPrompt when no custom prompt is provided
+	UseIssueContentMarker = "__USE_ISSUE_CONTENT__"
+)
+
 // Task represents a pilot task to be executed
 type Task struct {
 	Repo       string
@@ -100,6 +105,13 @@ func (h *Handler) HandleIssueComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 6.5. If no custom prompt provided, use issue content as prompt
+	if prompt == UseIssueContentMarker {
+		// Construct prompt from issue title and body
+		prompt = fmt.Sprintf("# %s\n\n%s", event.Issue.Title, event.Issue.Body)
+		log.Printf("Using issue content as prompt (title + body, %d chars)", len(prompt))
+	}
+
 	// 7. Check if this is a PR or issue
 	isPR := event.Issue.PullRequest != nil
 
@@ -130,6 +142,7 @@ func (h *Handler) HandleIssueComment(w http.ResponseWriter, r *http.Request) {
 }
 
 // extractPrompt extracts the prompt text after the trigger keyword
+// Returns UseIssueContentMarker if no custom prompt is provided after the trigger
 func extractPrompt(body, triggerKeyword string) string {
 	// Find the trigger keyword
 	idx := strings.Index(body, triggerKeyword)
@@ -140,11 +153,21 @@ func extractPrompt(body, triggerKeyword string) string {
 	// Get text after trigger keyword
 	remaining := strings.TrimSpace(body[idx+len(triggerKeyword):])
 
+	// If no content after trigger keyword, use issue content
+	if remaining == "" {
+		return UseIssueContentMarker
+	}
+
 	// Get first line after trigger
 	lines := strings.Split(remaining, "\n")
 	if len(lines) == 0 {
-		return ""
+		return UseIssueContentMarker
 	}
 
-	return strings.TrimSpace(lines[0])
+	prompt := strings.TrimSpace(lines[0])
+	if prompt == "" {
+		return UseIssueContentMarker
+	}
+
+	return prompt
 }

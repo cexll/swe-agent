@@ -46,7 +46,7 @@ func Load() (*Config, error) {
 		OpenAIAPIKey:        os.Getenv("OPENAI_API_KEY"),
 		OpenAIBaseURL:       os.Getenv("OPENAI_BASE_URL"),
 		CodexModel:          getEnv("CODEX_MODEL", "gpt-5-codex"),
-		TriggerKeyword:      getEnv("TRIGGER_KEYWORD", "/pilot"),
+		TriggerKeyword:      getEnv("TRIGGER_KEYWORD", "/code"),
 	}
 
 	// Validate required fields

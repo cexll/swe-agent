@@ -38,26 +38,38 @@ func TestExtractPrompt(t *testing.T) {
 	}{
 		{
 			name:           "simple prompt",
-			body:           "/pilot fix the typo",
-			triggerKeyword: "/pilot",
+			body:           "/code fix the typo",
+			triggerKeyword: "/code",
 			want:           "fix the typo",
 		},
 		{
 			name:           "multiline comment",
-			body:           "/pilot add error handling\nSome more context here",
-			triggerKeyword: "/pilot",
+			body:           "/code add error handling\nSome more context here",
+			triggerKeyword: "/code",
 			want:           "add error handling",
 		},
 		{
-			name:           "no prompt after keyword",
-			body:           "/pilot",
-			triggerKeyword: "/pilot",
-			want:           "",
+			name:           "no prompt after keyword - should use issue content",
+			body:           "/code",
+			triggerKeyword: "/code",
+			want:           UseIssueContentMarker,
+		},
+		{
+			name:           "/code without content",
+			body:           "/code",
+			triggerKeyword: "/code",
+			want:           UseIssueContentMarker,
+		},
+		{
+			name:           "/code with only whitespace",
+			body:           "/code   \n\n  ",
+			triggerKeyword: "/code",
+			want:           UseIssueContentMarker,
 		},
 		{
 			name:           "keyword not found",
 			body:           "just a comment",
-			triggerKeyword: "/pilot",
+			triggerKeyword: "/code",
 			want:           "",
 		},
 		{
@@ -68,14 +80,14 @@ func TestExtractPrompt(t *testing.T) {
 		},
 		{
 			name:           "whitespace handling",
-			body:           "/pilot    fix bug   ",
-			triggerKeyword: "/pilot",
+			body:           "/code    fix bug   ",
+			triggerKeyword: "/code",
 			want:           "fix bug",
 		},
 		{
 			name:           "keyword in middle of text",
-			body:           "Hey @someone\n/pilot refactor code\nThanks!",
-			triggerKeyword: "/pilot",
+			body:           "Hey @someone\n/code refactor code\nThanks!",
+			triggerKeyword: "/code",
 			want:           "refactor code",
 		},
 	}
@@ -92,7 +104,7 @@ func TestExtractPrompt(t *testing.T) {
 
 func TestHandleIssueComment(t *testing.T) {
 	secret := "test-webhook-secret"
-	triggerKeyword := "/pilot"
+	triggerKeyword := "/code"
 
 	createEvent := func(commentBody string, isPR bool) *IssueCommentEvent {
 		issue := Issue{
@@ -141,7 +153,7 @@ func TestHandleIssueComment(t *testing.T) {
 	}{
 		{
 			name:           "valid trigger on issue",
-			event:          createEvent("/pilot fix the bug", false),
+			event:          createEvent("/code fix the bug", false),
 			signature:      "", // will be computed
 			expectedStatus: http.StatusAccepted,
 			expectedBody:   "Task accepted",
@@ -149,7 +161,7 @@ func TestHandleIssueComment(t *testing.T) {
 		},
 		{
 			name:           "valid trigger on PR",
-			event:          createEvent("/pilot refactor code", true),
+			event:          createEvent("/code refactor code", true),
 			signature:      "",
 			expectedStatus: http.StatusAccepted,
 			expectedBody:   "Task accepted",
@@ -164,16 +176,16 @@ func TestHandleIssueComment(t *testing.T) {
 			shouldExecute:  false,
 		},
 		{
-			name:           "trigger keyword without prompt",
-			event:          createEvent("/pilot", false),
+			name:           "trigger keyword without prompt - should use issue content",
+			event:          createEvent("/code", false),
 			signature:      "",
-			expectedStatus: http.StatusOK,
-			expectedBody:   "No prompt found",
-			shouldExecute:  false,
+			expectedStatus: http.StatusAccepted,
+			expectedBody:   "Task accepted",
+			shouldExecute:  true,
 		},
 		{
 			name:           "invalid signature",
-			event:          createEvent("/pilot fix bug", false),
+			event:          createEvent("/code fix bug", false),
 			signature:      "sha256=invalidsignature",
 			expectedStatus: http.StatusUnauthorized,
 			expectedBody:   "Invalid signature",
@@ -252,7 +264,7 @@ func TestHandleIssueComment(t *testing.T) {
 func TestHandleIssueComment_MalformedPayload(t *testing.T) {
 	secret := "test-webhook-secret"
 	executor := &mockExecutor{}
-	handler := NewHandler(secret, "/pilot", executor)
+	handler := NewHandler(secret, "/code", executor)
 
 	tests := []struct {
 		name           string
@@ -297,7 +309,7 @@ func TestHandleIssueComment_MalformedPayload(t *testing.T) {
 func TestHandleIssueComment_SignatureValidation(t *testing.T) {
 	secret := "test-webhook-secret"
 	executor := &mockExecutor{}
-	handler := NewHandler(secret, "/pilot", executor)
+	handler := NewHandler(secret, "/code", executor)
 
 	event := &IssueCommentEvent{
 		Action: "created",
@@ -306,7 +318,7 @@ func TestHandleIssueComment_SignatureValidation(t *testing.T) {
 			Title:  "Test",
 		},
 		Comment: Comment{
-			Body: "/pilot test",
+			Body: "/code test",
 		},
 		Repository: Repository{
 			FullName:      "owner/repo",
@@ -382,7 +394,7 @@ func TestNewHandler(t *testing.T) {
 // TestHandleIssueComment_ErrorReading tests error handling when reading request body
 func TestHandleIssueComment_ErrorReading(t *testing.T) {
 	executor := &mockExecutor{}
-	handler := NewHandler("secret", "/pilot", executor)
+	handler := NewHandler("secret", "/code", executor)
 
 	// Create a reader that always fails
 	errReader := &errorReader{err: io.ErrUnexpectedEOF}
@@ -443,32 +455,32 @@ func TestExtractPrompt_EdgeCases(t *testing.T) {
 	}{
 		{
 			name:           "unicode characters",
-			body:           "/pilot 修复错误",
-			triggerKeyword: "/pilot",
+			body:           "/code 修复错误",
+			triggerKeyword: "/code",
 			want:           "修复错误",
 		},
 		{
 			name:           "multiple trigger keywords",
-			body:           "/pilot first\n/pilot second",
-			triggerKeyword: "/pilot",
+			body:           "/code first\n/code second",
+			triggerKeyword: "/code",
 			want:           "first",
 		},
 		{
 			name:           "trigger at end of message",
-			body:           "Some text before\n/pilot fix this",
-			triggerKeyword: "/pilot",
+			body:           "Some text before\n/code fix this",
+			triggerKeyword: "/code",
 			want:           "fix this",
 		},
 		{
-			name:           "empty lines after trigger",
-			body:           "/pilot",
-			triggerKeyword: "/pilot",
-			want:           "",
+			name:           "empty lines after trigger - should use issue content",
+			body:           "/code",
+			triggerKeyword: "/code",
+			want:           UseIssueContentMarker,
 		},
 		{
 			name:           "very long prompt",
-			body:           "/pilot " + strings.Repeat("a", 1000),
-			triggerKeyword: "/pilot",
+			body:           "/code " + strings.Repeat("a", 1000),
+			triggerKeyword: "/code",
 			want:           strings.Repeat("a", 1000),
 		},
 	}
@@ -486,7 +498,7 @@ func TestExtractPrompt_EdgeCases(t *testing.T) {
 func TestHandleIssueComment_ConcurrentRequests(t *testing.T) {
 	secret := "test-secret"
 	executor := &mockExecutor{}
-	handler := NewHandler(secret, "/pilot", executor)
+	handler := NewHandler(secret, "/code", executor)
 
 	event := &IssueCommentEvent{
 		Action: "created",
@@ -495,7 +507,7 @@ func TestHandleIssueComment_ConcurrentRequests(t *testing.T) {
 			Title:  "Test",
 		},
 		Comment: Comment{
-			Body: "/pilot test concurrent",
+			Body: "/code test concurrent",
 		},
 		Repository: Repository{
 			FullName:      "owner/repo",
