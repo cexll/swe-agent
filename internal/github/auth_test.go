@@ -407,3 +407,117 @@ func TestGetInstallationToken_RepoFormatValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestGenerateJWT_InvalidPrivateKey(t *testing.T) {
+	tests := []struct {
+		name        string
+		privateKey  string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "empty private key",
+			privateKey:  "",
+			wantErr:     true,
+			errContains: "parse private key",
+		},
+		{
+			name:        "malformed private key",
+			privateKey:  "-----BEGIN RSA PRIVATE KEY-----\ninvalid\n-----END RSA PRIVATE KEY-----",
+			wantErr:     true,
+			errContains: "parse private key",
+		},
+		{
+			name:        "wrong format",
+			privateKey:  "not a key at all",
+			wantErr:     true,
+			errContains: "parse private key",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			auth := &AppAuth{
+				AppID:      "123456",
+				PrivateKey: tt.privateKey,
+			}
+
+			token, err := auth.GenerateJWT()
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("GenerateJWT() should return error")
+					return
+				}
+				if !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("GenerateJWT() error = %v, want error containing %q", err, tt.errContains)
+				}
+				if token != "" {
+					t.Errorf("GenerateJWT() token = %q, want empty string on error", token)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("GenerateJWT() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestGenerateJWT_EdgeCaseAppIDs(t *testing.T) {
+	tests := []struct {
+		name    string
+		appID   string
+		wantErr bool
+	}{
+		{
+			name:    "empty app ID",
+			appID:   "",
+			wantErr: true,
+		},
+		{
+			name:    "negative app ID",
+			appID:   "-123",
+			wantErr: false, // ParseInt will handle negative numbers
+		},
+		{
+			name:    "zero app ID",
+			appID:   "0",
+			wantErr: false,
+		},
+		{
+			name:    "very large app ID",
+			appID:   "999999999999",
+			wantErr: false,
+		},
+		{
+			name:    "app ID with spaces",
+			appID:   "123 456",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			auth := &AppAuth{
+				AppID:      tt.appID,
+				PrivateKey: testPrivateKey,
+			}
+
+			token, err := auth.GenerateJWT()
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("GenerateJWT() should return error for app ID %q", tt.appID)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("GenerateJWT() unexpected error for app ID %q: %v", tt.appID, err)
+				}
+				if token == "" {
+					t.Error("GenerateJWT() returned empty token")
+				}
+			}
+		})
+	}
+}

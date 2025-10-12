@@ -12,6 +12,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// AuthProvider defines the interface for GitHub authentication
+type AuthProvider interface {
+	GetInstallationToken(repo string) (*InstallationToken, error)
+}
+
 // AppAuth holds GitHub App authentication configuration
 type AppAuth struct {
 	AppID      string
