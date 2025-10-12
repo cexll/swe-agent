@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestLoad(t *testing.T) {
@@ -49,6 +50,24 @@ func TestLoad(t *testing.T) {
 				if cfg.TriggerKeyword != "/test" {
 					t.Errorf("TriggerKeyword = %s, want /test", cfg.TriggerKeyword)
 				}
+				if cfg.DispatcherWorkers != 4 {
+					t.Errorf("DispatcherWorkers = %d, want 4", cfg.DispatcherWorkers)
+				}
+				if cfg.DispatcherQueueSize != 16 {
+					t.Errorf("DispatcherQueueSize = %d, want 16", cfg.DispatcherQueueSize)
+				}
+				if cfg.DispatcherMaxAttempts != 3 {
+					t.Errorf("DispatcherMaxAttempts = %d, want 3", cfg.DispatcherMaxAttempts)
+				}
+				if cfg.DispatcherRetryInitial != 15*time.Second {
+					t.Errorf("DispatcherRetryInitial = %s, want 15s", cfg.DispatcherRetryInitial)
+				}
+				if cfg.DispatcherRetryMax != 300*time.Second {
+					t.Errorf("DispatcherRetryMax = %s, want 5m", cfg.DispatcherRetryMax)
+				}
+				if cfg.DispatcherBackoffMultiplier != 2 {
+					t.Errorf("DispatcherBackoffMultiplier = %f, want 2", cfg.DispatcherBackoffMultiplier)
+				}
 			},
 		},
 		{
@@ -78,6 +97,24 @@ func TestLoad(t *testing.T) {
 				}
 				if cfg.TriggerKeyword != "/code" {
 					t.Errorf("TriggerKeyword = %s, want /code (default)", cfg.TriggerKeyword)
+				}
+				if cfg.DispatcherWorkers != 4 {
+					t.Errorf("DispatcherWorkers = %d, want 4", cfg.DispatcherWorkers)
+				}
+				if cfg.DispatcherQueueSize != 16 {
+					t.Errorf("DispatcherQueueSize = %d, want 16", cfg.DispatcherQueueSize)
+				}
+				if cfg.DispatcherMaxAttempts != 3 {
+					t.Errorf("DispatcherMaxAttempts = %d, want 3", cfg.DispatcherMaxAttempts)
+				}
+				if cfg.DispatcherRetryInitial != 15*time.Second {
+					t.Errorf("DispatcherRetryInitial = %s, want 15s", cfg.DispatcherRetryInitial)
+				}
+				if cfg.DispatcherRetryMax != 300*time.Second {
+					t.Errorf("DispatcherRetryMax = %s, want 5m", cfg.DispatcherRetryMax)
+				}
+				if cfg.DispatcherBackoffMultiplier != 2 {
+					t.Errorf("DispatcherBackoffMultiplier = %f, want 2", cfg.DispatcherBackoffMultiplier)
 				}
 			},
 		},
@@ -159,6 +196,15 @@ func TestLoad(t *testing.T) {
 			}
 		})
 	}
+}
+
+func applyDispatcherDefaults(cfg *Config) {
+	cfg.DispatcherWorkers = 1
+	cfg.DispatcherQueueSize = 1
+	cfg.DispatcherMaxAttempts = 1
+	cfg.DispatcherRetryInitial = time.Second
+	cfg.DispatcherRetryMax = time.Second
+	cfg.DispatcherBackoffMultiplier = 2
 }
 
 func TestConfig_validate(t *testing.T) {
@@ -268,6 +314,7 @@ func TestConfig_validate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			applyDispatcherDefaults(tt.cfg)
 			err := tt.cfg.validate()
 
 			if (err != nil) != tt.wantErr {

@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"time"
 )
 
 // Config holds all configuration for the pilot-swe service
@@ -31,22 +32,36 @@ type Config struct {
 
 	// Trigger settings
 	TriggerKeyword string
+
+	// Dispatcher settings
+	DispatcherWorkers           int
+	DispatcherQueueSize         int
+	DispatcherMaxAttempts       int
+	DispatcherRetryInitial      time.Duration
+	DispatcherRetryMax          time.Duration
+	DispatcherBackoffMultiplier float64
 }
 
 // Load loads configuration from environment variables
 func Load() (*Config, error) {
 	cfg := &Config{
-		Port:                getEnvInt("PORT", 3000),
-		GitHubAppID:         os.Getenv("GITHUB_APP_ID"),
-		GitHubPrivateKey:    os.Getenv("GITHUB_PRIVATE_KEY"),
-		GitHubWebhookSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
-		Provider:            getEnv("PROVIDER", "claude"),
-		ClaudeAPIKey:        os.Getenv("ANTHROPIC_API_KEY"),
-		ClaudeModel:         getEnv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022"),
-		OpenAIAPIKey:        os.Getenv("OPENAI_API_KEY"),
-		OpenAIBaseURL:       os.Getenv("OPENAI_BASE_URL"),
-		CodexModel:          getEnv("CODEX_MODEL", "gpt-5-codex"),
-		TriggerKeyword:      getEnv("TRIGGER_KEYWORD", "/code"),
+		Port:                        getEnvInt("PORT", 3000),
+		GitHubAppID:                 os.Getenv("GITHUB_APP_ID"),
+		GitHubPrivateKey:            os.Getenv("GITHUB_PRIVATE_KEY"),
+		GitHubWebhookSecret:         os.Getenv("GITHUB_WEBHOOK_SECRET"),
+		Provider:                    getEnv("PROVIDER", "claude"),
+		ClaudeAPIKey:                os.Getenv("ANTHROPIC_API_KEY"),
+		ClaudeModel:                 getEnv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022"),
+		OpenAIAPIKey:                os.Getenv("OPENAI_API_KEY"),
+		OpenAIBaseURL:               os.Getenv("OPENAI_BASE_URL"),
+		CodexModel:                  getEnv("CODEX_MODEL", "gpt-5-codex"),
+		TriggerKeyword:              getEnv("TRIGGER_KEYWORD", "/code"),
+		DispatcherWorkers:           getEnvInt("DISPATCHER_WORKERS", 4),
+		DispatcherQueueSize:         getEnvInt("DISPATCHER_QUEUE_SIZE", 16),
+		DispatcherMaxAttempts:       getEnvInt("DISPATCHER_MAX_ATTEMPTS", 3),
+		DispatcherRetryInitial:      time.Duration(getEnvInt("DISPATCHER_RETRY_SECONDS", 15)) * time.Second,
+		DispatcherRetryMax:          time.Duration(getEnvInt("DISPATCHER_RETRY_MAX_SECONDS", 300)) * time.Second,
+		DispatcherBackoffMultiplier: getEnvFloat("DISPATCHER_BACKOFF_MULTIPLIER", 2.0),
 	}
 
 	// Validate required fields
@@ -84,6 +99,44 @@ func (c *Config) validate() error {
 		return fmt.Errorf("invalid provider: %s (must be 'claude' or 'codex')", c.Provider)
 	}
 
+	if c.DispatcherWorkers <= 0 {
+		c.DispatcherWorkers = 4
+	}
+	if c.DispatcherQueueSize <= 0 {
+		c.DispatcherQueueSize = 16
+	}
+	if c.DispatcherMaxAttempts <= 0 {
+		c.DispatcherMaxAttempts = 3
+	}
+	if c.DispatcherRetryInitial <= 0 {
+		c.DispatcherRetryInitial = 15 * time.Second
+	}
+	if c.DispatcherRetryMax <= 0 {
+		c.DispatcherRetryMax = 5 * time.Minute
+	}
+	if c.DispatcherBackoffMultiplier < 1 {
+		c.DispatcherBackoffMultiplier = 2
+	}
+
+	if c.DispatcherWorkers <= 0 {
+		return fmt.Errorf("DISPATCHER_WORKERS must be greater than 0")
+	}
+	if c.DispatcherQueueSize <= 0 {
+		return fmt.Errorf("DISPATCHER_QUEUE_SIZE must be greater than 0")
+	}
+	if c.DispatcherMaxAttempts <= 0 {
+		return fmt.Errorf("DISPATCHER_MAX_ATTEMPTS must be greater than 0")
+	}
+	if c.DispatcherRetryInitial <= 0 {
+		return fmt.Errorf("DISPATCHER_RETRY_SECONDS must be greater than 0")
+	}
+	if c.DispatcherRetryMax < c.DispatcherRetryInitial {
+		return fmt.Errorf("DISPATCHER_RETRY_MAX_SECONDS must be >= DISPATCHER_RETRY_SECONDS")
+	}
+	if c.DispatcherBackoffMultiplier < 1 {
+		return fmt.Errorf("DISPATCHER_BACKOFF_MULTIPLIER must be >= 1")
+	}
+
 	return nil
 }
 
@@ -100,6 +153,15 @@ func getEnvInt(key string, defaultValue int) int {
 	if value := os.Getenv(key); value != "" {
 		if intValue, err := strconv.Atoi(value); err == nil {
 			return intValue
+		}
+	}
+	return defaultValue
+}
+
+func getEnvFloat(key string, defaultValue float64) float64 {
+	if value := os.Getenv(key); value != "" {
+		if floatValue, err := strconv.ParseFloat(value, 64); err == nil {
+			return floatValue
 		}
 	}
 	return defaultValue
