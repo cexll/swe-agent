@@ -1,4 +1,4 @@
-.PHONY: help build run test test-coverage test-verbose clean fmt vet lint check docker-build docker-run tidy install-tools all
+.PHONY: help build run test test-coverage test-verbose clean fmt vet lint check docker-build docker-run tidy install-tools all vuln security ci
 
 # Variables
 BINARY_NAME=swe
@@ -65,11 +65,36 @@ vet:
 	go vet ./...
 	@echo "Vet complete"
 
-## lint: Run go vet and check formatting
+## lint: Run go vet and check formatting (strict; fails if unformatted)
 lint: vet
 	@echo "Checking code formatting..."
 	@test -z "$$(gofmt -l .)" || (echo "Code is not formatted. Run 'make fmt'" && gofmt -l . && exit 1)
 	@echo "Lint complete"
+
+## fmt-check: Check formatting (non-fatal; prints unformatted files)
+fmt-check:
+	@echo "Checking code formatting (non-fatal)..."
+	@if [ -n "$$(${SHELL} -lc 'gofmt -l .')" ]; then \
+		echo "Unformatted files detected:"; \
+		gofmt -l .; \
+		echo "Tip: run 'make fmt' to auto-format"; \
+	else \
+		echo "All files are properly formatted"; \
+	fi
+
+## vuln: Run Go vulnerability scan (govulncheck)
+vuln:
+	@echo "Running govulncheck (basic security scan)..."
+	@if ! command -v govulncheck >/dev/null 2>&1; then \
+		echo "govulncheck not found. Installing..."; \
+		GO111MODULE=on go install golang.org/x/vuln/cmd/govulncheck@latest; \
+	fi
+	@echo "govulncheck version:" && govulncheck -version || true
+	govulncheck ./...
+	@echo "Vulnerability scan complete"
+
+## security: Alias for vuln
+security: vuln
 
 ## check: Run all checks (fmt, vet, test)
 check: fmt vet test
@@ -119,8 +144,20 @@ docker-logs:
 install-tools:
 	@echo "Installing development tools..."
 	go install golang.org/x/tools/cmd/goimports@latest
+	go install golang.org/x/vuln/cmd/govulncheck@latest
 	@echo "Tools installed"
 
 ## all: Build, test, and run checks
 all: clean check build
 	@echo "Build complete and all checks passed ✓"
+
+## ci: Run CI checks (no auto-format): lint, tests, build, security scan
+
+ci:
+	@echo "Running CI pipeline (lint, tests, build, security)..."
+	$(MAKE) vet
+	$(MAKE) fmt-check
+	$(MAKE) test-coverage
+	$(MAKE) build
+	$(MAKE) vuln
+	@echo "CI pipeline complete ✓"
