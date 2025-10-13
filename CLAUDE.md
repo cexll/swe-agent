@@ -110,6 +110,7 @@ GitHub Webhook (issue_comment event)
 - **factory.go**: Provider factory pattern for instantiation
 - **claude/**: Claude Code implementation
 - **codex/**: Codex implementation (multi-provider support)
+ - **prompt/**: Shared prompt manager used by all providers
 
 Provider interface enables zero-branch polymorphism:
 
@@ -119,6 +120,8 @@ type Provider interface {
     Name() string
 }
 ```
+
+All providers must source prompts from `internal/prompt` to ensure identical instructions across backends. This avoids drift and duplication.
 
 #### 3. Task Executor (`internal/executor/`)
 
