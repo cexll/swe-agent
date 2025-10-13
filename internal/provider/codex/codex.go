@@ -122,6 +122,7 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 	args := []string{
 		"exec",
 		"-m", p.model, // Model selection
+		"-c", `model_reasoning_effort="high"`, // Request deeper reasoning
 		"--dangerously-bypass-approvals-and-sandbox", // Skip all confirmation prompts
 		"-C", repoPath, // Working directory
 		prompt, // Initial instructions
@@ -144,7 +145,7 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	log.Printf("[Codex] Executing: codex exec -m %s --dangerously-bypass-approvals-and-sandbox -C %s", p.model, repoPath)
+	log.Printf("[Codex] Executing: codex exec -m %s -c model_reasoning_effort=\"high\" --dangerously-bypass-approvals-and-sandbox -C %s", p.model, repoPath)
 	log.Printf("[Codex] Prompt length: %d characters", len(prompt))
 
 	startTime := time.Now()
