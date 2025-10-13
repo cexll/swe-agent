@@ -172,39 +172,27 @@ func (p *Provider) GenerateCode(ctx context.Context, req *CodeRequest) (*CodeRes
 // parseCodeResponse extracts file changes and summary from Claude's response
 // Enhanced with multiple format support and debugging
 func parseCodeResponse(response string) (*CodeResponse, error) {
-	result := &CodeResponse{
-		Files: []FileChange{},
-	}
+    // Delegate to shared parser to ensure cross-provider consistency
+    if os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
+        log.Printf("[Parse] Parsing response of %d characters", len(response))
+        log.Printf("[Parse] Response preview: %s...", truncateString(response, 200))
+    }
 
-	// Debug logging if enabled
-	if os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
-		log.Printf("[Parse] Parsing response of %d characters", len(response))
-		log.Printf("[Parse] Response preview: %s...", truncateString(response, 200))
-	}
+    parsedFiles, summary, err := prompt.ParseResponse(response)
+    if err != nil {
+        return nil, err
+    }
 
-	// Primary parsing: XML-style file blocks
-	result.Files = append(result.Files, parseXMLFileBlocks(response)...)
+    result := &CodeResponse{Summary: summary}
+    for _, pf := range parsedFiles {
+        result.Files = append(result.Files, FileChange{Path: pf.Path, Content: pf.Content})
+    }
 
-	// Fallback parsing: Markdown code blocks if no XML found
-	if len(result.Files) == 0 {
-		result.Files = append(result.Files, parseMarkdownCodeBlocks(response)...)
-	}
-
-	// Extract summary
-	result.Summary = extractSummary(response, len(result.Files) > 0)
-
-	// Debug results
-	if os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
-		log.Printf("[Parse] Found %d file changes", len(result.Files))
-		log.Printf("[Parse] Summary: %s", truncateString(result.Summary, 100))
-	}
-
-	// Validation
-	if len(result.Files) == 0 && strings.TrimSpace(result.Summary) == "" {
-		return nil, fmt.Errorf("no content found in response")
-	}
-
-	return result, nil
+    if os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
+        log.Printf("[Parse] Found %d file changes", len(result.Files))
+        log.Printf("[Parse] Summary: %s", truncateString(result.Summary, 100))
+    }
+    return result, nil
 }
 
 // parseXMLFileBlocks extracts files from XML-style blocks

@@ -7,7 +7,6 @@ import (
     "log"
     "os"
     "os/exec"
-    "regexp"
     "strings"
     "time"
 
@@ -156,40 +155,16 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 
 // parseCodeResponse extracts file changes and summary from Codex response
 func parseCodeResponse(response string) (*claude.CodeResponse, error) {
-	result := &claude.CodeResponse{
-		Files: []claude.FileChange{},
-	}
-
-	fileRegex := regexp.MustCompile(`(?s)<file path="([^"]+)">\s*<content>\s*(.*?)\s*</content>\s*</file>`)
-	fileMatches := fileRegex.FindAllStringSubmatch(response, -1)
-
-	for _, match := range fileMatches {
-		if len(match) >= 3 {
-			result.Files = append(result.Files, claude.FileChange{
-				Path:    match[1],
-				Content: match[2],
-			})
-		}
-	}
-
-	summaryRegex := regexp.MustCompile(`(?s)<summary>\s*(.*?)\s*</summary>`)
-	summaryMatch := summaryRegex.FindStringSubmatch(response)
-	if len(summaryMatch) >= 2 {
-		result.Summary = summaryMatch[1]
-	} else if len(result.Files) == 0 {
-		// No files and no <summary> tag, use raw response as content
-		result.Summary = strings.TrimSpace(response)
-	} else {
-		result.Summary = "Code changes applied"
-	}
-
-	// Allow responses without file changes (analysis/Q&A/recommendations)
-	// As long as there's meaningful content in the summary
-	if len(result.Files) == 0 && strings.TrimSpace(result.Summary) == "" {
-		return nil, fmt.Errorf("no content found in response")
-	}
-
-	return result, nil
+    // Use the unified parser from internal/prompt to avoid drift between providers
+    parsedFiles, summary, err := prompt.ParseResponse(response)
+    if err != nil {
+        return nil, err
+    }
+    result := &claude.CodeResponse{Summary: summary}
+    for _, pf := range parsedFiles {
+        result.Files = append(result.Files, claude.FileChange{Path: pf.Path, Content: pf.Content})
+    }
+    return result, nil
 }
 
 // --- Backward-compatible shim for tests ---
