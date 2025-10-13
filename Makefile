@@ -1,4 +1,4 @@
-.PHONY: help build run test test-coverage test-verbose clean fmt vet lint check docker-build docker-run tidy install-tools all
+.PHONY: help build run test test-coverage test-verbose clean fmt vet lint check docker-build docker-run tidy install-tools all vulncheck qa
 
 # Variables
 BINARY_NAME=swe
@@ -70,6 +70,17 @@ lint: vet
 	@echo "Checking code formatting..."
 	@test -z "$$(gofmt -l .)" || (echo "Code is not formatted. Run 'make fmt'" && gofmt -l . && exit 1)
 	@echo "Lint complete"
+
+## vulncheck: Run Go vulnerability scan (govulncheck)
+vulncheck:
+	@echo "Running govulncheck (basic security scan)..."
+	@command -v govulncheck >/dev/null 2>&1 || (echo "Installing govulncheck..." && go install golang.org/x/vuln/cmd/govulncheck@latest)
+	@govulncheck ./...
+	@echo "Vulnerability scan complete"
+
+## qa: Run QA suite (lint, tests, build, security scan)
+qa: lint test build vulncheck
+	@echo "QA suite complete ✓"
 
 ## check: Run all checks (fmt, vet, test)
 check: fmt vet test

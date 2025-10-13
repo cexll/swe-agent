@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-lint-sec:
+    name: Build, Test, Lint, Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Show Go env
+        run: |
+          go version
+          go env
+
+      - name: Lint (vet + format check)
+        run: make lint
+
+      - name: Test (with coverage)
+        run: make test-coverage
+
+      - name: Build
+        run: make build
+
+      - name: Security scan (govulncheck)
+        run: make vulncheck
+
+      - name: Upload coverage artifact
+        if: ${{ hashFiles('coverage.out') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-out
+          path: coverage.out
+          if-no-files-found: ignore
