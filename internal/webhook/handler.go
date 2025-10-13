@@ -15,17 +15,18 @@ import (
 
 // Task represents a pilot task to be executed
 type Task struct {
-	ID            string
-	Repo          string
-	Number        int
-	Branch        string
-	Prompt        string
-	PromptSummary string
-	IssueTitle    string
-	IssueBody     string
-	IsPR          bool
-	Username      string // User who triggered the task
-	Attempt       int    // Current attempt number (managed by dispatcher)
+    ID            string
+    Repo          string
+    Number        int
+    Branch        string
+    Prompt        string
+    PromptSummary string
+    IssueTitle    string
+    IssueBody     string
+    IsPR          bool
+    Username      string // User who triggered the task
+    Attempt       int    // Current attempt number (managed by dispatcher)
+    Mode          string // execution mode: "execute" (default), "clarify", "design"
 }
 
 // TaskDispatcher enqueues tasks for asynchronous execution
@@ -146,7 +147,8 @@ func (h *Handler) handleIssueComment(w http.ResponseWriter, payload []byte) {
 	// 7. Check if this is a PR or issue
 	isPR := event.Issue.PullRequest != nil
 
-	prompt := buildPrompt(event.Issue.Title, event.Issue.Body, customInstruction)
+    mode, cleaned := parseMode(customInstruction)
+    prompt := buildPrompt(event.Issue.Title, event.Issue.Body, cleaned)
 	promptSummary := buildPromptSummary(event.Issue.Title, customInstruction, isPR)
 
 	// 8. Create task
@@ -161,6 +163,7 @@ func (h *Handler) handleIssueComment(w http.ResponseWriter, payload []byte) {
 		IssueBody:     event.Issue.Body,
 		IsPR:          isPR,
 		Username:      event.Comment.User.Login,
+        Mode:          mode,
 	}
 
 	h.createStoreTask(task)
@@ -217,7 +220,8 @@ func (h *Handler) handleReviewComment(w http.ResponseWriter, payload []byte) {
 		return
 	}
 
-	prompt := buildPrompt(event.PullRequest.Title, event.PullRequest.Body, customInstruction)
+    mode, cleaned := parseMode(customInstruction)
+    prompt := buildPrompt(event.PullRequest.Title, event.PullRequest.Body, cleaned)
 	promptSummary := buildPromptSummary(event.PullRequest.Title, customInstruction, true)
 
 	branch := event.PullRequest.Base.Ref
@@ -236,6 +240,7 @@ func (h *Handler) handleReviewComment(w http.ResponseWriter, payload []byte) {
 		IssueBody:     event.PullRequest.Body,
 		IsPR:          true,
 		Username:      event.Comment.User.Login,
+        Mode:          mode,
 	}
 
 	h.createStoreTask(task)
@@ -391,4 +396,35 @@ func summarizeInstruction(instruction string, limit int) string {
 
 	joined := strings.Join(parts, " ")
 	return truncateText(joined, limit)
+}
+
+// parseMode inspects the initial token(s) of the user instruction to detect a special mode.
+// Supported:
+//   - clarify | ask | ?  => "clarify" mode (generate questions, no code changes)
+//   - design             => "design" mode (propose design, await confirmation)
+// Default is "execute". Returns (mode, cleanedInstruction) where the cleaned instruction
+// has the leading mode token removed.
+func parseMode(instruction string) (string, string) {
+    trimmed := strings.TrimSpace(instruction)
+    if trimmed == "" {
+        return "execute", instruction
+    }
+
+    // Extract first word (case-insensitive)
+    first := trimmed
+    if i := strings.IndexAny(trimmed, " \n\t"); i >= 0 {
+        first = trimmed[:i]
+    }
+    lower := strings.ToLower(first)
+
+    switch lower {
+    case "clarify", "ask", "?":
+        cleaned := strings.TrimSpace(strings.TrimPrefix(trimmed, first))
+        return "clarify", cleaned
+    case "design":
+        cleaned := strings.TrimSpace(strings.TrimPrefix(trimmed, first))
+        return "design", cleaned
+    default:
+        return "execute", instruction
+    }
 }

@@ -9,10 +9,13 @@ import (
 type CommentStatus string
 
 const (
-	StatusQueued    CommentStatus = "queued"
-	StatusWorking   CommentStatus = "working"
-	StatusCompleted CommentStatus = "completed"
-	StatusFailed    CommentStatus = "failed"
+    StatusQueued    CommentStatus = "queued"
+    StatusWorking   CommentStatus = "working"
+    StatusCompleted CommentStatus = "completed"
+    StatusFailed    CommentStatus = "failed"
+    // Interactive collaboration states
+    StatusNeedsInfo       CommentStatus = "needs_info"        // Waiting for user clarification
+    StatusAwaitingApproval CommentStatus = "awaiting_approval" // Waiting for design approval
 )
 
 // CreatedPR represents a PR that was created as part of a split
@@ -30,8 +33,8 @@ type CreatedPR struct {
 // This data structure eliminates special cases by making all states
 // variations of the same structure rather than separate code paths
 type CommentState struct {
-	// Status of the task
-	Status CommentStatus
+    // Status of the task
+    Status CommentStatus
 
 	// Timing information
 	StartTime time.Time
@@ -42,9 +45,13 @@ type CommentState struct {
 	Username     string
 	OriginalBody string
 
-	// Results
-	Summary       string
-	ModifiedFiles []string
+    // Results
+    Summary       string
+    ModifiedFiles []string
+    // Interactive artifacts
+    Questions      []string // Clarification questions
+    DesignProposal string   // Proposed design document
+    Progress       []string // Realtime progress updates
 
 	// Links
 	BranchName string

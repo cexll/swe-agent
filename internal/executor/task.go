@@ -84,32 +84,32 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 		task.Prompt = injectDiscussion(task.Prompt, discussion)
 	}
 
-	// 1. Create tracking comment
-	tracker := github.NewCommentTrackerWithClient(task.Repo, task.Number, task.Username, e.ghClient)
-	tracker.SetQueued()
-	if task.PromptSummary != "" {
-		tracker.State.OriginalBody = task.PromptSummary
-	} else {
-		tracker.State.OriginalBody = task.Prompt
-	}
+    // 1. Create tracking comment
+    tracker := github.NewCommentTrackerWithClient(task.Repo, task.Number, task.Username, e.ghClient)
+    tracker.SetQueued()
+    if task.PromptSummary != "" {
+        tracker.State.OriginalBody = task.PromptSummary
+    } else {
+        tracker.State.OriginalBody = task.Prompt
+    }
 
-	if err := tracker.Create(installToken.Token); err != nil {
-		log.Printf("Warning: Failed to create tracking comment: %v", err)
-		e.addLog(task, "error", "Failed to create tracking comment: %v", err)
-		// Continue execution even if comment creation fails
-	} else {
-		log.Printf("Created tracking comment (ID: %d)", tracker.CommentID)
-		e.addLog(task, "info", "Created tracking comment (ID: %d)", tracker.CommentID)
-	}
+    if err := tracker.Create(installToken.Token); err != nil {
+        log.Printf("Warning: Failed to create tracking comment: %v", err)
+        e.addLog(task, "error", "Failed to create tracking comment: %v", err)
+        // Continue execution even if comment creation fails
+    } else {
+        log.Printf("Created tracking comment (ID: %d)", tracker.CommentID)
+        e.addLog(task, "info", "Created tracking comment (ID: %d)", tracker.CommentID)
+    }
 
-	tracker.State.StartTime = time.Now()
-	if tracker.CommentID > 0 {
-		tracker.SetWorking()
-		if err := tracker.Update(installToken.Token); err != nil {
-			log.Printf("Warning: Failed to update tracking comment to working status: %v", err)
-			e.addLog(task, "error", "Failed to set tracking comment to working: %v", err)
-		}
-	}
+    tracker.State.StartTime = time.Now()
+    if tracker.CommentID > 0 {
+        tracker.SetWorking()
+        if err := tracker.Update(installToken.Token); err != nil {
+            log.Printf("Warning: Failed to update tracking comment to working status: %v", err)
+            e.addLog(task, "error", "Failed to set tracking comment to working: %v", err)
+        }
+    }
 
 	// Add "swe" label to the issue for tracking
 	if err := e.ghClient.AddLabel(task.Repo, task.Number, "swe", installToken.Token); err != nil {
@@ -117,19 +117,26 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 		e.addLog(task, "error", "Failed to add swe label: %v", err)
 	}
 
-	// 2. Clone repository
-	log.Printf("Cloning repository %s (branch: %s)", task.Repo, task.Branch)
-	e.addLog(task, "info", "Cloning repository %s (branch %s)", task.Repo, task.Branch)
-	workdir, cleanup, err := e.cloneFn(task.Repo, task.Branch)
-	if err != nil {
-		return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to clone repository: %v", err))
-	}
-	defer cleanup()
-	log.Printf("Repository cloned to %s", workdir)
-	e.addLog(task, "info", "Repository cloned to %s", workdir)
+    tracker.AddProgress("Authenticated as GitHub App")
+    if tracker.CommentID > 0 {
+        _ = tracker.Update(installToken.Token)
+    }
 
-	// 3. Call AI provider to generate changes
-	log.Printf("Calling %s provider (prompt length: %d chars)", e.provider.Name(), len(task.Prompt))
+    // 2. Clone repository
+    log.Printf("Cloning repository %s (branch: %s)", task.Repo, task.Branch)
+    e.addLog(task, "info", "Cloning repository %s (branch %s)", task.Repo, task.Branch)
+    workdir, cleanup, err := e.cloneFn(task.Repo, task.Branch)
+    if err != nil {
+        return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to clone repository: %v", err))
+    }
+    defer cleanup()
+    log.Printf("Repository cloned to %s", workdir)
+    tracker.AddProgress("Repository cloned")
+    if tracker.CommentID > 0 {
+        _ = tracker.Update(installToken.Token)
+    }
+
+	// Debug: provider selection
 	e.addLog(task, "info", "Calling %s provider", e.provider.Name())
 
 	// Record git status before calling Claude for comparison
@@ -149,8 +156,21 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 		"issue_body":  task.IssueBody,
 	}
 
+    // Build prompt possibly specialized by mode
+    modePrompt := task.Prompt
+    switch strings.ToLower(strings.TrimSpace(task.Mode)) {
+    case "clarify":
+        modePrompt = composeModePrompt(task.Prompt, "clarify")
+        tracker.AddProgress("Preparing clarification questions")
+        _ = tracker.Update(installToken.Token)
+    case "design":
+        modePrompt = composeModePrompt(task.Prompt, "design")
+        tracker.AddProgress("Drafting proposed design")
+        _ = tracker.Update(installToken.Token)
+    }
+
 	result, err := e.provider.GenerateCode(ctx, &claude.CodeRequest{
-		Prompt:   task.Prompt,
+        Prompt:   modePrompt,
 		RepoPath: workdir,
 		Context:  context,
 	})
@@ -175,6 +195,36 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 			}
 		}
 	}
+
+    // 3.5 Handle interactive modes that should not perform code changes
+    switch strings.ToLower(strings.TrimSpace(task.Mode)) {
+    case "clarify":
+        questions := extractQuestions(result.Summary)
+        if len(questions) == 0 {
+            // Fallback: treat entire summary as a single question
+            if s := strings.TrimSpace(result.Summary); s != "" {
+                questions = []string{s}
+            }
+        }
+        tracker.SetNeedsInfo(questions)
+        if err := tracker.Update(installToken.Token); err != nil {
+            log.Printf("Warning: Failed to update tracking comment with questions: %v", err)
+            e.addLog(task, "error", "Failed to update tracking comment with questions: %v", err)
+        }
+        e.addLog(task, "success", "Posted clarification questions (%d)", len(questions))
+        e.updateStatus(task, taskstore.StatusCompleted)
+        return nil
+    case "design":
+        design := strings.TrimSpace(result.Summary)
+        tracker.SetAwaitingApproval(design)
+        if err := tracker.Update(installToken.Token); err != nil {
+            log.Printf("Warning: Failed to update tracking comment with design: %v", err)
+            e.addLog(task, "error", "Failed to update tracking comment with design: %v", err)
+        }
+        e.addLog(task, "success", "Posted proposed design for approval")
+        e.updateStatus(task, taskstore.StatusCompleted)
+        return nil
+    }
 
 	// 4. Apply file changes if provider returned file list
 	if len(result.Files) > 0 {
@@ -545,41 +595,19 @@ func formatDiscussion(issueComments []github.IssueComment, reviewComments []gith
 		return ""
 	}
 
-	sort.SliceStable(entries, func(i, j int) bool {
-		aZero := entries[i].createdAt.IsZero()
-		bZero := entries[j].createdAt.IsZero()
-		switch {
-		case aZero && bZero:
-			return i < j
-		case aZero:
-			return true
-		case bZero:
-			return false
-		default:
-			return entries[i].createdAt.Before(entries[j].createdAt)
-		}
+	// Sort by time ascending
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].createdAt.Before(entries[j].createdAt)
 	})
 
 	var builder strings.Builder
-	builder.WriteString("## Discussion\n")
-
+	builder.WriteString("## Discussion\n\n")
 	for _, entry := range entries {
-		timestamp := "unknown"
-		if !entry.createdAt.IsZero() {
-			timestamp = entry.createdAt.UTC().Format(time.RFC3339)
-		}
-
-		builder.WriteString("\n@")
-		builder.WriteString(entry.author)
-		builder.WriteString(" (")
-		builder.WriteString(timestamp)
-		builder.WriteString("):\n")
-
+		builder.WriteString(fmt.Sprintf("@%s (%s):\n", entry.author, entry.createdAt.UTC().Format("2006-01-02T15:04:05Z")))
 		if entry.metadata != "" {
 			builder.WriteString(entry.metadata)
 			builder.WriteString("\n")
 		}
-
 		builder.WriteString(entry.body)
 		builder.WriteString("\n")
 	}
@@ -627,6 +655,79 @@ func (e *Executor) extractFilePaths(files []claude.FileChange) []string {
 		paths[i] = file.Path
 	}
 	return paths
+}
+
+// composeModePrompt augments the base prompt with mode-specific instructions
+// mode can be "clarify" or "design". Any other value returns the base prompt.
+func composeModePrompt(base, mode string) string {
+    mode = strings.ToLower(strings.TrimSpace(mode))
+    spec := ""
+    switch mode {
+    case "clarify":
+        spec = `
+
+---
+
+Mode: Clarification
+
+Output strictly as a numbered list of 3-7 clarifying questions required to implement the task correctly.
+- One line per question
+- No explanations, no code, no extra sections
+- Focus on constraints, acceptance criteria, unknowns, and edge cases.`
+    case "design":
+        spec = `
+
+---
+
+Mode: Design Proposal
+
+Draft a concise design for the implementation.
+Include:
+- Scope and out-of-scope
+- Data structures and ownership
+- Control flow and error handling
+- Backward compatibility and risks
+- Small, verifiable steps
+
+Keep it brief and actionable. No code changes.`
+    default:
+        return base
+    }
+    return base + spec
+}
+
+// extractQuestions attempts to parse clarifying questions from free-form text
+func extractQuestions(text string) []string {
+    var out []string
+    lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+    for _, ln := range lines {
+        s := strings.TrimSpace(ln)
+        if s == "" {
+            continue
+        }
+        // Match patterns like "1. ...", "- ...", "* ..."
+        if len(s) >= 2 && (s[0] == '-' || s[0] == '*') {
+            out = append(out, strings.TrimSpace(s[1:]))
+            continue
+        }
+        if len(s) >= 3 && s[1] == '.' && s[0] >= '0' && s[0] <= '9' {
+            out = append(out, strings.TrimSpace(s[2:]))
+            continue
+        }
+        // Heuristic: lines ending with '?' are likely questions
+        if strings.HasSuffix(s, "?") {
+            out = append(out, s)
+        }
+    }
+    // Deduplicate trivial empties
+    var cleaned []string
+    for _, q := range out {
+        q = strings.TrimSpace(q)
+        if q != "" {
+            cleaned = append(cleaned, q)
+        }
+    }
+    return cleaned
 }
 
 func (e *Executor) updateStatus(task *webhook.Task, status taskstore.TaskStatus) {
