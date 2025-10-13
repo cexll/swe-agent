@@ -595,20 +595,252 @@ Switch via environment variable `PROVIDER=codex` or `PROVIDER=claude`.
 
 ### ⚠️ Current Limitations
 
+**Execution Layer Limitations**:
 - ⚠️ Task queue is in-memory implementation, queued tasks lost on service restart
 - ⚠️ No global rate limiting / quota management yet
 - ⚠️ Missing visual task panel and scheduler monitoring
 
+**Quality Assurance Gaps**:
+- ⚠️ No automatic test execution after code generation
+- ⚠️ Missing lint/format/compile verification
+- ⚠️ No security scanning or vulnerability detection
+- ⚠️ Generated code pushed without validation
+
+**Interaction & Collaboration Gaps**:
+- ⚠️ No requirement clarification (AI doesn't ask questions)
+- ⚠️ No multi-turn iteration support (no conversation context)
+- ⚠️ Missing real-time progress reporting
+- ⚠️ Single-shot execution without design confirmation
+
+**Context & Understanding Gaps**:
+- ⚠️ Doesn't understand codebase architecture
+- ⚠️ No analysis of historical commits or evolution
+- ⚠️ Missing project knowledge base indexing
+- ⚠️ Cannot learn from similar issues/PRs
+
+**Other Limitations**:
+- ⚠️ No debugging or performance analysis capabilities
+- ⚠️ No learning/memory mechanism (each task is isolated)
+- ⚠️ No code review or refactoring suggestions
+- ⚠️ Incomplete documentation updates (missing detailed PR descriptions)
+
+## 🎯 Engineering Capabilities Gap Analysis
+
+### Current State: Executor → Target State: Engineer
+
+The current swe-agent has "Execution Layer" capabilities. To become a true engineer, it needs to develop these 8 capability layers:
+
+#### 🔴 P0 - Quality Assurance Layer
+**Status**: Planned in roadmap but not yet implemented
+
+**Missing Capabilities**:
+- **Automatic test execution**: Run `go test ./...`, `npm test` after code generation
+- **Code quality checks**: Lint (`go vet`, `golint`), format (`gofmt`), compilation verification
+- **Security scanning**: Dependency vulnerability detection, sensitive data leak prevention, injection risk checks
+- **Test failure handling**: Auto-fix or rollback when tests fail
+
+**Impact**: Currently pushes unvalidated code that may break CI/CD
+
+---
+
+#### 🔴 P0 - Interaction & Collaboration Layer
+**Status**: Planned in roadmap v0.5
+
+**Missing Capabilities**:
+- **Requirement clarification**: Ask questions when issue content is ambiguous
+- **Design confirmation**: Send design draft before implementation for approval
+- **Multi-turn iteration**: Continue work based on previous conversation context
+- **Progress reporting**: Real-time updates like "Data layer done, implementing business logic"
+- **Incremental commands**: Support follow-up commands like "fix the error"
+
+**Impact**: Black-box execution without user intervention or adjustment
+
+---
+
+#### 🟠 P1 - Context & Understanding Layer
+**Status**: Planned in roadmap v0.5 "Context enrichment"
+
+**Missing Capabilities**:
+- **Codebase architecture understanding**: Parse README, CLAUDE.md, architecture diagrams
+- **Module dependency analysis**: Understand project structure and relationships
+- **Historical evolution analysis**: Study relevant commits and similar issue/PR solutions
+- **Knowledge base indexing**: Vector search for relevant docs, build project-specific knowledge graph
+- **Coding conventions**: Learn project-specific style guides and best practices
+
+**Impact**: AI may not understand overall design, making changes that don't fit project style
+
+---
+
+#### 🟠 P1 - Planning & Design Layer
+**Status**: Partially implemented (PR Splitter), but lacks logical planning
+
+**Missing Capabilities**:
+- **Intelligent task decomposition**: Break complex requirements into sub-tasks with dependency ordering
+- **Risk assessment**: Analyze which changes may affect other modules, identify high-risk operations
+- **Implementation design**: Generate detailed technical proposals with multiple alternatives
+- **Test strategy design**: Plan comprehensive testing approach before implementation
+- **Parallel task identification**: Determine which tasks can be executed concurrently
+
+**Impact**: One-shot execution without planning capability
+
+---
+
+#### 🟡 P2 - Tooling & Debugging Layer
+**Status**: Not planned yet
+
+**Missing Capabilities**:
+- **Debugging ability**: Analyze error logs, add debug logging, trace execution flow
+- **Dependency management**: Auto-add missing Go modules, resolve conflicts, upgrade dependencies
+- **Performance analysis**: Run benchmarks, identify bottlenecks, suggest optimizations
+- **CI/CD integration**: Trigger builds automatically, check test results, monitor deployments
+- **Environment awareness**: Handle differences between local/staging/production
+
+**Impact**: Cannot self-debug or fix issues autonomously
+
+---
+
+#### 🟡 P2 - Learning & Memory Layer
+**Status**: "Memory system" mentioned in roadmap
+
+**Missing Capabilities**:
+- **Decision recording**: Track why certain implementation choices were made (ADR - Architecture Decision Records)
+- **Error learning**: Record failed attempts and reasons to avoid repeating mistakes
+- **Project knowledge accumulation**: Remember patterns like "this module is sensitive" or "always use GORM for DB ops"
+- **Experience building**: Learn from past successes and failures within the project
+- **Pattern recognition**: Identify recurring issues and their solutions
+
+**Impact**: Each task is isolated, cannot learn from history
+
+---
+
+#### 🟢 P3 - Review & Refactoring Layer
+**Status**: Not planned yet
+
+**Missing Capabilities**:
+- **Code review**: Detect code smells, performance issues, security vulnerabilities
+- **Refactoring suggestions**: Identify duplicated code, overly complex functions, better design patterns
+- **Self-reflection**: Review own generated code before submission
+- **Best practices validation**: Check adherence to project conventions and industry standards
+- **Maintainability assessment**: Evaluate if code is easy to understand and modify
+
+**Impact**: Code quality entirely depends on prompt quality, lacks self-optimization
+
+---
+
+#### 🟢 P3 - Documentation & Knowledge Transfer Layer
+**Status**: Partially implemented (comment tracker), but incomplete
+
+**Missing Capabilities**:
+- **Auto-documentation updates**: Update README, API docs, usage guides when code changes
+- **Detailed PR descriptions**: Explain why changes were made, scope of impact, testing methods
+- **Changelog management**: Auto-update CHANGELOG.md, generate release notes
+- **Code commenting**: Add comments for complex logic, update outdated comments, add TODO/FIXME markers
+- **Architecture decision records**: Document significant technical decisions and rationale
+
+**Impact**: Code changes lack context, making future maintenance difficult
+
+---
+
+### 🎯 Implementation Priority (Linus Style - Pragmatic Approach)
+
+#### Phase 1: Quality Assurance (Immediate - P0)
+```
+Foundation for "Never break userspace"
+- Auto-run tests after code generation
+- Lint and format checks
+- Compilation verification
+- Basic security scanning
+```
+
+#### Phase 2: Interaction & Collaboration (v0.5 - P0)
+```
+Enable AI to "ask questions" instead of blind execution
+- Requirement clarification mechanism
+- Multi-turn iteration support
+- Real-time progress feedback
+- Design confirmation workflow
+```
+
+#### Phase 3: Context & Understanding (v0.6 - P1)
+```
+Make AI understand the project, not just individual files
+- Codebase architecture analysis
+- Historical evolution understanding
+- Knowledge base indexing
+- Similar solution search
+```
+
+#### Phase 4: Other Capabilities (v1.0+ - P1-P3)
+```
+Gradually improve tooling, learning, review, and documentation layers
+- Debugging and performance analysis
+- Learning and memory mechanisms
+- Code review and refactoring
+- Complete documentation updates
+```
+
+---
+
 ### 🚀 What's Missing for 1.0
 
-1. **Reliable scheduling and observability**: Queue persistence (Redis/database), job history, resume from execution checkpoints, web console, structured logging, and metrics monitoring.
-2. **Context enrichment**: Automatically aggregate all issue/PR comments, related commits, and key file summaries; introduce vector search and a "memory" system when needed to reduce AI misunderstanding.
-3. **Quality/Security guardrails**: Run lint/tests and security scans by default; provide sensitive information detection, rate/permission limits, cost budgeting, and audit logs.
-4. **Multi-turn collaboration experience**: Support task clarification, subtask decomposition, interactive follow-ups, and a draft -> review -> iterate loop.
-5. **Resilience and multi-instance**: Split the scheduler into an independent service, support horizontal scaling across multiple worker nodes; complete logging, metrics, and alerting pipelines.
-6. **Enterprise governance**: Repository/team whitelists, role permission models, cost control policies, centralized configuration for model/vendor policies.
-7. **Triggers and integrations**: Extend to scheduled jobs, CI/CD hooks, repo events, and other workflows.
-8. **Secure merge**: Default to Draft PR/Fork workflows, produce detailed change summaries and test reports, strengthen manual review and pre-merge verification.
+This section maps the high-level requirements to the 8 capability layers described above:
+
+#### 1. **Quality & Security Guardrails** (Maps to: 🔴 P0 Quality Assurance Layer)
+- Run lint/tests and security scans by default
+- Provide sensitive information detection
+- Rate/permission limits and cost budgeting
+- Audit logs and compliance tracking
+- **Why critical**: Prevents breaking CI/CD and introducing security vulnerabilities
+
+#### 2. **Multi-turn Collaboration Experience** (Maps to: 🔴 P0 Interaction & Collaboration Layer)
+- Support task clarification and requirement disambiguation
+- Subtask decomposition with dependency tracking
+- Interactive follow-ups and incremental commands
+- Draft → review → iterate loop
+- **Why critical**: Enables guided execution instead of blind automation
+
+#### 3. **Context Enrichment** (Maps to: 🟠 P1 Context & Understanding Layer)
+- Automatically aggregate all issue/PR comments, related commits, and key file summaries
+- Introduce vector search and a "memory" system to reduce AI misunderstanding
+- Parse project documentation and architecture
+- Learn from similar historical solutions
+- **Why critical**: AI needs to understand the project, not just isolated files
+
+#### 4. **Intelligent Planning** (Maps to: 🟠 P1 Planning & Design Layer)
+- Break complex tasks into logical sub-tasks
+- Assess risks and potential side effects
+- Generate technical design proposals
+- Provide multiple implementation alternatives
+- **Why critical**: Real engineers plan before coding
+
+#### 5. **Reliable Scheduling and Observability** (Infrastructure)
+- Queue persistence (Redis/database) to survive restarts
+- Job history and execution checkpoint resume
+- Web console for task monitoring
+- Structured logging and metrics monitoring
+- **Why critical**: Production-grade reliability
+
+#### 6. **Advanced Tooling** (Maps to: 🟡 P2 Tooling & Debugging Layer)
+- Automatic debugging when tests fail
+- Dependency management (add/upgrade packages)
+- Performance analysis and optimization
+- CI/CD integration (trigger builds, monitor results)
+- **Why critical**: Engineers use tools, not just write code
+
+#### 7. **Learning & Improvement** (Maps to: 🟡 P2 Learning & Memory + 🟢 P3 Review & Refactoring)
+- Record decisions and rationale (ADR)
+- Learn from failed attempts
+- Code review and refactoring suggestions
+- Build project-specific knowledge base
+- **Why critical**: Continuous improvement and quality evolution
+
+#### 8. **Enterprise Governance** (Enterprise Features)
+- Repository/team whitelists
+- Role permission models
+- Cost control policies
+- Centralized configuration for model/vendor policies
+- Secure merge workflows (Draft PR/Fork sandbox)
+- **Why critical**: Enterprise adoption requires governance
 
 ## 🗺️ Roadmap
 
@@ -616,26 +848,89 @@ Switch via environment variable `PROVIDER=codex` or `PROVIDER=claude`.
 
 - [x] **Concurrency control** - Only one task per PR/Issue at a time
 - [x] **Task queue** - In-memory queue with exponential backoff retries
+- [x] **PR review comments support** - Trigger when commenting on code lines
 - [ ] **Rate limiting** - Prevent abuse (per-repo/hour limits)
 - [ ] **Logging improvements** - Structured logs (JSON) + log levels
 
-### v0.5 - Feature expansion
+### v0.5 - Quality Assurance & Interaction (🔴 P0 Capabilities)
 
-- [x] **PR review comments support** - Trigger when commenting on code lines
-- [ ] **Context enrichment** - Aggregate historical comments, related commits, file summaries
-- [ ] **Multi-turn collaboration mode** - Task clarification, draft iterations, interactive follow-ups
+**Quality Assurance Layer**:
+- [ ] **Automatic test execution** - Run project tests after code generation
+- [ ] **Lint and format checks** - Auto-run `go vet`, `gofmt`, `golint`
+- [ ] **Compilation verification** - Ensure code compiles before push
+- [ ] **Security scanning** - Basic vulnerability and sensitive data detection
+- [ ] **Test failure handling** - Auto-fix or rollback when tests fail
+
+**Interaction & Collaboration Layer**:
+- [ ] **Requirement clarification** - AI asks questions when unclear
+- [ ] **Multi-turn collaboration** - Support conversation context and follow-ups
+- [ ] **Design confirmation** - Send design draft before implementation
+- [ ] **Progress reporting** - Real-time status updates during execution
+
+**Infrastructure**:
 - [ ] **Web UI** - Task monitoring and configuration management
 - [ ] **Metrics and monitoring** - Prometheus metrics + alerts
 
-### v0.6 - Enterprise features
+### v0.6 - Context Understanding & Planning (🟠 P1 Capabilities)
 
-- [ ] **Team permission management** - Restrict who can trigger
+**Context & Understanding Layer**:
+- [ ] **Codebase architecture parsing** - Parse README, CLAUDE.md, architecture
+- [ ] **Knowledge base indexing** - Vector search for relevant documentation
+- [ ] **Historical analysis** - Study relevant commits and similar issues/PRs
+- [ ] **Context enrichment** - Aggregate all comments, commits, file summaries
+
+**Planning & Design Layer**:
+- [ ] **Intelligent task decomposition** - Break complex tasks into sub-tasks
+- [ ] **Risk assessment** - Analyze potential impacts and conflicts
+- [ ] **Design proposal generation** - Create technical design documents
+- [ ] **Alternative solutions** - Provide multiple implementation options
+
+**Infrastructure**:
+- [ ] **Queue persistence** - Redis/database for task durability
+- [ ] **Job history** - Track execution history and resume from checkpoints
+
+### v0.7 - Advanced Capabilities (🟡 P2 Capabilities)
+
+**Tooling & Debugging Layer**:
+- [ ] **Auto-debugging** - Analyze errors and fix issues autonomously
+- [ ] **Dependency management** - Auto-add/upgrade Go modules and packages
+- [ ] **Performance analysis** - Run benchmarks and identify bottlenecks
+- [ ] **CI/CD integration** - Trigger builds and monitor test results
+
+**Learning & Memory Layer**:
+- [ ] **Decision recording** - Track implementation choices (ADR)
+- [ ] **Error learning** - Remember and avoid past mistakes
+- [ ] **Project knowledge accumulation** - Build project-specific knowledge base
+- [ ] **Pattern recognition** - Identify recurring issues and solutions
+
+### v0.8 - Quality Evolution (🟢 P3 Capabilities)
+
+**Review & Refactoring Layer**:
+- [ ] **Code review capability** - Detect code smells and security issues
+- [ ] **Refactoring suggestions** - Identify improvement opportunities
+- [ ] **Self-reflection** - Review own code before submission
+- [ ] **Best practices validation** - Check adherence to standards
+
+**Documentation & Knowledge Transfer Layer**:
+- [ ] **Auto-documentation updates** - Update README, API docs when code changes
+- [ ] **Detailed PR descriptions** - Explain rationale, impact, testing
+- [ ] **Changelog management** - Auto-update CHANGELOG.md
+- [ ] **Code commenting** - Add comments for complex logic
+
+### v1.0 - Enterprise & Production Ready
+
+**Enterprise Governance**:
+- [ ] **Team permission management** - Role-based access control
 - [ ] **Cost control** - API spend budgets and alerts
-- [ ] **Audit log** - Record every action
+- [ ] **Audit log** - Record every action for compliance
+- [ ] **Model policy center** - Configure models/providers per repo
+- [ ] **Secure merge** - Draft PR / Fork sandbox workflows
+
+**Production Infrastructure**:
+- [ ] **Horizontal scaling** - Multi-worker node support
 - [ ] **Webhook replay** - Manually retry failed tasks
-- [ ] **Rate limiting** - Repo / organization / user granularity
-- [ ] **Secure merge** - Draft PR / Fork sandbox + test report output
-- [ ] **Model policy center** - Configure models/providers/thresholds per repo
+- [ ] **Advanced rate limiting** - Repo/org/user granularity
+- [ ] **Alerting pipelines** - Comprehensive monitoring and alerts
 
 ## 🔒 Security Considerations
 
