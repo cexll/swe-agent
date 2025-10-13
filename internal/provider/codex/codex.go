@@ -16,8 +16,7 @@ import (
 )
 
 const (
-	codexCommand    = "codex"
-	executionPrefix = "Execute directly without confirmation.\n\n"
+    codexCommand = "codex"
 )
 
 var execCommandContext = exec.CommandContext
@@ -62,7 +61,9 @@ func (p *Provider) GenerateCode(ctx context.Context, req *claude.CodeRequest) (*
         return nil, fmt.Errorf("failed to list repo files: %w", err)
     }
 
-    fullPrompt := prompt.BuildFullPrompt(req.Prompt, files, req.Context, executionPrefix)
+    // Use the shared prompt builder without provider-specific prefixes to ensure
+    // identical prompts across providers (unified prompt management).
+    fullPrompt := prompt.BuildFullPrompt(req.Prompt, files, req.Context, "")
 
 	responseText, cost, err := p.invokeCodex(ctx, fullPrompt, req.RepoPath)
 	if err != nil {
