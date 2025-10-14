@@ -1,8 +1,10 @@
 package codex
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -118,6 +120,7 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 		"-m", p.model, // Model selection
 		"-c", `model_reasoning_effort="high"`, // Request deeper reasoning
 		"--dangerously-bypass-approvals-and-sandbox", // Skip all confirmation prompts
+		"--json",       // Structured output for easier parsing
 		"-C", repoPath, // Working directory
 		prompt, // Initial instructions
 	}
@@ -148,6 +151,14 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 		log.Printf("[Codex] Command failed after %v", duration)
 
 		stderrText := strings.TrimSpace(stderr.String())
+		stdoutText := strings.TrimSpace(stdout.String())
+		if stderrText == "" {
+			if parsed := aggregateCodexOutput(stdoutText); parsed != "" {
+				stderrText = parsed
+			} else if stdoutText != "" {
+				stderrText = stdoutText
+			}
+		}
 		if stderrText == "" {
 			stderrText = err.Error()
 		}
@@ -164,11 +175,15 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 
 	duration := time.Since(startTime)
 	output := stdout.String()
+	parsedOutput := aggregateCodexOutput(output)
+	if parsedOutput == "" {
+		parsedOutput = strings.TrimSpace(output)
+	}
 	log.Printf("[Codex] Command completed in %v, output length: %d bytes", duration, len(output))
 
 	// Codex CLI returns the full conversation/output
 	// We'll use the raw output as the response
-	return output, 0, nil
+	return parsedOutput, 0, nil
 }
 
 // parseCodeResponse extracts file changes and summary from Codex response
@@ -240,8 +255,136 @@ func parseCodeResponse(response string) (*claude.CodeResponse, error) {
 }
 
 func truncateLogString(s string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+
+	const marker = "\n... (truncated) ...\n"
+
+	// For very small limits, prioritise exposing the tail without spending space on markers.
+	if maxLen <= len(marker)+32 {
+		return s[len(s)-maxLen:]
+	}
+
+	headLen := maxLen / 4
+	tailLen := maxLen - headLen - len(marker)
+
+	if tailLen <= 0 {
+		// Prefer preserving the tail since it usually contains the actionable error.
+		return marker + s[len(s)-(maxLen-len(marker)):]
+	}
+
+	head := ""
+	if headLen > 0 {
+		head = s[:headLen]
+	}
+
+	tail := s[len(s)-tailLen:]
+
+	if head == "" {
+		return marker + tail
+	}
+
+	return head + marker + tail
+}
+
+func aggregateCodexOutput(output string) string {
+	s := strings.TrimSpace(output)
+	if s == "" {
+		return ""
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(s))
+	buffer := make([]byte, 64*1024)
+	scanner.Buffer(buffer, 5*1024*1024)
+
+	var sections []string
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		if msg, handled := extractMessageFromJSONLine(line); handled {
+			if msg != "" {
+				sections = append(sections, msg)
+			}
+			continue
+		}
+
+		sections = append(sections, line)
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Printf("[Codex] Warning: failed to scan JSON output: %v", err)
+	}
+
+	if len(sections) == 0 {
+		return s
+	}
+
+	return strings.Join(sections, "\n\n")
+}
+
+func extractMessageFromJSONLine(line string) (string, bool) {
+	var envelope map[string]interface{}
+	if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+		return "", false
+	}
+
+	if msg, ok := getString(envelope, "message"); ok && msg != "" {
+		return msg, true
+	}
+
+	if itemVal, ok := envelope["item"]; ok && itemVal != nil {
+		if msg := extractTextFromItem(itemVal); msg != "" {
+			return msg, true
+		}
+		return "", true
+	}
+
+	return "", true
+}
+
+func extractTextFromItem(item interface{}) string {
+	itemMap, ok := item.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	if text, ok := getString(itemMap, "text"); ok && text != "" {
+		return text
+	}
+
+	if contentVal, ok := itemMap["content"]; ok {
+		switch content := contentVal.(type) {
+		case []interface{}:
+			var parts []string
+			for _, raw := range content {
+				if segmentMap, ok := raw.(map[string]interface{}); ok {
+					if text, ok := getString(segmentMap, "text"); ok && text != "" {
+						parts = append(parts, text)
+					}
+				}
+			}
+			if len(parts) > 0 {
+				return strings.Join(parts, "\n")
+			}
+		}
+	}
+
+	return ""
+}
+
+func getString(m map[string]interface{}, key string) (string, bool) {
+	if val, ok := m[key]; ok {
+		if str, ok := val.(string); ok {
+			return str, true
+		}
+	}
+	return "", false
 }

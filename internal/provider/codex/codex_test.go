@@ -2,11 +2,15 @@ package codex
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/cexll/swe/internal/github"
 	"github.com/cexll/swe/internal/prompt"
 	"github.com/cexll/swe/internal/provider/claude"
 )
@@ -86,6 +90,7 @@ func TestInvokeCodex_CommandConstruction(t *testing.T) {
 		"-m", "gpt-5-codex",
 		"-c", `model_reasoning_effort="high"`,
 		"--dangerously-bypass-approvals-and-sandbox",
+		"--json",
 		"-C", "/tmp/test",
 		"test prompt",
 	}
@@ -307,6 +312,133 @@ func TestGenerateCode_Integration(t *testing.T) {
 
 	if result.Summary == "" {
 		t.Error("GenerateCode() should return a summary")
+	}
+}
+
+func TestTruncateLogStringKeepsTail(t *testing.T) {
+	original := strings.Repeat("info line\n", 60) + "ERROR: final failure message"
+	result := truncateLogString(original, 120)
+
+	if !strings.Contains(result, "ERROR: final failure message") {
+		t.Fatalf("truncateLogString should preserve the trailing error, got: %q", result)
+	}
+
+	if !strings.Contains(result, "(truncated)") {
+		t.Fatalf("truncateLogString should annotate truncation, got: %q", result)
+	}
+}
+
+func TestTruncateLogStringSmallLimit(t *testing.T) {
+	original := "prefix logs\nERROR: boom"
+	result := truncateLogString(original, 10)
+
+	expectedSuffix := original[len(original)-len(result):]
+	if result != expectedSuffix {
+		t.Fatalf("Expected pure suffix truncation, got: %q (want suffix %q)", result, expectedSuffix)
+	}
+}
+
+func TestTruncateLogStringZeroLimit(t *testing.T) {
+	if got := truncateLogString("anything", 0); got != "" {
+		t.Fatalf("Expected empty string for non-positive limit, got: %q", got)
+	}
+}
+
+func TestAggregateCodexOutputJSON(t *testing.T) {
+	jsonLines := strings.Join([]string{
+		`{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"thinking"}}`,
+		`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"final"}}`,
+	}, "\n")
+
+	result := aggregateCodexOutput(jsonLines)
+
+	expected := "thinking\n\nfinal"
+	if result != expected {
+		t.Fatalf("Unexpected aggregation result: %q (want %q)", result, expected)
+	}
+}
+
+func TestAggregateCodexOutputErrorLine(t *testing.T) {
+	jsonLine := `{"type":"error","message":"bad stuff"}`
+
+	result := aggregateCodexOutput(jsonLine)
+	if result != "bad stuff" {
+		t.Fatalf("Expected error message extraction, got: %q", result)
+	}
+}
+
+func TestAggregateCodexOutputFallback(t *testing.T) {
+	raw := "plain text line"
+	if result := aggregateCodexOutput(raw); result != raw {
+		t.Fatalf("Expected passthrough for non-JSON, got: %q", result)
+	}
+}
+
+func TestGenerateCode_JSONOutputFeedsComment(t *testing.T) {
+	provider := NewProvider("", "", "gpt-5-codex")
+
+	reasoningLine := `{"type":"item.completed","item":{"type":"reasoning","text":"Analyzing repository files"}}`
+	agentLine := `{"type":"item.completed","item":{"type":"agent_message","text":"<file path=\"main.go\"><content>package main\n</content></file>\n<summary>JSON summary</summary>"}}`
+	jsonOutput := strings.Join([]string{reasoningLine, agentLine}, "\n")
+
+	originalExec := execCommandContext
+	defer func() { execCommandContext = originalExec }()
+
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		script := fmt.Sprintf("cat <<'EOF'\n%s\nEOF", jsonOutput)
+		return exec.Command("bash", "-lc", script)
+	}
+
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "placeholder.txt"), []byte("data"), 0o644); err != nil {
+		t.Fatalf("failed to write placeholder file: %v", err)
+	}
+
+	ctx := context.Background()
+	req := &claude.CodeRequest{
+		Prompt:   "Test prompt",
+		RepoPath: tmpDir,
+		Context:  map[string]string{"test": "value"},
+	}
+
+	result, err := provider.GenerateCode(ctx, req)
+	if err != nil {
+		t.Fatalf("GenerateCode() error = %v", err)
+	}
+
+	if result.Summary != "JSON summary" {
+		t.Fatalf("Summary = %q, want %q", result.Summary, "JSON summary")
+	}
+
+	if len(result.Files) != 1 {
+		t.Fatalf("Files count = %d, want 1", len(result.Files))
+	}
+
+	if result.Files[0].Path != "main.go" {
+		t.Fatalf("File path = %q, want %q", result.Files[0].Path, "main.go")
+	}
+
+	if !strings.Contains(result.Files[0].Content, "package main") {
+		t.Fatalf("File content = %q, want to contain %q", result.Files[0].Content, "package main")
+	}
+
+	mockGH := github.NewMockGHClient()
+	tracker := github.NewCommentTrackerWithClient("owner/repo", 42, "tester", mockGH)
+	tracker.CommentID = 100
+
+	tracker.MarkEnd()
+	tracker.SetCompleted(result.Summary, nil, result.CostUSD)
+
+	if err := tracker.Update("token"); err != nil {
+		t.Fatalf("tracker.Update() error = %v", err)
+	}
+
+	if len(mockGH.UpdateCommentCalls) != 1 {
+		t.Fatalf("expected 1 update call, got %d", len(mockGH.UpdateCommentCalls))
+	}
+
+	if body := mockGH.UpdateCommentCalls[0].Body; !strings.Contains(body, result.Summary) {
+		t.Fatalf("comment body %q should contain summary %q", body, result.Summary)
 	}
 }
 
