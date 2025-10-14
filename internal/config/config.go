@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Config holds all configuration for the pilot-swe service
+// Config holds all configuration for the swe-agent service
 type Config struct {
 	// Server settings
 	Port int

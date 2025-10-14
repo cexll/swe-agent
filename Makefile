@@ -1,9 +1,9 @@
 .PHONY: help build run test test-coverage test-verbose clean fmt vet lint check docker-build docker-run tidy install-tools all vuln security ci
 
 # Variables
-BINARY_NAME=swe
+BINARY_NAME=swe-agent
 MAIN_PATH=cmd/main.go
-DOCKER_IMAGE=pilot-swe
+DOCKER_IMAGE=swe-agent
 DOCKER_TAG=latest
 GO_VERSION?=1.25.1
 CLAUDE_CLI_VERSION?=latest

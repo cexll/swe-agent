@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Build the binary
-go build -o pilot-swe cmd/main.go
+go build -o swe-agent cmd/main.go
 
 # Run directly
 go run cmd/main.go
@@ -64,16 +64,16 @@ go mod tidy
 
 ```bash
 # Build Docker image
-docker build -t pilot-swe .
+docker build -t swe-agent .
 
 # Run container
-docker run -d -p 3000:3000 \
+docker run -d -p 8000:8000 \
   -e GITHUB_APP_ID=123456 \
   -e GITHUB_PRIVATE_KEY="$(cat private-key.pem)" \
   -e GITHUB_WEBHOOK_SECRET=secret \
   -e ANTHROPIC_API_KEY=sk-ant-xxx \
-  --name pilot-swe \
-  pilot-swe
+  --name swe-agent \
+  swe-agent
 ```
 
 ## Architecture Overview

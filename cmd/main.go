@@ -43,7 +43,7 @@ func run(ctx context.Context, serve func(string, http.Handler) error) error {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	log.Printf("Starting Pilot SWE server...")
+	log.Printf("Starting SWE-Agent server...")
 	log.Printf("Port: %d", cfg.Port)
 	log.Printf("Trigger keyword: %s", cfg.TriggerKeyword)
 	log.Printf("Provider: %s", cfg.Provider)
@@ -136,7 +136,7 @@ func run(ctx context.Context, serve func(string, http.Handler) error) error {
 	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"service":"pilot-swe","status":"running","trigger":"%s"}`, cfg.TriggerKeyword)
+		fmt.Fprintf(w, `{"service":"swe-agent","status":"running","trigger":"%s"}`, cfg.TriggerKeyword)
 	}).Methods("GET")
 
 	// Start server
