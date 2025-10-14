@@ -1,8 +1,8 @@
 # PRD：闭环 Agent 工作流 —— 从需求澄清到代码交付
 
-- 版本：0.2
+- 版本：1.0
 - Owner：swe-agent（本项目）
-- 状态：草案（待评审）
+- 状态：Release 1.0 功能范围（需实现）
 - 更新日期：2025-10-13
 
 ## 背景
@@ -33,6 +33,11 @@
 - **Stage 3：Code Review**（可选）→ 按需触发代码审查，节省成本。
 - **Stage 4：修复迭代** → PR 审查意见触发修复，在现有分支更新。
 
+### 扩展目标：同组织/同用户下的跨仓库协作（Multi-Repo）（非 R1；Post-1.0 规划）
+- 从单一仓库 Issue 出发，提议并执行跨仓库子任务（Subtasks），在目标仓库创建分支并给出 compare 链接（仍由人手动创建 PR）。
+- 子任务按依赖顺序执行，所有进度在源 Issue 的跟踪评论中汇总展示（同一个“指挥面板”）。
+- 仅在同一安装作用域（同组织/同用户，且安装了本 GitHub App）的仓库上执行，严格受白名单/黑名单约束。
+
 ### 设计原则
 1. **人类决策点**：每个阶段都需要人工触发，避免失控。
 2. **完整上下文**：每次触发都获取 Issue 全部评论历史。
@@ -43,13 +48,14 @@
 - 不替代人类最终审核与合并权限。
 - 不对高风险操作（大规模重构/未知脚本执行）做自动化决策。
 - 不承诺跨语言/跨生态的一键构建与复杂测试矩阵适配（后续增量支持）。
+- （R1）不包含跨仓库 Multi-Repo 执行能力（仅作为后续目标，默认关闭）
 
 ## 触发与角色
 
 ### 触发者权限
-- **Issue 作者/Assignee**：可触发所有阶段（/clarify, /prd, /code, /code-review）
-- **仓库 Owner**：完全控制权限（可配置白名单）
-- **PR Reviewer**：可触发修复（/code fix）和审查（/code-review）
+- 默认（当前实现）：仅 GitHub App 安装者（Installer）可触发所有阶段（安全基线）
+- 可选（配置白名单）：允许指定用户触发（推荐包含仓库 Owner）
+- 未来（P2）：按角色细分（Issue 作者/Assignee、PR Reviewer 等）
 
 ### 分阶段触发词（核心创新）
 
@@ -75,7 +81,10 @@
 | `issue_comment.created` | 包含触发词 (/clarify, /prd, /code, /code-review) | 根据触发词执行对应阶段 |
 | `pull_request_review_comment.created` | 包含 `/code fix` | 在 PR 分支上修复代码 |
 | `pull_request_review.submitted` | state=changes_requested **且** 包含触发词 | 读取审查意见，触发修复（**不自动触发**，需要明确指令） |
+| `pull_request.closed` | `merged = true` | 标记工作流完成（Done），记录指标并清理状态 |
 | ~~`issues.opened`~~ | ❌ **不支持自动触发** | 需要手动 `/clarify` 启动流程 |
+
+注：跨仓库执行不新增事件类型，所有指挥与状态回报仍集中在源 Issue 的评论线程中（R1 默认关闭）。
 
 **防抖机制**：
 - 忽略 Bot 发出的评论（`sender.type == "Bot"`）
@@ -141,7 +150,7 @@ Clarifications: []Clarification{
 
 **Agent 行为**：
 1. 读取 Issue 全文 + 澄清问答历史
-2. 调用 Provider 生成结构化 PRD
+2. 调用 Provider 生成结构化 PRD（如识别到跨仓库场景，同时给出跨仓库任务拆分草案）
 3. 在 Issue 评论中发布 PRD（**不落盘文件**，初期）
 
 **PRD 格式（简化版）**：
@@ -162,6 +171,14 @@ Clarifications: []Clarification{
 ### 技术方案
 {实现思路，包含关键文件和修改点}
 
+### 跨仓库任务拆分（如适用）
+- Repo: org/repo-a
+  - 变更：path1/, path2/file.go
+  - 说明：为什么需要在该仓库变更
+- Repo: org/repo-b
+  - 变更：pkg/x/, docs/
+  - 说明：与 repo-a 的依赖关系（先后顺序）
+
 ### 验收标准
 - [ ] 功能 1 完成
 - [ ] 测试通过
@@ -171,6 +188,10 @@ Clarifications: []Clarification{
 - 修改：internal/webhook/handler.go（新增 /clarify 触发逻辑）
 - 新增：internal/workflow/clarify.go（澄清问题生成）
 - 测试：internal/workflow/clarify_test.go
+
+### 跨仓库影响面（如适用）
+- org/repo-a：预估修改 3 个文件
+- org/repo-b：预估新增 2 个文件
 
 ### 风险评估
 - 复杂度：中等（预计 2-3 天）
@@ -198,32 +219,20 @@ PRD: "{生成的 PRD 文档内容}"
 
 **触发**：用户回复 `/code`
 
-**Agent 行为**：
+**Agent 行为（R1）**：
 1. 读取 Issue 全文 + 澄清 + PRD（**完整上下文**）
-2. Clone 仓库到临时目录
-3. 调用 Provider 生成代码变更
-4. 提交到分支（`pilot/issue-{number}-{timestamp}`）
-5. 推送到 GitHub（**不创建 PR**）
-6. 在评论中返回：
+2. Clone 源仓库默认分支到临时目录
+3. 生成代码变更并提交到分支 `swe/issue-{issueNumber}-{timestamp}`（多 PR 拆分时为 `swe/{category}-{issueNumber}-{timestamp}`）
+4. 推送到 GitHub（**不自动创建 PR**）
+5. 在评论中返回：
    - 分支链接：`https://github.com/{repo}/tree/{branch}`
-   - **手动创建 PR 链接**：`https://github.com/{repo}/compare/main...{branch}`
+   - **手动创建 PR 链接**：`https://github.com/{repo}/compare/{base}...{branch}`（预填 `title` 与 `body=Fixes #<number>`）
    - 变更文件列表
    - 成本
 
-**关键改动**（相比当前实现）：
-```go
-// executor/task.go:352（当前会自动创建 PR）
-// 改为：只返回分支链接和手动创建 PR 的链接
-
-branchURL := fmt.Sprintf("https://github.com/%s/tree/%s", task.Repo, branchName)
-createPRURL := fmt.Sprintf("https://github.com/%s/compare/%s...%s?expand=1&title=%s", 
-    task.Repo, task.Branch, branchName, url.QueryEscape(task.IssueTitle))
-
-tracker.SetCompleted(result.Summary, files, cost)
-tracker.SetBranch(branchName, branchURL)
-tracker.SetMessage("📝 代码已推送到分支")
-tracker.SetMessage(fmt.Sprintf("🔗 手动创建 PR：%s", createPRURL))
-```
+**与当前实现的关系**：
+- 现实现已生成 compare 链接供手动创建 PR（不调用 PR 创建 API）。
+- 本阶段保持该策略，仅统一评论文案，并在 compare URL 中预填 `title` 与 `body=Fixes #<number>`。
 
 **用户决策**：
 - 满意 → 手动点击链接创建 PR
@@ -232,7 +241,7 @@ tracker.SetMessage(fmt.Sprintf("🔗 手动创建 PR：%s", createPRURL))
 **状态存储**：
 ```go
 Stage: "coding"
-BranchName: "pilot/issue-123-1234567890"
+BranchName: "swe/issue-123-1234567890"
 FilesChanged: []string{"handler.go", "clarify.go"}
 ```
 
@@ -243,7 +252,7 @@ FilesChanged: []string{"handler.go", "clarify.go"}
 **触发**：用户在 PR 评论中回复 `/code-review`
 
 **Agent 行为**：
-1. 读取 PR 的 `git diff`（变更内容）
+1. 读取 PR 文件与 patch（GitHub API：ListPullFiles）
 2. 读取 PRD（审查标准）
 3. 调用 Provider 生成 Review 意见
 4. 在 PR 中发布 Review 评论（支持行内评论）
@@ -253,8 +262,8 @@ FilesChanged: []string{"handler.go", "clarify.go"}
 你是一个代码审查专家。请审查以下代码变更：
 
 【PRD 摘要】{prd_summary}
-【变更文件】
-{git diff output}
+【变更文件（patch）】
+{pr_patches}
 
 【审查标准】
 - 代码风格是否符合项目规范（参考现有代码）
@@ -332,7 +341,7 @@ MaxFixAttempts: 3
 
 ### **Stage 5：完成（Done）**
 
-**触发**：PR 被 Merge
+**触发**：PR 被 Merge（监听 `pull_request.closed` 且 `merged=true`）
 
 **Agent 行为**：
 - 更新工作流状态：`Stage: "done"`
@@ -352,6 +361,50 @@ Metrics {
 ```
 
 ## 详细需求
+
+### 跨仓库任务拆分（Multi-Repo）（Post-1.0 规划）
+
+> 本节为后续版本规划，R1 不纳入。
+
+**新数据结构**（扩展现有 SplitPlan）：
+```go
+// github.SplitPlan 现仅按“类别”拆分单仓库改动；扩展支持跨仓库维度：
+type RepoSubPR struct {
+    Repo       string            // 目标仓库（org/name）
+    SubPR      SubPR             // 复用现有子 PR 结构（名称、描述、文件、依赖等）
+}
+
+type MultiRepoPlan struct {
+    Items          []RepoSubPR   // 跨仓库子任务列表
+    CreationOrder  []int         // 全局创建顺序（包含跨仓库依赖）
+    TotalRepos     int           // 涉及仓库数
+}
+```
+
+**识别与约束**：
+- 识别依据：
+  - Issue/PRD 中显式提到 `org/repo`、路径或模块边界
+  - 配置文件 `.swe-agent.yml` 中的 `cross_repo.whitelist`
+- 约束：
+  - 仅同组织/同用户且安装了本 App 的仓库
+  - 限制最大仓库数（默认 3），默认仅允许白名单匹配
+  - 禁止修改各仓库的黑名单文件（如 CI、依赖清单）
+
+**执行策略**：
+- 顺序：
+  - 先独立子任务（无依赖），后依赖子任务；跨仓库依赖通过 `CreationOrder` 控制
+- 推送与链接：
+  - 每个仓库创建独立分支并推送，输出 compare 链接（PR 描述预填 `Refs {sourceRepo}#{issue}`）
+- 展示：
+  - 源 Issue 的跟踪评论中，按仓库聚合展示子任务、分支、链接与状态
+
+**确认与幂等**：
+- `/prd` 输出跨仓库计划草案，需用户确认后方可 `/code` 执行
+- 重复 `/code`：对已存在的目标仓库分支追加提交；新仓库按计划继续执行
+
+**失败与回滚**：
+- 任一仓库推送失败：记录失败项并继续其他仓库（不阻塞），汇总结果提示人工处理
+- 建议在 PR 描述中引用源 Issue，便于追踪
 
 ### 工作流状态追踪
 
@@ -400,6 +453,22 @@ func (s *Store) UpdateWorkflow(state *WorkflowState) error
 - **初期**：内存存储（`map[string]*WorkflowState`，key=`{repo}#{issue_number}`）
 - **长期**：迁移到数据库（复用 `taskstore.Store`）
 
+### 幂等与重复触发策略（新增）
+- `/clarify`：追加新问题，已存在的问题可被编辑标记为已解决
+- `/prd`：默认覆盖上一次生成结果（保留历史版本于状态存储中）
+- `/code`：Issue 上重复触发在同一分支继续提交；PR 上重复触发进入修复路径
+- `/code-review`：多次触发视为新一轮审查，覆盖上一次机器人审查结果
+- `/code fix`：在 PR 分支追加 commit；`FixAttempts` 超过上限将阻断并提示人工介入
+
+### 状态字段扩展（跨仓库）
+```go
+type WorkflowState struct {
+    // ...已有字段
+    MultiRepoPlan *MultiRepoPlan  // 跨仓库子任务计划（确认后执行）
+    TargetRepos   []string        // 实际涉及的仓库清单
+}
+```
+
 ### 完整上下文获取
 
 **问题**：当前 `composeDiscussionSection()` 只获取评论，不包含工作流历史
@@ -437,6 +506,15 @@ func (e *Executor) composeFullContext(task *webhook.Task, token string) string {
     // 评论历史
     context.WriteString("## 讨论历史\n\n")
     context.WriteString(formatDiscussion(issueComments, nil))
+    
+    // （跨仓库）若存在 MultiRepoPlan，则追加子任务与目标仓库清单
+    if workflow.MultiRepoPlan != nil {
+        context.WriteString("## 跨仓库任务\n\n")
+        for i, item := range workflow.MultiRepoPlan.Items {
+            context.WriteString(fmt.Sprintf("%d. %s — %s\n", i+1, item.Repo, item.SubPR.Name))
+        }
+        context.WriteString("\n")
+    }
     
     return context.String()
 }
@@ -523,29 +601,10 @@ func GenerateClarifyPrompt(issue Issue, repoContext RepoContext) string {
 }
 ```
 
-### PR 创建策略调整
+### PR 创建策略说明（更新）
 
-**当前代码**（executor/task.go:352）：
-```go
-// 自动创建 PR 链接（compare 页面）
-prURL, err := e.createPRLink(task.Repo, branchName, task.Branch, result.Summary)
-```
-
-**改为**：
-```go
-// 不创建 PR，只返回分支链接和手动创建 PR 的链接
-branchURL := fmt.Sprintf("https://github.com/%s/tree/%s", task.Repo, branchName)
-createPRURL := fmt.Sprintf("https://github.com/%s/compare/%s...%s?expand=1&title=%s&body=%s", 
-    task.Repo, 
-    url.PathEscape(task.Branch), 
-    url.PathEscape(branchName), 
-    url.QueryEscape(task.IssueTitle),
-    url.QueryEscape("Fixes #" + strconv.Itoa(task.Number)))
-
-tracker.SetBranch(branchName, branchURL)
-tracker.SetMessage("📝 代码已推送到分支")
-tracker.SetMessage(fmt.Sprintf("🔗 手动创建 PR：%s", createPRURL))
-```
+- 当前实现：生成 compare 链接供“手动创建 PR”，不调用 PR 创建 API。
+- 本方案：保持该策略，统一评论文案，并在 compare URL 中预填 `title` 与 `body=Fixes #<number>`。
 
 ### 修复次数限制
 
@@ -579,6 +638,7 @@ if task.IsPR && strings.Contains(task.Prompt, "/code fix") {
 - 非目标
 - 用户故事与验收标准（Given/When/Then）
 - 方案（架构/数据结构/事件扩展/Prompt 策略/执行流程）
+- 跨仓库任务拆分（目标仓库、路径、依赖顺序）
 - 任务拆解（开发/测试/文档/回滚）
 - 测试策略（单测/集成/手验要点）
 - 风险（误改/权限/回归/配额）与缓解
@@ -601,8 +661,8 @@ DEFAULT_WORKFLOW_STAGE="clarify"  # 首次触发的默认阶段
 MAX_FIX_ATTEMPTS=3            # 单个 PR 最多修复次数
 
 # PR 创建策略（新增）
-AUTO_CREATE_PR=false          # 是否自动创建 PR（默认关闭）
-PR_DRAFT_MODE=false           # 是否创建 Draft PR
+AUTO_CREATE_PR=false          # 是否自动创建 PR（默认关闭）。当前实现不启用自动创建，仅生成 compare 链接
+PR_DRAFT_MODE=false           # 是否创建 Draft PR（仅当启用自动创建时生效）
 
 # Code Review 配置（新增）
 ENABLE_AUTO_REVIEW=false      # 是否默认开启 Code Review
@@ -629,6 +689,42 @@ TEST_COMMAND=""               # 留空表示自动检测（go test, npm test 等
 # 调试模式
 DRY_RUN=false                 # 仅生成计划，不执行代码
 DEBUG_WORKFLOW=false          # 打印工作流状态日志
+
+### 权限配置（新增）
+
+```yaml
+# .swe-agent.yml（仓库根目录）
+auth:
+  # 默认仅 App 安装者可触发；可选开启白名单
+  whitelist:
+    users:
+      - "owner"
+      - "maintainer1"
+```
+
+### 跨仓库配置（新增）
+
+```yaml
+# .swe-agent.yml（仓库根目录）
+cross_repo:
+  enabled: false           # R1 要求为 false；默认关闭，后续版本开启后才允许跨仓库
+  org_scope_only: true     # 仅限同组织/同用户
+  max_repos: 3             # 单次执行涉及的最大仓库数
+  whitelist:
+    repos:
+      - "org/repo-a"
+      - "org/repo-b"
+  blacklist:
+    files:
+      - ".github/workflows/*"
+      - "go.mod"
+  pr:
+    auto_create: false     # 仍不自动创建 PR
+    title_prefix: "feat: "
+    body_template: |
+      Refs {sourceRepo}#{issueNumber}
+      {summary}
+```
 ```
 
 ### 配置优先级
@@ -660,7 +756,7 @@ workflow:
     
   whitelist:
     users:
-      - "owner"      # 仅 owner 可触发
+      - "owner"      # 仅 owner 可触发（示例）
 ```
 
 ## 验收标准
@@ -673,22 +769,20 @@ workflow:
 ### Stage 1：PRD 生成
 - [ ] 用户回复 `/prd`
 - [ ] ≤1 分钟，Issue 下出现 PRD 文档（Markdown 格式）
-- [ ] PRD 包含：背景、目标、技术方案、验收标准、文件变更预估
+- [ ] PRD 包含：背景、目标、技术方案、验收标准、文件变更预估（如适用，包含跨仓库任务拆分与影响面）
 - [ ] 工作流状态更新为 `"prd"`
 
 ### Stage 2：代码开发
 - [ ] 用户回复 `/code`
 - [ ] ≤2 分钟，Issue 下出现完成评论：
-  - 分支链接：`https://github.com/{repo}/tree/{branch}`
-  - **手动创建 PR 链接**（不自动创建 PR）
-  - 变更文件列表
-  - 成本
-- [ ] 代码已推送到分支（`pilot/issue-{number}`）
+  - 单仓库：分支链接、**手动创建 PR 链接**（compare 预填 `title` 与 `Fixes #<number>`）、变更文件列表、成本
+  - 跨仓库：按仓库聚合展示分支与 compare 链接（PR 描述预填 `Refs {sourceRepo}#{issue}`）、变更文件列表（按仓库分组）、成本（总计与分仓）
+- [ ] 代码已推送到分支（`swe/issue-{number}` 或 `swe/{category}-{number}-{ts}`）
 - [ ] 工作流状态更新为 `"coding"`
 
-### Stage 3：Code Review（可选）
+### Stage 3：Code Review（可选，R1 为总结级别）
 - [ ] 用户在 PR 评论中回复 `/code-review`
-- [ ] ≤1 分钟，PR 下出现 Review 评论：
+- [ ] ≤1 分钟，PR 下出现 Review 评论（基于 PR files+patch 输入；R1 不要求行内评论）
   - 通过的检查
   - 需要改进的地方（带文件:行号）
   - 建议（可选）
@@ -742,10 +836,12 @@ type WorkflowMetrics struct {
     AvgCostPerIssue   float64 // 单 Issue 平均成本（美元）
     TotalCostToday    float64 // 今日总成本
     CostByStage       map[string]float64 // 各阶段成本分布
+    CostByRepo        map[string]float64 // 按仓库统计成本（跨仓库）
     
     // 耗时
     AvgTimePerIssue   string  // 单 Issue 平均耗时（从 /clarify 到 PR Merge）
     AvgTimeByStage    map[string]string // 各阶段平均耗时
+    AvgReposPerIssue  float64 // 单 Issue 平均涉及仓库数（跨仓库）
 }
 ```
 
@@ -765,7 +861,7 @@ type WorkflowMetrics struct {
 | 修复次数 | > 3 次/Issue | P2（中） |
 | 澄清轮次 | > 5 次/Issue | P3（低） |
 
-## 里程碑
+## Release 1.0（R1）与 Post-1.0
 
 ### **M1（本周，P0）：核心工作流打通**
 - [x] 基础设施（已完成）：
@@ -785,8 +881,8 @@ type WorkflowMetrics struct {
   - `internal/prompt/prd.go`：PRD Prompt 模板
   - 评论中展示 PRD（不落盘）
 - [ ] Stage 2：代码开发：
-  - 修改 `executor/task.go:352`：不自动创建 PR
-  - 返回手动创建 PR 链接
+  - 统一“手动创建 PR 链接”的评论文案
+  - compare URL 预填 `title` 与 `Fixes #<number>`
 - [ ] 成本控制（P0）：
   - `DAILY_CALL_LIMIT`, `PER_ISSUE_COST_LIMIT`
   - 超限阻止执行并告警
@@ -804,14 +900,13 @@ type WorkflowMetrics struct {
 ### **M2（下周，P1）：Code Review + 修复迭代**
 - [ ] Stage 3：Code Review：
   - `internal/prompt/review.go`：Review Prompt 模板
-  - 读取 `git diff` 并审查
+  - 拉取 PR files+patch 并审查
 - [ ] Stage 4：修复迭代：
   - 支持 `/code fix` 触发
   - 修复次数限制（MAX_FIX_ATTEMPTS=3）
   - 在现有 PR 分支上提交（已支持）
 - [ ] 完整上下文获取：
-  - `executor/task.go:550`：composeFullContext()
-  - 包含澄清、PRD、评论历史
+  - `composeFullContext()` 组装澄清、PRD、评论历史（含 PR 历史 Review）
 - [ ] 测试钩子（可选）：
   - 自动检测测试命令（go test, npm test 等）
   - 测试失败 → 阻止 PR 创建或标记 Draft
@@ -823,7 +918,33 @@ type WorkflowMetrics struct {
 
 ---
 
-### **M3（2-3 周，P2）：体验优化 + Playbook**
+### Release 1.0（R1）功能范围
+
+- 触发词与阶段化：`/clarify`、`/prd`、`/code`、`/code-review`、`/code fix`（显式触发，智能触发关闭）
+- 权限基线：默认仅 App Installer，可配置白名单
+- 事件监听：`issue_comment.created`、`pull_request_review_comment.created`、`pull_request_review.submitted`（需显式触发）、`pull_request.closed (merged=true)`
+- Stage 0（澄清）：5-10 个问题（Markdown Checklist）
+- Stage 1（PRD）：结构化 PRD（背景/目标/非目标/技术方案/验收/变更预估）
+- Stage 2（开发）：
+  - Clone 源仓库，最小变更提交到分支 `swe/issue-{issue}-{ts}`（或按类别拆分 `swe/{category}-{issue}-{ts}`）
+  - 推送，并在评论中提供分支链接与 compare 链接（预填 title 与 `Fixes #<number>`）
+  - 支持多 PR 拆分显示（仍手动创建 PR）
+- Stage 3（Review，可选）：基于 PR files+patch 的总结级 Review（R1 不要求行内评论）
+- Stage 4（修复）：`/code fix` 在现有 PR 分支追加提交；`MAX_FIX_ATTEMPTS=3`
+- 成本闸门：`DAILY_CALL_LIMIT`、`PER_ISSUE_COST_LIMIT`、`COST_ALERT_THRESHOLD`
+- 防抖与防环：Bot 忽略、12h 去重、按 `repo#number` 串行
+- 追踪与回帖：CommentTracker 统一进度/链接/成本渲染
+
+R1 验收标准
+- Issue → `/clarify` → `/prd` → `/code` → 手动创建 PR 全链路可用
+- compare 链接参数正确（title、Fixes）且不自动创建 PR
+- 成本闸门生效：超限阻断并清晰回帖
+- `/code-review` 能输出总结级 Review；`/code fix` 生效且次数受限
+- 事件去重/权限校验/错误提示工作正常
+
+---
+
+### Post-1.0（Backlog）
 - [ ] 智能触发模式（可选）：
   - `/code` 根据当前 Stage 自动判断行为
 - [ ] PRD 文件落盘（可选）：
@@ -832,6 +953,12 @@ type WorkflowMetrics struct {
 - [ ] 大需求拆分提示：
   - 文件变更 > 8 个 → 提示拆分
   - 复杂度高 → 建议多个 PR
+- composeFullContext（整合澄清/PRD/评论历史）
+- 智能触发模式
+- PRD 文件落盘（PR 描述自动引用 PRD）
+- 监控面板与告警（实时/阈值）
+- 黑白名单细化与数据库落存
+- 跨仓库能力（按“跨仓库任务拆分（Post-1.0 规划）”实现）
 - [ ] 更细 Playbook：
   - 文档迁移场景（替换链接、更新示例）
   - 语法迁移场景（API 升级、废弃警告）
@@ -857,6 +984,10 @@ type WorkflowMetrics struct {
 - [ ] 数据库存储：
   - 迁移 WorkflowState 到数据库
   - 支持跨会话查询
+- [ ] 跨仓库能力（第二阶段）：
+  - MultiRepoPlan 执行与依赖顺序控制
+  - 源 Issue 聚合多仓库状态与成本
+  - 指标新增“跨仓库任务成功率/平均仓库数”
 
 **验收标准**：
 - ✅ 指标面板可用
@@ -898,12 +1029,12 @@ type WorkflowMetrics struct {
 ---
 
 ### **P2 风险：权限问题**
-**风险**：缺少 `gh` CLI 权限或环境配置错误
+**风险**：缺少 `gh` CLI 权限或环境配置错误；触发者权限误配导致越权
 **影响**：低（功能不可用，但不会破坏）
 **缓解**：
 - ✅ **启动时检查**：检测 `gh` CLI 和权限（当前：运行时降级）
 - [ ] **配置验证**：启动时验证所有必需环境变量（M1）
-- ✅ **错误提示**：失败时明确提示配置问题
+- ✅ **默认最小权限**：默认仅 App 安装者可触发；可选开启白名单
 
 ---
 
@@ -914,6 +1045,17 @@ type WorkflowMetrics struct {
 - ✅ **尽力而为**：测试失败不阻止 PR 创建，只标记警告
 - [ ] **自动检测**：根据 package.json, Cargo.toml 等检测项目类型（M2）
 - ✅ **明确错误**：失败时提供可见解释与人工接管指引
+
+---
+
+### **P1 风险：跨仓库误操作/越权**
+**风险**：识别到的目标仓库不在白名单或未安装 App；误触达不相关仓库；跨仓库依赖顺序错误导致编译失败
+**影响**：中等到严重（需要多方回滚/协调）
+**缓解**：
+- ✅ **白名单 + 组织范围**：仅同组织/同用户且白名单匹配的仓库
+- ✅ **计划先审**：/prd 阶段输出跨仓库计划，需显式确认后才执行
+- ✅ **最小变更路径**：限制允许修改的目录/文件类型（黑名单生效）
+- ✅ **依赖顺序控制**：MultiRepoPlan 指定 CreationOrder，先独立后依赖
 
 ---
 
@@ -948,3 +1090,10 @@ type WorkflowMetrics struct {
    - 场景：需求不清晰时，生成草稿 PRD 供讨论
    - 实现：新增 `/prd-draft` 触发词
 
+6. **行内 Review 评论是否作为首期目标？**（M2/M3 决定）
+   - 现阶段可先输出统一评论包含文件:行号；行内评论后续迭代
+
+7. **跨仓库目标识别策略？**（M3 决定）
+   - 方案 A：仅使用 `.swe-agent.yml` 的 whitelist 显式声明
+   - 方案 B：结合 Issue/PRD 中的 `org/repo` 引用进行建议，仍需用户确认
+   - 方案 C：扫描组织下安装了 App 的仓库（高成本/高风险），不采纳为默认
