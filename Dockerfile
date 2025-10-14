@@ -51,6 +51,11 @@ RUN apk add --no-cache \
 # Copy binary from builder
 COPY --from=builder /build/swe-agent /usr/local/bin/swe-agent
 
+WORKDIR /app
+
+# Copy runtime assets
+COPY --from=builder /build/templates ./templates
+
 # Expose port
 EXPOSE 8000
 
