@@ -12,6 +12,8 @@ permissions:
 jobs:
   build-test-lint:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,6 +29,13 @@ jobs:
 
       - name: CI (lint check, tests, build, security)
         run: make ci
+
+      - name: Generate coverage HTML
+        if: always()
+        run: |
+          if [ -f coverage.out ]; then
+            go tool cover -html=coverage.out -o coverage.html
+          fi
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4

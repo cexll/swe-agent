@@ -4,3 +4,5 @@ pilot-swe
 swe
 
 .claude
+coverage.out
+swe-agent
