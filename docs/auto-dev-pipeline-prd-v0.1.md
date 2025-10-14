@@ -27,11 +27,13 @@
 ## 目标
 
 ### 核心目标：打造**人类参与的闭环 Agent**
-- **Stage 0：需求澄清** → AI 分析仓库，生成澄清问题，用户回答确认。
-- **Stage 1：PRD 生成** → 基于澄清结果生成结构化 PRD，用户确认后进入开发。
-- **Stage 2：代码开发** → 按 PRD 实施，推送到分支，**不自动创建 PR**。
+- **Stage 0：需求澄清**（可选）→ AI 分析仓库，生成澄清问题，用户回答确认。
+- **Stage 1：PRD 生成**（可选）→ 基于澄清结果生成结构化 PRD，用户确认后进入开发。
+- **Stage 2：代码开发** → 按 PRD 或已有上下文实施，推送到分支，**不自动创建 PR**。
 - **Stage 3：Code Review**（可选）→ 按需触发代码审查，节省成本。
-- **Stage 4：修复迭代** → PR 审查意见触发修复，在现有分支更新。
+- **Stage 4：修复迭代**（可选）→ PR 审查意见触发修复，在现有分支更新。
+
+> 阶段顺序为推荐路径而非硬性约束；触发命令可任意组合，Agent 会按可用上下文自动兜底。
 
 ### 扩展目标：同组织/同用户下的跨仓库协作（Multi-Repo）（非 R1；Post-1.0 规划）
 - 从单一仓库 Issue 出发，提议并执行跨仓库子任务（Subtasks），在目标仓库创建分支并给出 compare 链接（仍由人手动创建 PR）。
@@ -43,6 +45,7 @@
 2. **完整上下文**：每次触发都获取 Issue 全部评论历史。
 3. **成本可控**：Code Review 可选，修复次数有上限。
 4. **质量优先**：不自动创建 PR，人工审核分支内容后再创建。
+5. **灵活编排**：所有阶段可独立触发，系统不得强制依赖前置阶段。
 
 ## 非目标
 - 不替代人类最终审核与合并权限。
@@ -59,30 +62,31 @@
 
 ### 分阶段触发词（核心创新）
 
+触发命令互相独立，可根据需求自由组合；若跳过前置阶段，Agent 会基于现有信息尝试补全缺失上下文。命令集合统一为 `/clarify`、`/prd`、`/code`、`/code-review`。
+
 | 触发词 | 阶段 | 触发事件 | 说明 |
 |--------|------|----------|------|
-| `/clarify` | Stage 0 | `issue_comment` | 需求澄清：生成澄清问题列表 |
-| `/prd` | Stage 1 | `issue_comment` | 生成 PRD：基于澄清结果生成结构化 PRD |
-| `/code` | Stage 2 | `issue_comment` | 代码开发：按 PRD 实施，推送到分支（**不创建 PR**） |
+| `/clarify` | Stage 0 | `issue_comment` | 需求澄清：生成澄清问题列表（可跳过） |
+| `/prd` | Stage 1 | `issue_comment` | 生成 PRD：基于澄清结果或现有上下文生成结构化 PRD |
+| `/code` | Stage 2 & Stage 4 | `issue_comment` / `pull_request_review_comment` / `pull_request` comment | Issue 上触发代码开发；PR 上触发修复迭代（在现有分支追加提交） |
 | `/code-review` | Stage 3 | `issue_comment` 或 `pull_request` comment | 代码审查（可选）：分析变更文件，生成 Review 意见 |
-| `/code fix [意见]` | Stage 4 | `pull_request_review_comment` 或 comment | 修复迭代：基于 Review 意见修复代码 |
+
+> `/code` 触发时需先判定上下文：`issue_comment` 事件且 `issue.pull_request == nil` → Stage 2；`issue_comment` 事件且 `issue.pull_request != nil` → Stage 4；`pull_request_review_comment` 事件 → Stage 4。
 
 **智能触发模式**（可选，未来支持）：
-- `/code` 根据当前工作流阶段自动判断行为：
-  - 首次调用 → 自动进入 `/clarify`
-  - 澄清完成 → 自动进入 `/prd`
-  - PRD 确认 → 自动进入代码开发
-  - PR 已创建 → 自动进入修复模式
+- 在开启智能模式后，系统可基于当前阶段推荐下一步（如首次 `/code` 时提示完成澄清），但默认不自动串联命令。
 
 ### 事件监听（Webhook）
 
 | 事件类型 | 触发条件 | 行为 |
 |----------|----------|------|
-| `issue_comment.created` | 包含触发词 (/clarify, /prd, /code, /code-review) | 根据触发词执行对应阶段 |
-| `pull_request_review_comment.created` | 包含 `/code fix` | 在 PR 分支上修复代码 |
-| `pull_request_review.submitted` | state=changes_requested **且** 包含触发词 | 读取审查意见，触发修复（**不自动触发**，需要明确指令） |
-| `pull_request.closed` | `merged = true` | 标记工作流完成（Done），记录指标并清理状态 |
+| `issue_comment` | 评论正文包含触发词 `/clarify`、`/prd`、`/code`、`/code-review` | 根据触发词执行对应阶段；若 `payload.issue.pull_request != nil`，视为 PR 会话区评论 |
+| `pull_request_review_comment` | 评论正文包含 `/code` 或 `/code-review` | 在 Review 行内评论中触发修复或 Review；复用 Stage 4 / Stage 3 流程 |
+| `pull_request_review` | `state = changes_requested` 且评论包含触发词 | 读取审查意见，触发修复（**不自动触发**，需要明确指令） |
+| `pull_request` | `action = closed` 且 `merged = true` | 标记工作流完成（Done），记录指标并清理状态 |
 | ~~`issues.opened`~~ | ❌ **不支持自动触发** | 需要手动 `/clarify` 启动流程 |
+
+> PR 会话区评论与 Issue 共用 `issue_comment` 事件，通过 `payload.issue.pull_request` 判定是否来自 PR。
 
 注：跨仓库执行不新增事件类型，所有指挥与状态回报仍集中在源 Issue 的评论线程中（R1 默认关闭）。
 
@@ -93,9 +97,9 @@
 
 ## 端到端流程：5 阶段闭环
 
-### **Stage 0：需求澄清（/clarify）**
+### **Stage 0：需求澄清（/clarify，可选）**
 
-**触发**：用户在 Issue 中回复 `/clarify`
+**触发**：用户在 Issue 中回复 `/clarify`（如需求已明确，可跳过）
 
 **Agent 行为**：
 1. 读取 Issue 全文（标题 + 正文 + 所有评论）
@@ -130,7 +134,7 @@
 
 **用户响应**：
 - 用户在问题下方回复答案，或直接编辑 Checklist
-- 回复 `/prd` 表示澄清完成，进入下一阶段
+- 按需回复 `/prd` 生成 PRD，或直接 `/code` 进入开发阶段
 
 **状态存储**：
 ```go
@@ -144,9 +148,9 @@ Clarifications: []Clarification{
 
 ---
 
-### **Stage 1：PRD 生成（/prd）**
+### **Stage 1：PRD 生成（/prd，可选）**
 
-**触发**：用户回复 `/prd`（表示澄清完成）
+**触发**：用户回复 `/prd`（任意时刻可触发）；如存在澄清答案将自动引用，否则基于现有上下文生成。
 
 **Agent 行为**：
 1. 读取 Issue 全文 + 澄清问答历史
@@ -204,7 +208,7 @@ Clarifications: []Clarification{
 - 如果复杂度高 → 建议分多个 PR 提交
 
 **用户响应**：
-- 回复"确认"或 `/code` → 进入开发阶段
+- 回复"确认"或 `/code` → 进入开发阶段（也可直接跳过 PRD 在 Issue 任意时刻触发 `/code`）
 - 回复修改意见 → Agent 更新 PRD（重新调用 Provider）
 
 **状态存储**：
@@ -217,10 +221,10 @@ PRD: "{生成的 PRD 文档内容}"
 
 ### **Stage 2：代码开发（/code）**
 
-**触发**：用户回复 `/code`
+**触发**：用户回复 `/code`（可直接执行，不依赖 `/clarify` 或 `/prd`）
 
 **Agent 行为（R1）**：
-1. 读取 Issue 全文 + 澄清 + PRD（**完整上下文**）
+1. 读取 Issue 全文 + 澄清 + PRD（**完整上下文**，缺失则使用可用信息并提示风险）
 2. Clone 源仓库默认分支到临时目录
 3. 生成代码变更并提交到分支 `swe/issue-{issueNumber}-{timestamp}`（多 PR 拆分时为 `swe/{category}-{issueNumber}-{timestamp}`）
 4. 推送到 GitHub（**不自动创建 PR**）
@@ -236,7 +240,7 @@ PRD: "{生成的 PRD 文档内容}"
 
 **用户决策**：
 - 满意 → 手动点击链接创建 PR
-- 不满意 → 回复修改意见，Agent 在同一分支继续修复（复用 `/code fix`）
+- 不满意 → 回复修改意见，Agent 在同一分支继续修复（在 PR 上重新触发 `/code`，也可回退到 `/clarify` `/prd` 补充信息）
 
 **状态存储**：
 ```go
@@ -249,11 +253,11 @@ FilesChanged: []string{"handler.go", "clarify.go"}
 
 ### **Stage 3：Code Review（/code-review，可选）**
 
-**触发**：用户在 PR 评论中回复 `/code-review`
+**触发**：用户在 PR 评论中回复 `/code-review`（与是否执行 `/clarify`、`/prd` 无关）
 
 **Agent 行为**：
 1. 读取 PR 文件与 patch（GitHub API：ListPullFiles）
-2. 读取 PRD（审查标准）
+2. 读取 PRD（审查标准，如无 PRD 则基于 Issue/澄清摘要生成简要审查基线）
 3. 调用 Provider 生成 Review 意见
 4. 在 PR 中发布 Review 评论（支持行内评论）
 
@@ -297,16 +301,16 @@ FilesChanged: []string{"handler.go", "clarify.go"}
 ```
 
 **用户决策**：
-- 接受 Review → 回复 `/code fix` 触发修复
+- 接受 Review → 在 PR 上回复 `/code` 触发修复
 - 忽略 Review → 直接 Merge PR
 
 ---
 
-### **Stage 4：修复迭代（/code fix）**
+### **Stage 4：修复迭代（/code，可选）**
 
 **触发**：
-1. PR Review 提出问题，用户回复 `/code fix`
-2. 或：用户在 PR 评论中直接 `/code fix [具体意见]`
+1. PR Review 提出问题，用户在 PR 上回复 `/code`
+2. 或：用户在 PR 评论中直接附带 `/code ...` 指令（可跟随具体意见）
 
 **Agent 行为**：
 1. 读取 Review 意见（或用户评论）
@@ -453,12 +457,23 @@ func (s *Store) UpdateWorkflow(state *WorkflowState) error
 - **初期**：内存存储（`map[string]*WorkflowState`，key=`{repo}#{issue_number}`）
 - **长期**：迁移到数据库（复用 `taskstore.Store`）
 
+### Stage 状态映射
+
+| `WorkflowState.Stage` | 描述 | 对应阶段 |
+|----------------------|------|----------|
+| `""`/`"clarify"` | 尚未触发或正在澄清 | Stage 0 |
+| `"prd"` | PRD 生成中或已生成待确认 | Stage 1 |
+| `"coding"` | 代码开发中 | Stage 2 |
+| `"review"` | Code Review 阶段以及后续修复迭代 | Stage 3 & Stage 4 |
+| `"done"` | 流程完成（PR merge 或手动结束） | Stage 5 |
+
+> Stage 3 与 Stage 4 共享 `"review"` 状态，需结合 `FixAttempts`、PR 上下文等字段判断是首轮 Review 还是修复迭代。
+
 ### 幂等与重复触发策略（新增）
 - `/clarify`：追加新问题，已存在的问题可被编辑标记为已解决
 - `/prd`：默认覆盖上一次生成结果（保留历史版本于状态存储中）
 - `/code`：Issue 上重复触发在同一分支继续提交；PR 上重复触发进入修复路径
 - `/code-review`：多次触发视为新一轮审查，覆盖上一次机器人审查结果
-- `/code fix`：在 PR 分支追加 commit；`FixAttempts` 超过上限将阻断并提示人工介入
 
 ### 状态字段扩展（跨仓库）
 ```go
@@ -625,12 +640,18 @@ func (e *Executor) shouldAllowFix(task *webhook.Task) (bool, string) {
 }
 
 // 在 Execute() 中调用
-if task.IsPR && strings.Contains(task.Prompt, "/code fix") {
+workflow := e.workflowStore.GetWorkflow(task.Repo, task.Number)
+if workflow == nil {
+    workflow = taskstore.NewWorkflowState(task.Repo, task.Number) // 兜底，避免首次触发时 nil panic
+}
+if task.IsPR && strings.Contains(task.Prompt, "/code") && workflow.Stage == "review" {
     if allowed, reason := e.shouldAllowFix(task); !allowed {
         return e.handleError(task, tracker, token, reason)
     }
 }
 ```
+
+> 若暂未实现 `NewWorkflowState`，需自行提供最小初始化（例如设置 `MaxFixAttempts` 默认值），核心目的是在第一次修复前保证 `workflow` 非 nil。
 
 ## PRD 模板（未来自动生成至 `docs/prd/ISSUE-<number>.md`）
 - 背景
@@ -790,7 +811,7 @@ workflow:
 - [ ] Review 结果准确（无明显误判）
 
 ### Stage 4：修复迭代
-- [ ] 用户回复 `/code fix` 或 `/code fix [具体意见]`
+- [ ] 用户在 PR 上回复 `/code`（可附带具体意见）
 - [ ] ≤2 分钟，PR 分支上出现新 commit
 - [ ] 修复内容符合 Review 意见
 - [ ] 修复次数 ≤3 次（超过提示人工介入）
@@ -902,7 +923,7 @@ type WorkflowMetrics struct {
   - `internal/prompt/review.go`：Review Prompt 模板
   - 拉取 PR files+patch 并审查
 - [ ] Stage 4：修复迭代：
-  - 支持 `/code fix` 触发
+  - 支持 `/code` 在 PR 上触发修复
   - 修复次数限制（MAX_FIX_ATTEMPTS=3）
   - 在现有 PR 分支上提交（已支持）
 - [ ] 完整上下文获取：
@@ -920,7 +941,7 @@ type WorkflowMetrics struct {
 
 ### Release 1.0（R1）功能范围
 
-- 触发词与阶段化：`/clarify`、`/prd`、`/code`、`/code-review`、`/code fix`（显式触发，智能触发关闭）
+- 触发词与阶段化：`/clarify`、`/prd`、`/code`、`/code-review`（显式触发，智能触发关闭）
 - 权限基线：默认仅 App Installer，可配置白名单
 - 事件监听：`issue_comment.created`、`pull_request_review_comment.created`、`pull_request_review.submitted`（需显式触发）、`pull_request.closed (merged=true)`
 - Stage 0（澄清）：5-10 个问题（Markdown Checklist）
@@ -930,7 +951,7 @@ type WorkflowMetrics struct {
   - 推送，并在评论中提供分支链接与 compare 链接（预填 title 与 `Fixes #<number>`）
   - 支持多 PR 拆分显示（仍手动创建 PR）
 - Stage 3（Review，可选）：基于 PR files+patch 的总结级 Review（R1 不要求行内评论）
-- Stage 4（修复）：`/code fix` 在现有 PR 分支追加提交；`MAX_FIX_ATTEMPTS=3`
+- Stage 4（修复）：`/code` 在 PR 场景下追加提交；`MAX_FIX_ATTEMPTS=3`
 - 成本闸门：`DAILY_CALL_LIMIT`、`PER_ISSUE_COST_LIMIT`、`COST_ALERT_THRESHOLD`
 - 防抖与防环：Bot 忽略、12h 去重、按 `repo#number` 串行
 - 追踪与回帖：CommentTracker 统一进度/链接/成本渲染
@@ -939,7 +960,7 @@ R1 验收标准
 - Issue → `/clarify` → `/prd` → `/code` → 手动创建 PR 全链路可用
 - compare 链接参数正确（title、Fixes）且不自动创建 PR
 - 成本闸门生效：超限阻断并清晰回帖
-- `/code-review` 能输出总结级 Review；`/code fix` 生效且次数受限
+- `/code-review` 能输出总结级 Review；PR 场景下 `/code` 生效且次数受限
 - 事件去重/权限校验/错误提示工作正常
 
 ---
