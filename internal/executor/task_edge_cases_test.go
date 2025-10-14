@@ -193,7 +193,13 @@ func TestExecutor_CommitSubPR_GitResetFailure(t *testing.T) {
 		Category: github.CategoryTests,
 	}
 
-	err := executor.commitSubPR(tmpDir, "test-branch", subPR)
+	task := &webhook.Task{
+		Number:   123,
+		IsPR:     false,
+		Username: "testuser",
+	}
+
+	err := executor.commitSubPR(tmpDir, "test-branch", subPR, task)
 
 	// Should fail with git error
 	if err == nil {
@@ -244,8 +250,14 @@ func TestExecutor_CommitSubPR_BranchAlreadyExists(t *testing.T) {
 		Category: github.CategoryTests,
 	}
 
+	task := &webhook.Task{
+		Number:   456,
+		IsPR:     false,
+		Username: "testuser",
+	}
+
 	// Try to create branch with same name
-	err := executor.commitSubPR(tmpDir, branchName, subPR)
+	err := executor.commitSubPR(tmpDir, branchName, subPR, task)
 
 	// Should fail because branch already exists
 	if err == nil {

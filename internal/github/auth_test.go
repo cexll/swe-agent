@@ -3,6 +3,7 @@ package github
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,6 +41,20 @@ JEuWbQKBgFWKfbzIRchhRUe/jF4rFxkUVk51NK1XhrM99vbMnH2XXrTjjgS3lolV
 CDSUU0sAy1UTRr7NPPw4ILmB+FCZlB3mKqx1VhssX1PlTFD/c+Orrpl4eBaFkrJ3
 c73uIrGjgRcNO03atSknlxH/YbBxVAd7VYajYAm16pgmWZNP+cST
 -----END RSA PRIVATE KEY-----`
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func mockResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     make(http.Header),
+	}
+}
 
 func TestGenerateJWT(t *testing.T) {
 	tests := []struct {
@@ -289,6 +304,50 @@ func TestGetInstallationToken_ErrorScenarios(t *testing.T) {
 	}
 }
 
+func TestAppAuth_GetInstallationTokenAndOwner_Success(t *testing.T) {
+	originalTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/repos/") && strings.HasSuffix(req.URL.Path, "/installation"):
+			return mockResponse(http.StatusOK, `{"id":123}`), nil
+		case req.Method == http.MethodPost && strings.Contains(req.URL.Path, "/access_tokens"):
+			return mockResponse(http.StatusCreated, `{"token":"test-token","expires_at":"2025-10-13T00:00:00Z"}`), nil
+		case req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/app/installations/"):
+			return mockResponse(http.StatusOK, `{"account":{"login":"installer"}}`), nil
+		default:
+			t.Fatalf("unexpected request: %s %s", req.Method, req.URL.String())
+		}
+		return nil, nil
+	})
+	t.Cleanup(func() {
+		http.DefaultTransport = originalTransport
+	})
+
+	auth := &AppAuth{
+		AppID:      "123456",
+		PrivateKey: testPrivateKey,
+	}
+
+	token, err := auth.GetInstallationToken("owner/repo")
+	if err != nil {
+		t.Fatalf("GetInstallationToken error: %v", err)
+	}
+	if token.Token != "test-token" {
+		t.Fatalf("token = %q, want test-token", token.Token)
+	}
+	if token.ExpiresAt.IsZero() {
+		t.Fatal("expected non-zero expiration")
+	}
+
+	owner, err := auth.GetInstallationOwner("owner/repo")
+	if err != nil {
+		t.Fatalf("GetInstallationOwner error: %v", err)
+	}
+	if owner != "installer" {
+		t.Fatalf("owner = %q, want installer", owner)
+	}
+}
+
 // TestAppAuth_Structure validates the AppAuth struct
 func TestAppAuth_Structure(t *testing.T) {
 	auth := &AppAuth{
@@ -519,5 +578,101 @@ func TestGenerateJWT_EdgeCaseAppIDs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestGetInstallationAccessToken_Success(t *testing.T) {
+	original := http.DefaultTransport
+	defer func() { http.DefaultTransport = original }()
+
+	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if !strings.Contains(req.URL.Path, "/access_tokens") {
+			t.Fatalf("unexpected path: %s", req.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusCreated,
+			Body:       io.NopCloser(strings.NewReader(`{"token":"abc","expires_at":"2025-01-01T00:00:00Z"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	auth := &AppAuth{}
+	token, err := auth.getInstallationAccessToken("jwt", 12345)
+	if err != nil {
+		t.Fatalf("getInstallationAccessToken error: %v", err)
+	}
+	if token.Token != "abc" {
+		t.Fatalf("token = %q, want abc", token.Token)
+	}
+	if token.ExpiresAt.IsZero() {
+		t.Fatal("ExpiresAt should be parsed")
+	}
+}
+
+func TestGetInstallationAccountLogin_Success(t *testing.T) {
+	original := http.DefaultTransport
+	defer func() { http.DefaultTransport = original }()
+
+	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if !strings.Contains(req.URL.Path, "/app/installations/") {
+			t.Fatalf("unexpected path: %s", req.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"account":{"login":"installer"}}`)),
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	auth := &AppAuth{}
+	login, err := auth.getInstallationAccountLogin("jwt", 999)
+	if err != nil {
+		t.Fatalf("getInstallationAccountLogin error: %v", err)
+	}
+	if login != "installer" {
+		t.Fatalf("login = %q, want installer", login)
+	}
+}
+
+func TestGetInstallationOwner_UsesHTTPTransport(t *testing.T) {
+	original := http.DefaultTransport
+	defer func() { http.DefaultTransport = original }()
+
+	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case strings.Contains(req.URL.Path, "/repos/owner/repo/installation"):
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"id": 42}`)),
+				Header:     make(http.Header),
+			}, nil
+		case strings.Contains(req.URL.Path, "/app/installations/42"):
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"account":{"login":"installer"}}`)),
+				Header:     make(http.Header),
+			}, nil
+		default:
+			t.Fatalf("unexpected path: %s", req.URL.Path)
+			return nil, nil
+		}
+	})
+
+	auth := &AppAuth{
+		AppID:      "123456",
+		PrivateKey: testPrivateKey,
+	}
+	login, err := auth.GetInstallationOwner("owner/repo")
+	if err != nil {
+		t.Fatalf("GetInstallationOwner error: %v", err)
+	}
+	if login != "installer" {
+		t.Fatalf("login = %q, want installer", login)
 	}
 }

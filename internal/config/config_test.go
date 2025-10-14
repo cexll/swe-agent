@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -195,6 +196,75 @@ func TestLoad(t *testing.T) {
 				tt.check(t, cfg)
 			}
 		})
+	}
+}
+
+func TestConfigValidateDefaultsApplied(t *testing.T) {
+	cfg := &Config{
+		GitHubAppID:                 "app",
+		GitHubPrivateKey:            "key",
+		GitHubWebhookSecret:         "secret",
+		Provider:                    "claude",
+		ClaudeAPIKey:                "api",
+		DispatcherWorkers:           0,
+		DispatcherQueueSize:         0,
+		DispatcherMaxAttempts:       0,
+		DispatcherRetryInitial:      0,
+		DispatcherRetryMax:          0,
+		DispatcherBackoffMultiplier: 0.5,
+	}
+
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate returned error: %v", err)
+	}
+
+	if cfg.DispatcherWorkers != 4 {
+		t.Fatalf("DispatcherWorkers default = %d, want 4", cfg.DispatcherWorkers)
+	}
+	if cfg.DispatcherQueueSize != 16 {
+		t.Fatalf("DispatcherQueueSize default = %d, want 16", cfg.DispatcherQueueSize)
+	}
+	if cfg.DispatcherRetryInitial != 15*time.Second {
+		t.Fatalf("DispatcherRetryInitial default = %s, want 15s", cfg.DispatcherRetryInitial)
+	}
+	if cfg.DispatcherRetryMax != 5*time.Minute {
+		t.Fatalf("DispatcherRetryMax default = %s, want 5m", cfg.DispatcherRetryMax)
+	}
+	if cfg.DispatcherBackoffMultiplier != 2 {
+		t.Fatalf("DispatcherBackoffMultiplier default = %f, want 2", cfg.DispatcherBackoffMultiplier)
+	}
+}
+
+func TestConfigValidateRetryWindow(t *testing.T) {
+	cfg := &Config{
+		GitHubAppID:                 "app",
+		GitHubPrivateKey:            "key",
+		GitHubWebhookSecret:         "secret",
+		Provider:                    "claude",
+		ClaudeAPIKey:                "api",
+		DispatcherWorkers:           2,
+		DispatcherQueueSize:         4,
+		DispatcherMaxAttempts:       2,
+		DispatcherRetryInitial:      10 * time.Second,
+		DispatcherRetryMax:          5 * time.Second,
+		DispatcherBackoffMultiplier: 2,
+	}
+
+	err := cfg.validate()
+	if err == nil || !strings.Contains(err.Error(), "DISPATCHER_RETRY_MAX_SECONDS") {
+		t.Fatalf("expected retry window error, got %v", err)
+	}
+}
+
+func TestGetEnvFloat(t *testing.T) {
+	t.Setenv("TEST_FLOAT", "3.14")
+	if got := getEnvFloat("TEST_FLOAT", 1.0); got != 3.14 {
+		t.Fatalf("getEnvFloat parsed %v, want 3.14", got)
+	}
+
+	t.Setenv("TEST_FLOAT", "invalid")
+	if got := getEnvFloat("TEST_FLOAT", 1.5); got != 1.5 {
+		t.Fatalf("getEnvFloat fallback %v, want 1.5", got)
 	}
 }
 

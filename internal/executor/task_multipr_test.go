@@ -2,13 +2,11 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/cexll/swe/internal/github"
 	"github.com/cexll/swe/internal/provider/claude"
@@ -114,6 +112,10 @@ func TestExecutor_ExecuteMultiPR_IndependentPRs(t *testing.T) {
 	// Verify UpdateComment was called multiple times (once per PR + final)
 	if len(mockGH.UpdateCommentCalls) < 2 {
 		t.Errorf("Expected at least 2 UpdateComment calls for multi-PR workflow, got %d", len(mockGH.UpdateCommentCalls))
+	}
+
+	for i, call := range mockGH.UpdateCommentCalls {
+		t.Logf("UpdateComment #%d body:\n%s", i+1, call.Body)
 	}
 
 	// Verify split plan was mentioned in comments
@@ -370,10 +372,16 @@ func TestExecutor_CommitSubPR_AtomicOperation(t *testing.T) {
 		Category: github.CategoryTests,
 	}
 
-	branchName := "pilot/123-tests-" + fmt.Sprint(time.Now().Unix())
+	branchName := generateSubPRBranchName(123, string(github.CategoryTests))
+
+	task := &webhook.Task{
+		Number:   123,
+		IsPR:     false,
+		Username: "testuser",
+	}
 
 	// Execute commitSubPR
-	err := executor.commitSubPR(tmpDir, branchName, subPR)
+	err := executor.commitSubPR(tmpDir, branchName, subPR, task)
 
 	// Push will fail (no remote), but commit should succeed
 	if err != nil && !strings.Contains(err.Error(), "push") && !strings.Contains(err.Error(), "remote") {
@@ -465,10 +473,16 @@ func TestExecutor_CommitSubPR_OnlyCommitsSpecifiedFiles(t *testing.T) {
 		Category: github.CategoryCore,
 	}
 
-	branchName := "pilot/test-selective"
+	branchName := generateSubPRBranchName(789, string(github.CategoryCore))
+
+	task := &webhook.Task{
+		Number:   789,
+		IsPR:     false,
+		Username: "testuser",
+	}
 
 	// Execute commitSubPR
-	err := executor.commitSubPR(tmpDir, branchName, subPR)
+	err := executor.commitSubPR(tmpDir, branchName, subPR, task)
 
 	// Push will fail, but reset/clean/apply should work
 	if err != nil && !strings.Contains(err.Error(), "push") && !strings.Contains(err.Error(), "remote") {

@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,68 @@ import (
 	"time"
 )
 
+func TestClone_UsesRunRepoCloneSuccess(t *testing.T) {
+	orig := runRepoClone
+	defer func() { runRepoClone = orig }()
+
+	callCount := 0
+	runRepoClone = func(repo, branch, dest string) error {
+		callCount++
+		if repo != "owner/repo" {
+			return fmt.Errorf("unexpected repo %s", repo)
+		}
+		if branch != "main" {
+			return fmt.Errorf("unexpected branch %s", branch)
+		}
+		// Simulate gh clone by creating the target directory.
+		if err := os.MkdirAll(filepath.Join(dest, ".git"), 0o755); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	workdir, cleanup, err := Clone("owner/repo", "main")
+	if err != nil {
+		t.Fatalf("Clone() error = %v, want nil", err)
+	}
+	if callCount != 1 {
+		t.Fatalf("runRepoClone called %d times, want 1", callCount)
+	}
+	if info, err := os.Stat(filepath.Join(workdir, ".git")); err != nil || !info.IsDir() {
+		t.Fatalf("expected simulated clone to create .git directory, err=%v", err)
+	}
+	if cleanup == nil {
+		t.Fatal("cleanup function should not be nil")
+	}
+	cleanup()
+	if _, err := os.Stat(workdir); !os.IsNotExist(err) {
+		t.Fatalf("cleanup should remove workdir, err=%v", err)
+	}
+}
+
+func TestClone_ReturnsErrorOnFailure(t *testing.T) {
+	orig := runRepoClone
+	defer func() { runRepoClone = orig }()
+
+	runRepoClone = func(repo, branch, dest string) error {
+		return fmt.Errorf("fatal: cannot clone %s", repo)
+	}
+
+	workdir, cleanup, err := Clone("owner/repo", "dev")
+	if err == nil {
+		t.Fatal("Clone() error = nil, want failure")
+	}
+	if !strings.Contains(err.Error(), "fatal: cannot clone") {
+		t.Fatalf("Clone() error = %v, want to contain fatal message", err)
+	}
+	if workdir != "" {
+		t.Fatalf("workdir = %q, want empty on failure", workdir)
+	}
+	if cleanup != nil {
+		t.Fatal("cleanup should be nil when clone fails")
+	}
+}
+
 // skipIfNetworkUnavailable skips the test if GitHub CLI is not available or network is unreachable
 // or if integration tests are disabled
 func skipIfNetworkUnavailable(t *testing.T) {
@@ -17,16 +80,16 @@ func skipIfNetworkUnavailable(t *testing.T) {
 	if os.Getenv("RUN_INTEGRATION_TESTS") != "true" {
 		t.Skip("Integration tests disabled, set RUN_INTEGRATION_TESTS=true to enable")
 	}
-	
+
 	// Check if gh CLI is available
 	if _, err := exec.LookPath("gh"); err != nil {
 		t.Skip("gh CLI not available")
 	}
-	
+
 	// Quick connectivity check with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	cmd := exec.CommandContext(ctx, "gh", "api", "/user")
 	if err := cmd.Run(); err != nil {
 		t.Skip("GitHub API not accessible or not authenticated")
@@ -35,7 +98,7 @@ func skipIfNetworkUnavailable(t *testing.T) {
 
 func TestClone_ErrorHandling(t *testing.T) {
 	skipIfNetworkUnavailable(t)
-	
+
 	tests := []struct {
 		name    string
 		repo    string
@@ -114,7 +177,7 @@ func TestClone_ErrorHandling(t *testing.T) {
 
 func TestClone_WorkdirFormat(t *testing.T) {
 	skipIfNetworkUnavailable(t)
-	
+
 	// Test that workdir has expected format
 	repo := "octocat/Hello-World"
 	branch := "master"
@@ -144,7 +207,7 @@ func TestClone_WorkdirFormat(t *testing.T) {
 
 func TestClone_CleanupFunction(t *testing.T) {
 	skipIfNetworkUnavailable(t)
-	
+
 	// Test cleanup function behavior
 	repo := "octocat/Hello-World"
 	branch := "master"
@@ -176,7 +239,7 @@ func TestClone_CleanupFunction(t *testing.T) {
 
 func TestClone_GitDirectoryExists(t *testing.T) {
 	skipIfNetworkUnavailable(t)
-	
+
 	repo := "octocat/Hello-World"
 	branch := "master"
 
@@ -198,7 +261,7 @@ func TestClone_GitDirectoryExists(t *testing.T) {
 
 func TestClone_RetryLogic(t *testing.T) {
 	skipIfNetworkUnavailable(t)
-	
+
 	// This test verifies retry logic is in place
 	// We can't easily test actual retries without mocking, but we can verify
 	// the function signature and error handling

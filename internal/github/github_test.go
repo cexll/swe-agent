@@ -35,6 +35,10 @@ func TestClone_PathGeneration(t *testing.T) {
 }
 
 func TestCreateComment_Parameters(t *testing.T) {
+	originalClient := defaultGHClient
+	defer func() { defaultGHClient = originalClient }()
+	SetGHClient(NewMockGHClient())
+
 	// Test parameter validation
 	tests := []struct {
 		name    string
@@ -94,6 +98,10 @@ func TestCreateComment_Parameters(t *testing.T) {
 }
 
 func TestCreatePR_Parameters(t *testing.T) {
+	originalClient := defaultGHClient
+	defer func() { defaultGHClient = originalClient }()
+	SetGHClient(NewMockGHClient())
+
 	// Test parameter validation
 	tests := []struct {
 		name    string

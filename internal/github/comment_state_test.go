@@ -133,6 +133,7 @@ func TestCommentState_Fields(t *testing.T) {
 		CostUSD:       0.05,
 		Username:      "testuser",
 		OriginalBody:  "test prompt",
+		Context:       map[string]string{"env": "test"},
 		Summary:       "test summary",
 		ModifiedFiles: []string{"file1.go", "file2.go"},
 		BranchName:    "test-branch",
@@ -154,6 +155,9 @@ func TestCommentState_Fields(t *testing.T) {
 	}
 	if len(state.ModifiedFiles) != 2 {
 		t.Errorf("ModifiedFiles length = %v, want %v", len(state.ModifiedFiles), 2)
+	}
+	if len(state.Context) != 1 || state.Context["env"] != "test" {
+		t.Errorf("Context not set correctly: %#v", state.Context)
 	}
 }
 

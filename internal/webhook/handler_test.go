@@ -11,6 +11,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/cexll/swe/internal/github"
 )
 
 type mockDispatcher struct {
@@ -236,7 +239,10 @@ func TestHandleWebhook_IssueComment(t *testing.T) {
 				},
 			}
 
-			handler := NewHandler(secret, triggerKeyword, dispatcher, nil)
+			mockAuth := &mockAppAuth{GetInstallationOwnerFunc: func(repo string) (string, error) {
+				return "testuser", nil
+			}}
+			handler := NewHandler(secret, triggerKeyword, dispatcher, nil, mockAuth)
 
 			payload, err := json.Marshal(tt.event)
 			if err != nil {
@@ -307,7 +313,7 @@ func TestHandleWebhook_IssueComment_DuplicateIgnored(t *testing.T) {
 	signature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 
 	dispatcher := &mockDispatcher{}
-	handler := NewHandler(secret, triggerKeyword, dispatcher, nil)
+	handler := NewHandler(secret, triggerKeyword, dispatcher, nil, nil)
 
 	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
 	req.Header.Set("X-Hub-Signature-256", signature)
@@ -376,7 +382,7 @@ func TestHandleWebhook_ReviewComment(t *testing.T) {
 	}(payload)
 
 	dispatcher := &mockDispatcher{}
-	handler := NewHandler(secret, triggerKeyword, dispatcher, nil)
+	handler := NewHandler(secret, triggerKeyword, dispatcher, nil, nil)
 
 	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
 	req.Header.Set("X-Hub-Signature-256", signature)
@@ -443,7 +449,7 @@ func TestHandleWebhook_ReviewComment_DuplicateIgnored(t *testing.T) {
 	signature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 
 	dispatcher := &mockDispatcher{}
-	handler := NewHandler(secret, triggerKeyword, dispatcher, nil)
+	handler := NewHandler(secret, triggerKeyword, dispatcher, nil, nil)
 
 	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
 	req.Header.Set("X-Hub-Signature-256", signature)
@@ -507,7 +513,7 @@ func TestHandleWebhook_ReviewComment_NoTrigger(t *testing.T) {
 	}(payload)
 
 	dispatcher := &mockDispatcher{}
-	handler := NewHandler(secret, triggerKeyword, dispatcher, nil)
+	handler := NewHandler(secret, triggerKeyword, dispatcher, nil, nil)
 
 	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
 	req.Header.Set("X-Hub-Signature-256", signature)
@@ -557,7 +563,7 @@ func TestHandleWebhook_ReviewComment_IgnoresNonCreated(t *testing.T) {
 	mac.Write(payload)
 
 	dispatcher := &mockDispatcher{}
-	handler := NewHandler(secret, triggerKeyword, dispatcher, nil)
+	handler := NewHandler(secret, triggerKeyword, dispatcher, nil, nil)
 
 	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
 	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
@@ -612,7 +618,7 @@ func TestHandleWebhook_DispatcherError(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(secret, triggerKeyword, dispatcher, nil)
+	handler := NewHandler(secret, triggerKeyword, dispatcher, nil, nil)
 
 	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
 	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
@@ -658,7 +664,7 @@ func TestHandleWebhook_QueueFull(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(secret, triggerKeyword, dispatcher, nil)
+	handler := NewHandler(secret, triggerKeyword, dispatcher, nil, nil)
 
 	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(payload))
 	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
@@ -678,7 +684,7 @@ func TestHandleWebhook_QueueFull(t *testing.T) {
 
 func TestHandleWebhook_SignatureValidation(t *testing.T) {
 	secret := "test-webhook-secret"
-	handler := NewHandler(secret, "/code", &mockDispatcher{}, nil)
+	handler := NewHandler(secret, "/code", &mockDispatcher{}, nil, nil)
 
 	event := &IssueCommentEvent{
 		Action: "created",
@@ -742,7 +748,7 @@ func TestNewHandler(t *testing.T) {
 	keyword := "/test"
 	dispatcher := &mockDispatcher{}
 
-	handler := NewHandler(secret, keyword, dispatcher, nil)
+	handler := NewHandler(secret, keyword, dispatcher, nil, nil)
 
 	if handler == nil {
 		t.Fatal("NewHandler() returned nil")
@@ -763,7 +769,7 @@ func TestNewHandler(t *testing.T) {
 
 func TestHandleWebhook_ErrorReading(t *testing.T) {
 	dispatcher := &mockDispatcher{}
-	handler := NewHandler("secret", "/code", dispatcher, nil)
+	handler := NewHandler("secret", "/code", dispatcher, nil, nil)
 
 	errReader := &errorReader{err: io.ErrUnexpectedEOF}
 
@@ -781,7 +787,7 @@ func TestHandleWebhook_ErrorReading(t *testing.T) {
 
 func TestHandleWebhook_UnsupportedEvent(t *testing.T) {
 	dispatcher := &mockDispatcher{}
-	handler := NewHandler("secret", "/code", dispatcher, nil)
+	handler := NewHandler("secret", "/code", dispatcher, nil, nil)
 
 	event := map[string]string{"ping": "pong"}
 	payload, _ := json.Marshal(event)
@@ -810,4 +816,23 @@ type errorReader struct {
 
 func (r *errorReader) Read(p []byte) (int, error) {
 	return 0, r.err
+}
+
+type mockAppAuth struct {
+	GetInstallationTokenFunc func(repo string) (*github.InstallationToken, error)
+	GetInstallationOwnerFunc func(repo string) (string, error)
+}
+
+func (m *mockAppAuth) GetInstallationToken(repo string) (*github.InstallationToken, error) {
+	if m != nil && m.GetInstallationTokenFunc != nil {
+		return m.GetInstallationTokenFunc(repo)
+	}
+	return &github.InstallationToken{Token: "mock-token", ExpiresAt: time.Now().Add(time.Hour)}, nil
+}
+
+func (m *mockAppAuth) GetInstallationOwner(repo string) (string, error) {
+	if m != nil && m.GetInstallationOwnerFunc != nil {
+		return m.GetInstallationOwnerFunc(repo)
+	}
+	return "testuser", nil
 }

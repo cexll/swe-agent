@@ -1,6 +1,7 @@
 package github
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -40,18 +41,18 @@ func TestCommentTracker_BuildSplitPlanSection_WithCreatedPRs(t *testing.T) {
 		{
 			Index:      0,
 			Name:       "Add test infrastructure",
-			BranchName: "pilot/123-tests-1234567890",
-			URL:        "https://github.com/owner/repo/compare/main...pilot/123-tests-1234567890?expand=1",
-			BranchURL:  "https://github.com/owner/repo/tree/pilot/123-tests-1234567890",
+			BranchName: "swe/tests-123-1234567890",
+			URL:        "https://github.com/owner/repo/compare/main...swe/tests-123-1234567890?expand=1",
+			BranchURL:  "https://github.com/owner/repo/tree/swe/tests-123-1234567890",
 			Status:     "created",
 			Category:   CategoryTests,
 		},
 		{
 			Index:      1,
 			Name:       "Update documentation",
-			BranchName: "pilot/123-docs-1234567891",
-			URL:        "https://github.com/owner/repo/compare/main...pilot/123-docs-1234567891?expand=1",
-			BranchURL:  "https://github.com/owner/repo/tree/pilot/123-docs-1234567891",
+			BranchName: "swe/docs-123-1234567891",
+			URL:        "https://github.com/owner/repo/compare/main...swe/docs-123-1234567891?expand=1",
+			BranchURL:  "https://github.com/owner/repo/tree/swe/docs-123-1234567891",
 			Status:     "created",
 			Category:   CategoryDocs,
 		},
@@ -70,10 +71,10 @@ func TestCommentTracker_BuildSplitPlanSection_WithCreatedPRs(t *testing.T) {
 	}
 
 	// Verify created PRs show ✅ with links
-	if !strings.Contains(output, "✅ [Add test infrastructure](https://github.com/owner/repo/compare/main...pilot/123-tests-1234567890?expand=1)") {
+	if !strings.Contains(output, "✅ [Add test infrastructure](https://github.com/owner/repo/compare/main...swe/tests-123-1234567890?expand=1)") {
 		t.Error("Output should show created PR 1 with checkmark and link")
 	}
-	if !strings.Contains(output, "✅ [Update documentation](https://github.com/owner/repo/compare/main...pilot/123-docs-1234567891?expand=1)") {
+	if !strings.Contains(output, "✅ [Update documentation](https://github.com/owner/repo/compare/main...swe/docs-123-1234567891?expand=1)") {
 		t.Error("Output should show created PR 2 with checkmark and link")
 	}
 
@@ -232,7 +233,7 @@ func TestCommentTracker_AddCreatedPR(t *testing.T) {
 	pr1 := CreatedPR{
 		Index:      0,
 		Name:       "First PR",
-		BranchName: "pilot/200-tests-111",
+		BranchName: "swe/tests-200-111",
 		URL:        "https://github.com/owner/repo/pulls/1",
 		Status:     "created",
 		Category:   CategoryTests,
@@ -253,7 +254,7 @@ func TestCommentTracker_AddCreatedPR(t *testing.T) {
 	pr2 := CreatedPR{
 		Index:      1,
 		Name:       "Second PR",
-		BranchName: "pilot/200-docs-222",
+		BranchName: "swe/docs-200-222",
 		URL:        "https://github.com/owner/repo/pulls/2",
 		Status:     "created",
 		Category:   CategoryDocs,
@@ -303,6 +304,37 @@ func TestCommentTracker_SetCompletedWithSplit(t *testing.T) {
 	}
 }
 
+func TestCommentTracker_SetCompletedWithSplit_PreservesSummaryAndCollectsFiles(t *testing.T) {
+	tracker := NewCommentTracker("owner/repo", 350, "user")
+	tracker.State.Summary = "Implemented feature with docs"
+
+	plan := &SplitPlan{
+		SubPRs: []SubPR{
+			{
+				Index: 0,
+				Name:  "PR 1",
+				Files: []claude.FileChange{{Path: "internal/feature/a.go"}, {Path: "README.md"}},
+			},
+			{
+				Index: 1,
+				Name:  "PR 2",
+				Files: []claude.FileChange{{Path: "internal/feature/b.go"}},
+			},
+		},
+	}
+
+	tracker.SetCompletedWithSplit(plan, nil, 0.12)
+
+	if tracker.State.Summary != "Implemented feature with docs" {
+		t.Fatalf("Summary was overwritten, got %q", tracker.State.Summary)
+	}
+
+	wantFiles := []string{"README.md", "internal/feature/a.go", "internal/feature/b.go"}
+	if !reflect.DeepEqual(tracker.State.ModifiedFiles, wantFiles) {
+		t.Fatalf("ModifiedFiles mismatch, got %v, want %v", tracker.State.ModifiedFiles, wantFiles)
+	}
+}
+
 // TestCommentTracker_RenderBody_WithSplitPlan verifies rendering with split plan
 func TestCommentTracker_RenderBody_WithSplitPlan(t *testing.T) {
 	tracker := NewCommentTracker("owner/repo", 400, "testuser")
@@ -310,15 +342,20 @@ func TestCommentTracker_RenderBody_WithSplitPlan(t *testing.T) {
 	plan := &SplitPlan{
 		SubPRs: []SubPR{
 			{
-				Index:    0,
-				Name:     "Add tests",
-				Files:    make([]claude.FileChange, 3),
+				Index: 0,
+				Name:  "Add tests",
+				Files: []claude.FileChange{
+					{Path: "tests/foo_test.go"},
+					{Path: "tests/bar_test.go"},
+				},
 				Category: CategoryTests,
 			},
 			{
-				Index:    1,
-				Name:     "Add docs",
-				Files:    make([]claude.FileChange, 2),
+				Index: 1,
+				Name:  "Add docs",
+				Files: []claude.FileChange{
+					{Path: "docs/guide.md"},
+				},
 				Category: CategoryDocs,
 			},
 		},
@@ -332,39 +369,50 @@ func TestCommentTracker_RenderBody_WithSplitPlan(t *testing.T) {
 			Status:   "created",
 			Category: CategoryTests,
 		},
+		{
+			Index:    1,
+			Name:     "Add docs",
+			URL:      "https://github.com/owner/repo/pulls/2",
+			Status:   "created",
+			Category: CategoryDocs,
+		},
 	}
 
 	tracker.State.SplitPlan = plan
-	tracker.State.CreatedPRs = createdPRs
 	tracker.State.OriginalBody = "Please add tests and docs"
+	tracker.State.Summary = "Added coverage for new feature"
 	tracker.SetCompletedWithSplit(plan, createdPRs, 0.08)
 	tracker.MarkEnd()
 
 	body := tracker.renderBody()
 
-	// Verify split plan section is included
+	// Final comment should include split plan section
 	if !strings.Contains(body, "### 🔀 Split into Multiple PRs") {
-		t.Error("Body should contain split plan section")
+		t.Error("Body should contain split plan section after completion")
 	}
 
-	// Verify created PR is shown
-	if !strings.Contains(body, "✅ [Add tests]") {
-		t.Error("Body should show created PR")
+	// Verify multi-PR Create PR links are present
+	if !strings.Contains(body, "Create PR: Add tests ➔") {
+		t.Error("Body should include Create PR link for tests sub-PR")
+	}
+	if !strings.Contains(body, "Create PR: Add docs ➔") {
+		t.Error("Body should include Create PR link for docs sub-PR")
 	}
 
-	// Verify pending PR is shown
-	if !strings.Contains(body, "⏳ Add docs") && !strings.Contains(body, "(pending)") {
-		t.Error("Body should show pending PR")
+	// Verify summary is preserved
+	if !strings.Contains(body, "Added coverage for new feature") {
+		t.Error("Body should contain provided summary")
 	}
 
-	// Verify summary is shown
-	if !strings.Contains(body, "**Summary:** Split into 2 PRs") {
-		t.Error("Body should contain summary")
+	// Verify modified files list is shown with collected files
+	expectedFiles := []string{"`docs/guide.md`", "`tests/bar_test.go`", "`tests/foo_test.go`"}
+	for _, file := range expectedFiles {
+		if !strings.Contains(body, file) {
+			t.Errorf("Body should list modified file %s", file)
+		}
 	}
-
-	// Verify modified files list is NOT shown (split workflow)
-	if strings.Contains(body, "**Modified Files:**") {
-		t.Error("Body should not contain modified files list in split workflow")
+	if !strings.Contains(body, "**Modified Files:** (3)") {
+		t.Error("Body should show modified files count")
 	}
 
 	// Verify cost is shown

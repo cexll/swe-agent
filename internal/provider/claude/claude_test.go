@@ -6,7 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cexll/swe/internal/prompt"
 )
+
+var testPromptManager = prompt.NewManager()
 
 func TestNewProvider(t *testing.T) {
 	apiKey := "sk-ant-test-key"
@@ -194,7 +198,7 @@ Implemented main function with proper formatting
 	}
 }
 
-func TestBuildSystemPrompt(t *testing.T) {
+func TestBuildDefaultSystemPrompt(t *testing.T) {
 	files := []string{
 		"main.go",
 		"utils/helper.go",
@@ -207,59 +211,65 @@ func TestBuildSystemPrompt(t *testing.T) {
 		"priority":    "P1",
 	}
 
-	prompt := buildSystemPrompt(files, context)
+	prompt := testPromptManager.BuildDefaultSystemPrompt(files, context)
 
 	// Check that files are included
 	for _, file := range files {
 		if !strings.Contains(prompt, file) {
-			t.Errorf("buildSystemPrompt() does not contain file %s", file)
+			t.Errorf("testPromptManager.BuildDefaultSystemPrompt() does not contain file %s", file)
 		}
 	}
 
 	// Issue title/body should be omitted from additional context (already present in main prompt)
 	if strings.Contains(prompt, "Fix bug in login") {
-		t.Error("buildSystemPrompt() should not duplicate issue title in system prompt")
+		t.Error("testPromptManager.BuildDefaultSystemPrompt() should not duplicate issue title in system prompt")
 	}
-	if strings.Contains(prompt, "The login function crashes") {
-		t.Error("buildSystemPrompt() should not duplicate issue body in system prompt")
+
+	if !strings.Contains(prompt, "<pr_or_issue_body>\nThe login function crashes\n</pr_or_issue_body>") {
+		t.Error("testPromptManager.BuildDefaultSystemPrompt() should include issue body within <pr_or_issue_body> section")
 	}
 
 	// Custom context should appear
 	if !strings.Contains(prompt, "- priority: P1") {
-		t.Error("buildSystemPrompt() should include non-issue context entries")
+		t.Error("testPromptManager.BuildDefaultSystemPrompt() should include non-issue context entries")
 	}
 
 	// Check for key instructions
 	expectedInstructions := []string{
-		"code modification assistant",
+		"You are an AI assistant designed to help with GitHub issues and pull requests",
 		"Repository structure",
-		"complete file content",
+		"conduct your analysis inside <analysis> tags",
 	}
 
 	for _, instruction := range expectedInstructions {
 		if !strings.Contains(prompt, instruction) {
-			t.Errorf("buildSystemPrompt() does not contain instruction: %s", instruction)
+			t.Errorf("testPromptManager.BuildDefaultSystemPrompt() does not contain instruction: %s", instruction)
 		}
+	}
+
+	// Ensure XML format instructions are NOT present (removed to match claude-code-action)
+	if strings.Contains(prompt, "<file path=\"path/to/file\">") {
+		t.Error("testPromptManager.BuildDefaultSystemPrompt() should NOT contain XML format instructions")
 	}
 }
 
-func TestBuildSystemPrompt_EmptyContext(t *testing.T) {
+func TestBuildDefaultSystemPrompt_EmptyContext(t *testing.T) {
 	files := []string{"main.go"}
 	context := map[string]string{}
 
-	prompt := buildSystemPrompt(files, context)
+	prompt := testPromptManager.BuildDefaultSystemPrompt(files, context)
 
 	if !strings.Contains(prompt, "main.go") {
-		t.Error("buildSystemPrompt() does not contain file")
+		t.Error("testPromptManager.BuildDefaultSystemPrompt() does not contain file")
 	}
 
-	// Should not contain "Additional Context:" section
-	if strings.Contains(prompt, "Additional Context:") {
-		t.Error("buildSystemPrompt() should not contain Additional Context section when context is empty")
+	// Should not contain "Additional context:" section
+	if strings.Contains(prompt, "Additional context:") {
+		t.Error("testPromptManager.BuildDefaultSystemPrompt() should not contain Additional context section when context is empty")
 	}
 }
 
-func TestBuildSystemPrompt_PartialContext(t *testing.T) {
+func TestBuildDefaultSystemPrompt_PartialContext(t *testing.T) {
 	files := []string{"main.go"}
 	context := map[string]string{
 		"issue_title": "Test issue",
@@ -268,18 +278,65 @@ func TestBuildSystemPrompt_PartialContext(t *testing.T) {
 		"notes":       "", // Empty value should be skipped
 	}
 
-	prompt := buildSystemPrompt(files, context)
+	prompt := testPromptManager.BuildDefaultSystemPrompt(files, context)
 
 	if !strings.Contains(prompt, "- environment: staging") {
-		t.Error("buildSystemPrompt() should include non-issue context")
+		t.Error("testPromptManager.BuildDefaultSystemPrompt() should include non-issue context")
 	}
 
 	if strings.Contains(prompt, "Test issue") {
-		t.Error("buildSystemPrompt() should not include issue title in additional context")
+		t.Error("testPromptManager.BuildDefaultSystemPrompt() should not include issue title in additional context")
 	}
 
 	if strings.Contains(prompt, "notes") {
-		t.Error("buildSystemPrompt() should skip empty context values")
+		t.Error("testPromptManager.BuildDefaultSystemPrompt() should skip empty context values")
+	}
+}
+
+func TestBuildCommitPrompt(t *testing.T) {
+	files := []string{"main.go"}
+	context := map[string]string{
+		"issue_body":       "Fix login bug",
+		"repository":       "owner/repo",
+		"event_type":       "PULL_REQUEST",
+		"trigger_context":  "pull request opened",
+		"is_pr":            "true",
+		"pr_number":        "123",
+		"trigger_username": "octocat",
+		"trigger_phrase":   "@claude",
+		"event_name":       "issue_comment",
+		"trigger_comment":  "@claude please finalize the commit",
+	}
+
+	prompt := testPromptManager.BuildCommitPrompt(files, context)
+
+	if !strings.Contains(prompt, "You are an AI assistant responsible for finalizing Git commits") {
+		t.Error("BuildCommitPrompt() should describe commit responsibilities")
+	}
+
+	if !strings.Contains(prompt, "<commit_message>") {
+		t.Error("BuildCommitPrompt() should request commit_message section")
+	}
+
+	if !strings.Contains(prompt, "<commit_body>") {
+		t.Error("BuildCommitPrompt() should request commit_body section")
+	}
+
+	if !strings.Contains(prompt, "<testing>") {
+		t.Error("BuildCommitPrompt() should request testing section")
+	}
+
+	if !strings.Contains(prompt, "<follow_up>") {
+		t.Error("BuildCommitPrompt() should request follow_up section")
+	}
+
+	// When commit signing is disabled (default), instructions should include git commands
+	if !strings.Contains(prompt, "Bash(git add <files>)") {
+		t.Error("BuildCommitPrompt() should include git commit instructions when commit signing is disabled")
+	}
+
+	if !strings.Contains(prompt, "<repository>owner/repo</repository>") {
+		t.Error("BuildCommitPrompt() should include repository metadata")
 	}
 }
 
@@ -321,9 +378,9 @@ func TestListRepoFiles(t *testing.T) {
 	}
 
 	// List files
-	files, err := listRepoFiles(tmpDir)
+	files, err := testPromptManager.ListRepoFiles(tmpDir)
 	if err != nil {
-		t.Fatalf("listRepoFiles() error = %v", err)
+		t.Fatalf("testPromptManager.ListRepoFiles() error = %v", err)
 	}
 
 	// Check that test files are included
@@ -336,43 +393,43 @@ func TestListRepoFiles(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("listRepoFiles() missing expected file: %s", expectedFile)
+			t.Errorf("testPromptManager.ListRepoFiles() missing expected file: %s", expectedFile)
 		}
 	}
 
 	// Check that .git files are not included
 	for _, file := range files {
 		if strings.HasPrefix(file, ".git") {
-			t.Errorf("listRepoFiles() should not include .git files, found: %s", file)
+			t.Errorf("testPromptManager.ListRepoFiles() should not include .git files, found: %s", file)
 		}
 		if strings.HasPrefix(filepath.Base(file), ".") && file != ".gitignore" {
-			t.Errorf("listRepoFiles() should not include hidden files, found: %s", file)
+			t.Errorf("testPromptManager.ListRepoFiles() should not include hidden files, found: %s", file)
 		}
 	}
 
 	// Check count
 	if len(files) != len(testFiles) {
-		t.Errorf("listRepoFiles() returned %d files, want %d", len(files), len(testFiles))
+		t.Errorf("testPromptManager.ListRepoFiles() returned %d files, want %d", len(files), len(testFiles))
 	}
 }
 
 func TestListRepoFiles_EmptyDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	files, err := listRepoFiles(tmpDir)
+	files, err := testPromptManager.ListRepoFiles(tmpDir)
 	if err != nil {
-		t.Fatalf("listRepoFiles() error = %v", err)
+		t.Fatalf("testPromptManager.ListRepoFiles() error = %v", err)
 	}
 
 	if len(files) != 0 {
-		t.Errorf("listRepoFiles() returned %d files for empty directory, want 0", len(files))
+		t.Errorf("testPromptManager.ListRepoFiles() returned %d files for empty directory, want 0", len(files))
 	}
 }
 
 func TestListRepoFiles_NonexistentDirectory(t *testing.T) {
-	_, err := listRepoFiles("/nonexistent/directory")
+	_, err := testPromptManager.ListRepoFiles("/nonexistent/directory")
 	if err == nil {
-		t.Error("listRepoFiles() should return error for nonexistent directory")
+		t.Error("testPromptManager.ListRepoFiles() should return error for nonexistent directory")
 	}
 }
 
@@ -399,20 +456,20 @@ func TestListRepoFiles_NestedGitDirectory(t *testing.T) {
 	}
 
 	// List files
-	files, err := listRepoFiles(tmpDir)
+	files, err := testPromptManager.ListRepoFiles(tmpDir)
 	if err != nil {
-		t.Fatalf("listRepoFiles() error = %v", err)
+		t.Fatalf("testPromptManager.ListRepoFiles() error = %v", err)
 	}
 
 	// Should only contain normal file
 	if len(files) != 1 {
-		t.Errorf("listRepoFiles() returned %d files, want 1", len(files))
+		t.Errorf("testPromptManager.ListRepoFiles() returned %d files, want 1", len(files))
 	}
 
 	// Should not contain .git files
 	for _, file := range files {
 		if strings.Contains(file, ".git") {
-			t.Errorf("listRepoFiles() should not include .git files, found: %s", file)
+			t.Errorf("testPromptManager.ListRepoFiles() should not include .git files, found: %s", file)
 		}
 	}
 }
@@ -623,20 +680,20 @@ func TestListRepoFiles_ErrorConditions(t *testing.T) {
 				defer tt.cleanup(dir)
 			}
 
-			files, err := listRepoFiles(dir)
+			files, err := testPromptManager.ListRepoFiles(dir)
 
 			if tt.wantErr {
 				if err == nil {
-					t.Error("listRepoFiles() should return error")
+					t.Error("testPromptManager.ListRepoFiles() should return error")
 				}
 			} else {
 				if err != nil {
-					t.Errorf("listRepoFiles() unexpected error: %v", err)
+					t.Errorf("testPromptManager.ListRepoFiles() unexpected error: %v", err)
 				}
 				// Verify no .git files are included
 				for _, file := range files {
 					if strings.Contains(file, ".git") {
-						t.Errorf("listRepoFiles() should not include .git files, found: %s", file)
+						t.Errorf("testPromptManager.ListRepoFiles() should not include .git files, found: %s", file)
 					}
 				}
 			}
@@ -656,13 +713,13 @@ func TestListRepoFiles_LargeDirectory(t *testing.T) {
 		}
 	}
 
-	files, err := listRepoFiles(tmpDir)
+	files, err := testPromptManager.ListRepoFiles(tmpDir)
 	if err != nil {
-		t.Fatalf("listRepoFiles() error: %v", err)
+		t.Fatalf("testPromptManager.ListRepoFiles() error: %v", err)
 	}
 
 	if len(files) != numFiles {
-		t.Errorf("listRepoFiles() returned %d files, want %d", len(files), numFiles)
+		t.Errorf("testPromptManager.ListRepoFiles() returned %d files, want %d", len(files), numFiles)
 	}
 }
 
@@ -689,23 +746,23 @@ func TestListRepoFiles_MixedContent(t *testing.T) {
 		}
 	}
 
-	files, err := listRepoFiles(tmpDir)
+	files, err := testPromptManager.ListRepoFiles(tmpDir)
 	if err != nil {
-		t.Fatalf("listRepoFiles() error: %v", err)
+		t.Fatalf("testPromptManager.ListRepoFiles() error: %v", err)
 	}
 
 	// Should include non-hidden files (including files in hidden directories like .github)
 	// Note: listRepoFiles skips hidden files but not files inside hidden directories
 	expectedFiles := []string{"README.md", "src/main.go", "src/utils/util.go", "docs/guide.md", ".github/workflow.yml"}
 	if len(files) != len(expectedFiles) {
-		t.Errorf("listRepoFiles() returned %d files, want %d files", len(files), len(expectedFiles))
+		t.Errorf("testPromptManager.ListRepoFiles() returned %d files, want %d files", len(files), len(expectedFiles))
 		t.Logf("Got files: %v", files)
 	}
 
 	// Verify no hidden files
 	for _, file := range files {
 		if strings.HasPrefix(filepath.Base(file), ".") {
-			t.Errorf("listRepoFiles() should not include hidden files, found: %s", file)
+			t.Errorf("testPromptManager.ListRepoFiles() should not include hidden files, found: %s", file)
 		}
 	}
 }

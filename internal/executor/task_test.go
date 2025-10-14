@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/cexll/swe/internal/github"
 	"github.com/cexll/swe/internal/provider/claude"
+	"github.com/cexll/swe/internal/taskstore"
 	"github.com/cexll/swe/internal/webhook"
 )
 
@@ -239,7 +241,7 @@ func TestCommitAndPush_PathValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// commitAndPush will fail in test environment without git,
 			// but we're testing parameter validation
-			err := executor.commitAndPush(tt.workdir, tt.branchName, tt.commitMessage)
+			err := executor.commitAndPush(tt.workdir, tt.branchName, tt.commitMessage, true)
 			// Error is expected since we don't have a git repo
 			_ = err
 		})
@@ -328,11 +330,11 @@ func TestCreatePRLink_URLFormat(t *testing.T) {
 		{
 			name:  "branch with slash encodes correctly",
 			repo:  "owner/repo",
-			head:  "pilot/123-456",
+			head:  "swe/issue-123-456",
 			base:  "release/v1",
 			title: "Feature work",
 			wantSubstr: []string{
-				"release%2Fv1...pilot%2F123-456",
+				"release%2Fv1...swe%2Fissue-123-456",
 				"title=Feature+work",
 			},
 		},
@@ -584,6 +586,31 @@ func TestHandleError(t *testing.T) {
 	}
 }
 
+func TestHandleError_NonRetryable(t *testing.T) {
+	executor := &Executor{}
+
+	tracker := github.NewCommentTracker("owner/repo", 123, "testuser")
+	errorMsg := `Claude CLI error: claude CLI execution failed: exit status 1 (output preview: {"result":"API Error: 401 {\"error\":{\"message\":\"无效的令牌\"}}"})`
+
+	err := executor.handleError(nil, tracker, "test-token", errorMsg)
+	if err == nil {
+		t.Fatal("expected non-nil error")
+	}
+
+	var nr *NonRetryableError
+	if !errors.As(err, &nr) {
+		t.Fatalf("expected NonRetryableError, got %T (%v)", err, err)
+	}
+
+	if nr.Error() != errorMsg {
+		t.Fatalf("unexpected error message, got %q want %q", nr.Error(), errorMsg)
+	}
+
+	if tracker.State.Status != github.StatusFailed {
+		t.Fatalf("expected tracker status failed, got %v", tracker.State.Status)
+	}
+}
+
 func TestHandleResponseOnly(t *testing.T) {
 	executor := &Executor{}
 
@@ -627,6 +654,7 @@ func TestHandleResponseOnly(t *testing.T) {
 // mockAppAuth is a mock implementation of github.AuthProvider
 type mockAppAuth struct {
 	GetInstallationTokenFunc func(repo string) (*github.InstallationToken, error)
+	GetInstallationOwnerFunc func(repo string) (string, error)
 }
 
 func (m *mockAppAuth) GetInstallationToken(repo string) (*github.InstallationToken, error) {
@@ -637,6 +665,13 @@ func (m *mockAppAuth) GetInstallationToken(repo string) (*github.InstallationTok
 		Token:     "mock-token",
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 	}, nil
+}
+
+func (m *mockAppAuth) GetInstallationOwner(repo string) (string, error) {
+	if m.GetInstallationOwnerFunc != nil {
+		return m.GetInstallationOwnerFunc(repo)
+	}
+	return "mock-owner", nil
 }
 
 func TestExecutor_Execute_SuccessWithFileChanges(t *testing.T) {
@@ -872,6 +907,399 @@ func TestExecutor_HandleResponseOnly_Integration(t *testing.T) {
 	}
 }
 
+func TestExecutor_ReusesExistingTrackingComment(t *testing.T) {
+	mockGH := github.NewMockGHClient()
+	mockGH.UpdateCommentFunc = func(repo string, commentID int, body, token string) error {
+		return nil
+	}
+	mockGH.CreateCommentFunc = func(repo string, number int, body, token string) (int, error) {
+		t.Errorf("CreateComment should not be called when comment ID already known")
+		return 0, fmt.Errorf("unexpected create")
+	}
+
+	mockAuth := &mockAppAuth{
+		GetInstallationTokenFunc: func(repo string) (*github.InstallationToken, error) {
+			return &github.InstallationToken{Token: "token", ExpiresAt: time.Now().Add(time.Hour)}, nil
+		},
+	}
+
+	executor := NewWithClient(&mockProvider{name: "mock"}, mockAuth, mockGH)
+	executor.cloneFn = func(repo, branch string) (string, func(), error) {
+		return "", func() {}, fmt.Errorf("clone failure")
+	}
+
+	task := &webhook.Task{
+		Repo:          "owner/repo",
+		Number:        42,
+		Branch:        "main",
+		Prompt:        "do something",
+		Username:      "tester",
+		PromptContext: map[string]string{"claude_comment_id": "12345"},
+	}
+
+	err := executor.Execute(context.Background(), task)
+	if err == nil {
+		t.Fatal("Execute() should propagate clone failure")
+	}
+
+	if len(mockGH.CreateCommentCalls) != 0 {
+		t.Fatalf("CreateComment should not be called, got %d calls", len(mockGH.CreateCommentCalls))
+	}
+
+	if len(mockGH.UpdateCommentCalls) == 0 {
+		t.Fatal("Expected UpdateComment to be called for existing tracking comment")
+	}
+
+	call := mockGH.UpdateCommentCalls[0]
+	if call.CommentID != 12345 {
+		t.Errorf("UpdateComment used commentID %d, want 12345", call.CommentID)
+	}
+}
+
+func TestExecutor_Execute_ResponseOnlyFlow(t *testing.T) {
+	// Ensure git is available for initializing repositories
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+
+	tmpDir := t.TempDir()
+
+	commands := [][]string{
+		{"git", "init"},
+		{"git", "config", "user.name", "Test Bot"},
+		{"git", "config", "user.email", "test@example.com"},
+		{"git", "checkout", "-b", "main"},
+	}
+	for _, args := range commands {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = tmpDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("git command failed: %v\n%s", err, output)
+		}
+	}
+
+	readme := filepath.Join(tmpDir, "README.md")
+	if err := os.WriteFile(readme, []byte("# repo"), 0o644); err != nil {
+		t.Fatalf("failed to write README: %v", err)
+	}
+	if err := exec.Command("git", "-C", tmpDir, "add", ".").Run(); err != nil {
+		t.Fatalf("git add failed: %v", err)
+	}
+	if err := exec.Command("git", "-C", tmpDir, "commit", "-m", "initial").Run(); err != nil {
+		t.Fatalf("git commit failed: %v", err)
+	}
+
+	mockGH := github.NewMockGHClient()
+	mockGH.CreateCommentFunc = func(repo string, number int, body, token string) (int, error) {
+		return 123, nil
+	}
+	mockGH.UpdateCommentFunc = func(repo string, commentID int, body, token string) error {
+		return nil
+	}
+	mockGH.AddLabelFunc = func(repo string, number int, label, token string) error {
+		return fmt.Errorf("label failure")
+	}
+
+	mockAuth := &mockAppAuth{}
+	mockProvider := &mockProvider{
+		name: "analysis-only",
+		generateFunc: func(ctx context.Context, req *claude.CodeRequest) (*claude.CodeResponse, error) {
+			return &claude.CodeResponse{
+				Files:   nil,
+				Summary: "No code changes required",
+				CostUSD: 0.01,
+			}, nil
+		},
+	}
+
+	store := taskstore.NewStore()
+	executor := NewWithClient(mockProvider, mockAuth, mockGH)
+	executor.WithStore(store)
+	executor.cloneFn = func(repo, branch string) (string, func(), error) {
+		return tmpDir, func() {}, nil
+	}
+
+	task := &webhook.Task{
+		ID:            "task-42",
+		Repo:          "owner/repo",
+		Number:        42,
+		Branch:        "main",
+		Prompt:        "Provide analysis only",
+		PromptSummary: "Summarized instructions",
+		PromptContext: map[string]string{
+			"claude_comment_id": "555",
+		},
+		Username: "analyst",
+	}
+
+	t.Setenv("DEBUG_GIT_DETECTION", "true")
+	store.Create(&taskstore.Task{ID: task.ID})
+
+	if err := executor.Execute(context.Background(), task); err != nil {
+		t.Fatalf("Execute() returned unexpected error: %v", err)
+	}
+
+	if len(mockGH.UpdateCommentCalls) == 0 {
+		t.Fatalf("expected tracking comment to be updated at least once")
+	}
+	if entry, ok := store.Get(task.ID); !ok || entry.Status != taskstore.StatusCompleted {
+		t.Fatalf("store status = %+v, want completed entry", entry)
+	}
+}
+
+func TestExecutor_Execute_SinglePRWorkflow(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+
+	tmpRoot := t.TempDir()
+	remoteDir := filepath.Join(tmpRoot, "remote.git")
+	runGit(t, "", "git", "init", "--bare", remoteDir)
+
+	seedDir := filepath.Join(tmpRoot, "seed")
+	runGit(t, "", "git", "clone", remoteDir, seedDir)
+	runGit(t, seedDir, "git", "config", "user.name", "Seed User")
+	runGit(t, seedDir, "git", "config", "user.email", "seed@example.com")
+	if err := exec.Command("git", "-C", seedDir, "checkout", "-b", "main").Run(); err != nil {
+		runGit(t, seedDir, "git", "checkout", "main")
+	}
+
+	seedFile := filepath.Join(seedDir, "README.md")
+	if err := os.WriteFile(seedFile, []byte("# seed"), 0o644); err != nil {
+		t.Fatalf("failed to write seed file: %v", err)
+	}
+	runGit(t, seedDir, "git", "add", ".")
+	runGit(t, seedDir, "git", "commit", "-m", "initial commit")
+	runGit(t, seedDir, "git", "push", "-u", "origin", "main")
+
+	mockGH := github.NewMockGHClient()
+	mockGH.CreateCommentFunc = func(repo string, number int, body, token string) (int, error) {
+		return 321, nil
+	}
+	mockGH.UpdateCommentFunc = func(repo string, commentID int, body, token string) error {
+		return nil
+	}
+	mockGH.AddLabelFunc = func(repo string, number int, label, token string) error {
+		return nil
+	}
+
+	mockProvider := &mockProvider{
+		name: "codegen",
+		generateFunc: func(ctx context.Context, req *claude.CodeRequest) (*claude.CodeResponse, error) {
+			return &claude.CodeResponse{
+				Files: []claude.FileChange{
+					{Path: "lib/service.go", Content: "package lib\n\nfunc Service() string { return \"ok\" }\n"},
+				},
+				Summary: "Add service helper",
+				CostUSD: 0.02,
+			}, nil
+		},
+	}
+
+	mockAuth := &mockAppAuth{}
+	store := taskstore.NewStore()
+	executor := NewWithClient(mockProvider, mockAuth, mockGH)
+	executor.WithStore(store)
+	executor.cloneFn = func(repo, branch string) (string, func(), error) {
+		cloneDir := filepath.Join(tmpRoot, fmt.Sprintf("clone-%d", time.Now().UnixNano()))
+		if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+			return "", nil, err
+		}
+		cmd := exec.Command("git", "clone", "--branch", branch, remoteDir, cloneDir)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return "", nil, fmt.Errorf("git clone failed: %w\n%s", err, output)
+		}
+		return cloneDir, func() { os.RemoveAll(cloneDir) }, nil
+	}
+
+	task := &webhook.Task{
+		ID:       "task-single-pr",
+		Repo:     "owner/repo",
+		Number:   7,
+		Branch:   "main",
+		Prompt:   "Implement service helper",
+		Username: "builder",
+	}
+
+	store.Create(&taskstore.Task{ID: task.ID})
+
+	if err := executor.Execute(context.Background(), task); err != nil {
+		t.Fatalf("Execute() failed: %v", err)
+	}
+
+	entry, ok := store.Get(task.ID)
+	if !ok || entry.Status != taskstore.StatusCompleted {
+		t.Fatalf("task store status = %+v, want completed", entry)
+	}
+
+	// Verify that a new branch was pushed to the remote.
+	listCmd := exec.Command("git", "-C", remoteDir, "for-each-ref", "--format=%(refname)", "refs/heads")
+	output, err := listCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("failed to list remote branches: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "swe/") {
+		t.Fatalf("remote branches = %s, expected swe branch", string(output))
+	}
+}
+
+func TestExecutor_CommitSubPR_WritesFiles(t *testing.T) {
+	var commands [][]string
+	stubExecCommand(t, func(name string, args ...string) *exec.Cmd {
+		cmd := append([]string{name}, args...)
+		commands = append(commands, cmd)
+		return exec.Command("bash", "-lc", "true")
+	})
+
+	tmpDir := t.TempDir()
+	executor := &Executor{}
+	subPR := github.SubPR{
+		Name:        "Docs update",
+		Description: "Update docs",
+		Files: []claude.FileChange{
+			{Path: "docs/readme.md", Content: "updated docs"},
+		},
+	}
+	task := &webhook.Task{Prompt: "docs"}
+
+	if err := executor.commitSubPR(tmpDir, "swe/docs", subPR, task); err != nil {
+		t.Fatalf("commitSubPR error: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "docs/readme.md"))
+	if err != nil {
+		t.Fatalf("read file failed: %v", err)
+	}
+	if string(content) != "updated docs" {
+		t.Fatalf("file content = %q, want updated docs", string(content))
+	}
+	if len(commands) < 6 {
+		t.Fatalf("expected git commands to run, got %d", len(commands))
+	}
+}
+
+func TestExecutor_ExecuteMultiPR_CreatesAndSkips(t *testing.T) {
+	stubExecCommand(t, func(string, ...string) *exec.Cmd {
+		return exec.Command("bash", "-lc", "true")
+	})
+
+	mockGH := github.NewMockGHClient()
+	mockGH.UpdateCommentFunc = func(repo string, commentID int, body, token string) error { return nil }
+
+	executor := NewWithClient(&mockProvider{name: "multi"}, &mockAppAuth{}, mockGH)
+	executor.WithStore(taskstore.NewStore())
+
+	task := &webhook.Task{
+		ID:       "multi",
+		Repo:     "owner/repo",
+		Number:   9,
+		Branch:   "main",
+		Username: "user",
+	}
+
+	subPRs := []github.SubPR{
+		{
+			Index:       0,
+			Name:        "Docs PR",
+			Description: "Update docs",
+			Category:    github.CategoryDocs,
+			Files: []claude.FileChange{
+				{Path: "docs/readme.md", Content: "docs"},
+			},
+		},
+		{
+			Index:       1,
+			Name:        "Tests PR",
+			Description: "Update tests",
+			Category:    github.CategoryTests,
+			DependsOn:   []int{0},
+			Files: []claude.FileChange{
+				{Path: "tests/example_test.go", Content: "package tests"},
+			},
+		},
+	}
+
+	plan := &github.SplitPlan{
+		SubPRs:        subPRs,
+		CreationOrder: []int{0, 1},
+	}
+
+	tracker := github.NewCommentTrackerWithClient(task.Repo, task.Number, task.Username, mockGH)
+	tracker.CommentID = 777
+
+	result := &claude.CodeResponse{
+		Summary: "Split summary",
+		CostUSD: 0.15,
+	}
+
+	if err := executor.executeMultiPR(context.Background(), task, t.TempDir(), plan, result, tracker, "token"); err != nil {
+		t.Fatalf("executeMultiPR error: %v", err)
+	}
+
+	if tracker.State.Status != github.StatusCompleted {
+		t.Fatalf("tracker status = %s, want completed", tracker.State.Status)
+	}
+	if len(tracker.State.CreatedPRs) == 0 {
+		t.Fatal("expected created PR records")
+	}
+}
+
+func TestExecutor_GetChangedFiles_DirectoryAndMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, "dir"), 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "dir", "included.txt"), []byte("dir file"), 0o644); err != nil {
+		t.Fatalf("write dir file failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "top.txt"), []byte("top"), 0o644); err != nil {
+		t.Fatalf("write top file failed: %v", err)
+	}
+
+	stubExecCommand(t, func(name string, args ...string) *exec.Cmd {
+		if name == "git" && len(args) >= 2 && args[0] == "status" {
+			return exec.Command("bash", "-lc", "printf '?? dir/\\n M top.txt\\n?? missing.txt\\n?? s\\n'")
+		}
+		return exec.Command("bash", "-lc", "true")
+	})
+
+	executor := &Executor{}
+	changes, err := executor.getChangedFiles(tmpDir)
+	if err != nil {
+		t.Fatalf("getChangedFiles error: %v", err)
+	}
+	if len(changes) != 2 {
+		t.Fatalf("changes len = %d, want 2", len(changes))
+	}
+	paths := []string{changes[0].Path, changes[1].Path}
+	joined := strings.Join(paths, ",")
+	if !strings.Contains(joined, "dir/included.txt") || !strings.Contains(joined, "top.txt") {
+		t.Fatalf("unexpected paths: %v", paths)
+	}
+}
+
+func runGit(t *testing.T, dir string, name string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%s %v failed: %v\n%s", name, args, err, output)
+	}
+}
+
+func stubExecCommand(t *testing.T, handler func(name string, args ...string) *exec.Cmd) {
+	t.Helper()
+	original := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		return handler(name, args...)
+	}
+	t.Cleanup(func() {
+		execCommand = original
+	})
+}
+
 func TestApplyChanges_AdditionalEdgeCases(t *testing.T) {
 	executor := &Executor{}
 
@@ -1047,7 +1475,15 @@ func TestCommitAndPush_EdgeCases(t *testing.T) {
 				t.Fatalf("Failed to create file: %v", err)
 			}
 
-			err = executor.commitAndPush(workdir, tt.branchName, tt.commitMessage)
+			if tt.branchName != "" {
+				cmd := exec.Command("git", "checkout", "-b", tt.branchName)
+				cmd.Dir = workdir
+				if err := cmd.Run(); err != nil {
+					t.Fatalf("Failed to create branch %s: %v", tt.branchName, err)
+				}
+			}
+
+			err = executor.commitAndPush(workdir, tt.branchName, tt.commitMessage, true)
 
 			if tt.wantErrMsg != "" {
 				if err == nil {
@@ -1087,10 +1523,16 @@ func TestCommitAndPush_LongCommitMessage(t *testing.T) {
 		t.Fatalf("Failed to create file: %v", err)
 	}
 
+	checkoutCmd := exec.Command("git", "checkout", "-b", "test-long-msg")
+	checkoutCmd.Dir = tmpDir
+	if err := checkoutCmd.Run(); err != nil {
+		t.Fatalf("Failed to create branch: %v", err)
+	}
+
 	// Test with very long commit message
 	longMessage := strings.Repeat("This is a very long commit message. ", 50) // ~1850 chars
 
-	err := executor.commitAndPush(tmpDir, "test-long-msg", longMessage)
+	err := executor.commitAndPush(tmpDir, "test-long-msg", longMessage, true)
 
 	// Push will fail (no remote) but commit should succeed
 	if err != nil && !strings.Contains(err.Error(), "push") {
@@ -1258,9 +1700,13 @@ func TestExecutor_Execute_CloneFailure(t *testing.T) {
 		t.Errorf("Error should mention clone failure, got: %v", err)
 	}
 
-	// Should update once for working status and once for error details
-	if len(mockGH.UpdateCommentCalls) != 2 {
-		t.Errorf("Expected 2 UpdateComment calls (status + error), got %d", len(mockGH.UpdateCommentCalls))
+	// Should update comment multiple times:
+	// 1. Working status with initial progress
+	// 2. Progress updates during execution
+	// 3. Final error status
+	// With progress tracking, there are more updates than before
+	if len(mockGH.UpdateCommentCalls) < 2 {
+		t.Errorf("Expected at least 2 UpdateComment calls, got %d", len(mockGH.UpdateCommentCalls))
 	}
 }
 
@@ -1337,9 +1783,10 @@ func TestExecutor_Execute_NoFileChanges_WithMockClone(t *testing.T) {
 		t.Errorf("Execute() should succeed for response-only (no code changes): %v", err)
 	}
 
-	// Should have updated comment for status transition and completion summary
-	if len(mockGH.UpdateCommentCalls) != 2 {
-		t.Errorf("Expected 2 UpdateComment calls, got %d", len(mockGH.UpdateCommentCalls))
+	// Should have updated comment for status transitions, progress updates, and completion
+	// With progress tracking, there are more updates than before
+	if len(mockGH.UpdateCommentCalls) < 2 {
+		t.Errorf("Expected at least 2 UpdateComment calls, got %d", len(mockGH.UpdateCommentCalls))
 	}
 
 	// Verify the final update call contains the summary
@@ -1353,8 +1800,20 @@ func TestExecutor_Execute_NoFileChanges_WithMockClone(t *testing.T) {
 
 // TestExecutor_Execute_DetectChangesError tests Execute() handling of detectGitChanges errors
 func TestExecutor_Execute_DetectChangesError_WithMockClone(t *testing.T) {
-	// Create non-git directory
+	// Prepare temporary git repo so branch creation succeeds
 	tmpDir := t.TempDir()
+	cmds := [][]string{
+		{"git", "init"},
+		{"git", "config", "user.name", "Test"},
+		{"git", "config", "user.email", "test@test.com"},
+	}
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = tmpDir
+		if err := cmd.Run(); err != nil {
+			t.Skipf("Git not available: %v", err)
+		}
+	}
 
 	mockGH := github.NewMockGHClient()
 	mockGH.CreateCommentFunc = func(repo string, number int, body, token string) (int, error) {
@@ -1366,8 +1825,14 @@ func TestExecutor_Execute_DetectChangesError_WithMockClone(t *testing.T) {
 
 	mockAuth := &mockAppAuth{}
 
+	tt := t
+
 	mockProvider := &mockProvider{
 		generateFunc: func(ctx context.Context, req *claude.CodeRequest) (*claude.CodeResponse, error) {
+			// Remove git metadata to force detectGitChanges failure later
+			if err := os.RemoveAll(filepath.Join(req.RepoPath, ".git")); err != nil {
+				tt.Fatalf("failed to remove git directory: %v", err)
+			}
 			return &claude.CodeResponse{
 				Files:   []claude.FileChange{{Path: "test.go", Content: "package test"}},
 				Summary: "Added file",
@@ -1462,9 +1927,155 @@ func TestExecutor_Execute_ProviderGenerateError_WithMockClone(t *testing.T) {
 		t.Errorf("Error should mention provider failure, got: %v", err)
 	}
 
-	// Should update once for status and once for error
-	if len(mockGH.UpdateCommentCalls) != 2 {
-		t.Errorf("Expected 2 UpdateComment calls (status + error), got %d", len(mockGH.UpdateCommentCalls))
+	// Should update for status transitions, progress, and error
+	// With progress tracking, there are more updates than before
+	if len(mockGH.UpdateCommentCalls) < 2 {
+		t.Errorf("Expected at least 2 UpdateComment calls, got %d", len(mockGH.UpdateCommentCalls))
+	}
+}
+
+func TestExecutor_WithStore(t *testing.T) {
+	executor := New(&mockProvider{}, nil)
+	store := taskstore.NewStore()
+
+	if executor.WithStore(store) != executor {
+		t.Fatal("WithStore should return the executor instance for chaining")
+	}
+	if executor.store != store {
+		t.Fatal("WithStore should assign the provided store")
+	}
+}
+
+func TestExecutor_UpdateStatusAndAddLog(t *testing.T) {
+	store := taskstore.NewStore()
+	executor := New(&mockProvider{}, nil).WithStore(store)
+
+	store.Create(&taskstore.Task{ID: "task-1"})
+	task := &webhook.Task{ID: "task-1"}
+
+	executor.updateStatus(task, taskstore.StatusRunning)
+	stored, ok := store.Get("task-1")
+	if !ok {
+		t.Fatal("Expected task to exist in store")
+	}
+	if stored.Status != taskstore.StatusRunning {
+		t.Fatalf("Status = %s, want %s", stored.Status, taskstore.StatusRunning)
+	}
+
+	executor.addLog(task, "info", "hello %s", "world")
+	if len(stored.Logs) != 1 {
+		t.Fatalf("Expected 1 log entry, got %d", len(stored.Logs))
+	}
+	if stored.Logs[0].Message != "hello world" {
+		t.Fatalf("Log message = %q, want %q", stored.Logs[0].Message, "hello world")
+	}
+}
+
+func TestExecutor_UpdateStatus_NoStoreOrTask(t *testing.T) {
+	executor := New(&mockProvider{}, nil)
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("updateStatus should not panic without store, panic: %v", r)
+		}
+	}()
+	executor.updateStatus(nil, taskstore.StatusCompleted)
+}
+
+func TestExecutor_ComposeDiscussionSection(t *testing.T) {
+	mockGH := github.NewMockGHClient()
+	mockGH.ListIssueCommentsFunc = func(repo string, number int, token string) ([]github.IssueComment, error) {
+		return []github.IssueComment{
+			{
+				Author:    "alice",
+				Body:      "Looks good",
+				CreatedAt: time.Date(2025, 10, 10, 10, 0, 0, 0, time.UTC),
+			},
+		}, nil
+	}
+	mockGH.ListReviewCommentsFunc = func(repo string, number int, token string) ([]github.ReviewComment, error) {
+		return []github.ReviewComment{
+			{
+				Author:    "bob",
+				Body:      "Need a fix",
+				Path:      "main.go",
+				DiffHunk:  "@@ -1 +1 @@",
+				CreatedAt: time.Date(2025, 10, 10, 11, 0, 0, 0, time.UTC),
+			},
+		}, nil
+	}
+
+	executor := NewWithClient(&mockProvider{}, nil, mockGH)
+
+	task := &webhook.Task{Repo: "owner/repo", Number: 1, IsPR: true}
+	result := executor.composeDiscussionSection(task, "token")
+
+	if !strings.Contains(result, "## Discussion") {
+		t.Fatalf("composeDiscussionSection output missing header:\n%s", result)
+	}
+	if !strings.Contains(result, "@alice (2025-10-10T10:00:00Z):") {
+		t.Fatalf("Issue comment not rendered: %s", result)
+	}
+	if !strings.Contains(result, "_File: main.go_") {
+		t.Fatalf("Review metadata missing: %s", result)
+	}
+	if !strings.Contains(result, "```diff") {
+		t.Fatalf("Diff hunk missing fenced code block:\n%s", result)
+	}
+}
+
+func TestFormatDiscussion_SortingAndDefaults(t *testing.T) {
+	issueComments := []github.IssueComment{
+		{
+			Author:    "",
+			Body:      "First",
+			CreatedAt: time.Date(2025, 10, 9, 10, 0, 0, 0, time.UTC),
+		},
+	}
+	reviewComments := []github.ReviewComment{
+		{
+			Author:    "carol",
+			Body:      "Second",
+			Path:      "core.go",
+			CreatedAt: time.Time{}, // zero timestamp to check fallback ordering
+		},
+	}
+
+	output := formatDiscussion(issueComments, reviewComments)
+
+	if !strings.Contains(output, "@unknown (2025-10-09T10:00:00Z):") {
+		t.Fatalf("Missing normalized author or timestamp:\n%s", output)
+	}
+	if !strings.Contains(output, "@carol (unknown):") {
+		t.Fatalf("Missing fallback timestamp:\n%s", output)
+	}
+
+	firstIdx := strings.Index(output, "First")
+	secondIdx := strings.Index(output, "Second")
+	if firstIdx == -1 || secondIdx == -1 || secondIdx > firstIdx {
+		t.Fatalf("Entries not ordered as expected:\n%s", output)
+	}
+}
+
+func TestInjectDiscussion(t *testing.T) {
+	base := "Intro\n\n---\n\nBody"
+	discussion := "## Discussion\n@alice"
+	out := injectDiscussion(base, discussion)
+
+	if !strings.Contains(out, discussion) {
+		t.Fatalf("Discussion block missing in output:\n%s", out)
+	}
+	if strings.Count(out, "---") != 1 {
+		t.Fatalf("Separator count incorrect:\n%s", out)
+	}
+
+	noSeparator := "Intro only"
+	out = injectDiscussion(noSeparator, discussion)
+	if !strings.Contains(out, "Intro only") || !strings.Contains(out, discussion) {
+		t.Fatalf("Expected discussion appended when separator missing:\n%s", out)
+	}
+
+	if injectDiscussion("   ", "   ") != "   " {
+		t.Fatalf("Expected original prompt when discussion empty")
 	}
 }
 
@@ -1610,9 +2221,10 @@ func TestExecutor_Execute_UpdateCommentWarning_WithMockClone(t *testing.T) {
 		t.Errorf("Execute() should succeed even when UpdateComment fails: %v", err)
 	}
 
-	// UpdateComment should have been called twice (status + final response)
-	if len(mockGH.UpdateCommentCalls) != 2 {
-		t.Errorf("Expected 2 UpdateComment calls, got %d", len(mockGH.UpdateCommentCalls))
+	// UpdateComment should have been called multiple times (status + progress + final response)
+	// With progress tracking, there are more updates than before
+	if len(mockGH.UpdateCommentCalls) < 2 {
+		t.Errorf("Expected at least 2 UpdateComment calls, got %d", len(mockGH.UpdateCommentCalls))
 	}
 }
 
@@ -1836,7 +2448,7 @@ func TestFormatDiscussion_WithDiffHunk(t *testing.T) {
 }
 
 func TestInjectDiscussionWithSeparator(t *testing.T) {
-	base := "# Issue: Bug\n\nSteps to reproduce\n\n---\n\nFix it quickly"
+	base := "Fix it quickly\n\n---\n\n# Issue Context\n\n## Title\nBug\n\n## Body\nSteps to reproduce"
 	discussion := "## Discussion\n\n@alice (2025-10-12T01:00:00Z):\nInvestigating now"
 
 	result := injectDiscussion(base, discussion)
@@ -1844,10 +2456,14 @@ func TestInjectDiscussionWithSeparator(t *testing.T) {
 	if strings.Count(result, "## Discussion") != 1 {
 		t.Fatalf("Expected single discussion section, got: %q", result)
 	}
-	sepIndex := strings.Index(result, "\n\n---\n\n")
+	instructionIndex := strings.Index(result, "Fix it quickly")
 	discIndex := strings.Index(result, "## Discussion")
-	if discIndex == -1 || sepIndex == -1 || discIndex > sepIndex {
-		t.Fatalf("Discussion section not inserted before user instruction: %q", result)
+	sepIndex := strings.Index(result, "\n\n---\n\n")
+	if discIndex == -1 || sepIndex == -1 || instructionIndex == -1 {
+		t.Fatalf("Missing expected sections: %q", result)
+	}
+	if !(instructionIndex < discIndex && discIndex < sepIndex) {
+		t.Fatalf("Discussion should appear between instruction and context: %q", result)
 	}
 }
 
@@ -1955,7 +2571,27 @@ func TestExecutor_Execute_IncludesDiscussionContext(t *testing.T) {
 	}
 
 	mockClone := func(repo, branch string) (string, func(), error) {
-		return t.TempDir(), func() {}, nil
+		dir := t.TempDir()
+		cmds := [][]string{
+			{"git", "init"},
+			{"git", "config", "user.name", "Test"},
+			{"git", "config", "user.email", "test@test.com"},
+		}
+		for _, args := range cmds {
+			cmd := exec.Command(args[0], args[1:]...)
+			cmd.Dir = dir
+			if err := cmd.Run(); err != nil {
+				return "", nil, err
+			}
+		}
+		if branch != "" {
+			cmd := exec.Command("git", "checkout", "-b", branch)
+			cmd.Dir = dir
+			if err := cmd.Run(); err != nil {
+				return "", nil, err
+			}
+		}
+		return dir, func() {}, nil
 	}
 
 	executor := NewWithClient(mockProvider, mockAuth, mockGH)
@@ -1965,7 +2601,7 @@ func TestExecutor_Execute_IncludesDiscussionContext(t *testing.T) {
 		Repo:       "owner/repo",
 		Number:     777,
 		Branch:     "main",
-		Prompt:     "# Issue: Login bug\n\nFix login crash\n\n---\n\nImplement fix ASAP",
+		Prompt:     "Implement fix ASAP\n\n---\n\n# Issue Context\n\n## Title\nLogin bug\n\n## Body\nFix login crash",
 		IssueTitle: "Login bug",
 		IssueBody:  "Fix login crash",
 		IsPR:       true,
@@ -1986,8 +2622,8 @@ func TestExecutor_Execute_IncludesDiscussionContext(t *testing.T) {
 	if !strings.Contains(capturedPrompt, "Nit: rename variable") {
 		t.Fatalf("Review comment not included in prompt: %q", capturedPrompt)
 	}
-	if strings.Index(capturedPrompt, "## Discussion") > strings.Index(capturedPrompt, "Implement fix ASAP") {
-		t.Fatalf("Discussion section should appear before user instructions: %q", capturedPrompt)
+	if strings.Index(capturedPrompt, "## Discussion") < strings.Index(capturedPrompt, "Implement fix ASAP") {
+		t.Fatalf("Discussion section should follow user instructions: %q", capturedPrompt)
 	}
 	if strings.Count(capturedPrompt, "\n\n---\n\n") != 1 {
 		t.Fatalf("Instruction separator should remain single occurrence: %q", capturedPrompt)
@@ -2235,5 +2871,184 @@ func TestApplyChangesEnhanced(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestFormatCommitMessage(t *testing.T) {
+	executor := &Executor{}
+
+	tests := []struct {
+		name    string
+		summary string
+		task    *webhook.Task
+		want    []string // Expected parts in the commit message
+		notWant []string // Parts that should NOT be in the commit message
+	}{
+		{
+			name:    "basic summary only",
+			summary: "Fix bug in parser",
+			task: &webhook.Task{
+				Number:   0,
+				IsPR:     false,
+				Username: "",
+			},
+			want: []string{
+				"Fix bug in parser",
+				"Generated with [SWE Agent](https://github.com/cexll/swe-agent)",
+			},
+			notWant: []string{
+				"Fixes #",
+				"Co-authored-by:",
+			},
+		},
+		{
+			name:    "with issue number",
+			summary: "Add new feature",
+			task: &webhook.Task{
+				Number:   123,
+				IsPR:     false,
+				Username: "",
+			},
+			want: []string{
+				"Add new feature",
+				"Fixes #123",
+				"Generated with [SWE Agent](https://github.com/cexll/swe-agent)",
+			},
+		},
+		{
+			name:    "with PR number (should not include Fixes)",
+			summary: "Update documentation",
+			task: &webhook.Task{
+				Number:   456,
+				IsPR:     true,
+				Username: "",
+			},
+			want: []string{
+				"Update documentation",
+				"Generated with [SWE Agent](https://github.com/cexll/swe-agent)",
+			},
+			notWant: []string{
+				"Fixes #456",
+			},
+		},
+		{
+			name:    "with username",
+			summary: "Refactor code",
+			task: &webhook.Task{
+				Number:   789,
+				IsPR:     false,
+				Username: "testuser",
+			},
+			want: []string{
+				"Refactor code",
+				"Fixes #789",
+				"Generated with [SWE Agent](https://github.com/cexll/swe-agent)",
+				"Co-authored-by: testuser <testuser@users.noreply.github.com>",
+			},
+		},
+		{
+			name:    "with Unknown username (should not include Co-authored-by)",
+			summary: "Fix typo",
+			task: &webhook.Task{
+				Number:   101,
+				IsPR:     false,
+				Username: "Unknown",
+			},
+			want: []string{
+				"Fix typo",
+				"Fixes #101",
+				"Generated with [SWE Agent](https://github.com/cexll/swe-agent)",
+			},
+			notWant: []string{
+				"Co-authored-by: Unknown",
+			},
+		},
+		{
+			name:    "full example with all fields",
+			summary: "Implement authentication\n\nThis adds JWT-based authentication to the API.",
+			task: &webhook.Task{
+				Number:   999,
+				IsPR:     false,
+				Username: "developer",
+			},
+			want: []string{
+				"Implement authentication",
+				"This adds JWT-based authentication to the API.",
+				"Fixes #999",
+				"Generated with [SWE Agent](https://github.com/cexll/swe-agent)",
+				"Co-authored-by: developer <developer@users.noreply.github.com>",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := executor.formatCommitMessage(tt.summary, tt.task)
+
+			// Check that all wanted parts are present
+			for _, want := range tt.want {
+				if !strings.Contains(result, want) {
+					t.Errorf("formatCommitMessage() missing expected part:\nwant: %q\ngot: %q", want, result)
+				}
+			}
+
+			// Check that unwanted parts are NOT present
+			for _, notWant := range tt.notWant {
+				if strings.Contains(result, notWant) {
+					t.Errorf("formatCommitMessage() contains unexpected part:\ndon't want: %q\ngot: %q", notWant, result)
+				}
+			}
+
+			// Verify the message has proper double-newline separation
+			if tt.task.Number > 0 || tt.task.Username != "" && tt.task.Username != "Unknown" {
+				if !strings.Contains(result, "\n\n") {
+					t.Errorf("formatCommitMessage() should have double-newline separation, got: %q", result)
+				}
+			}
+		})
+	}
+}
+
+func TestPrepareBranchCreatesNewBranchForIssue(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	runGit(t, tmpDir, "git", "init")
+	runGit(t, tmpDir, "git", "config", "user.name", "Tester")
+	runGit(t, tmpDir, "git", "config", "user.email", "tester@example.com")
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "README.md"), []byte("initial\n"), 0o644); err != nil {
+		t.Fatalf("failed to write seed file: %v", err)
+	}
+	runGit(t, tmpDir, "git", "add", ".")
+	runGit(t, tmpDir, "git", "commit", "-m", "seed")
+	runGit(t, tmpDir, "git", "branch", "-M", "main")
+
+	executor := &Executor{}
+	task := &webhook.Task{
+		Number: 987,
+		IsPR:   false,
+	}
+
+	branchName, isNewBranch, err := executor.prepareBranch(tmpDir, task)
+	if err != nil {
+		t.Fatalf("prepareBranch returned error: %v", err)
+	}
+	if !isNewBranch {
+		t.Fatal("prepareBranch should mark new branch for issues")
+	}
+	expectedPrefix := fmt.Sprintf("swe/issue-%d-", task.Number)
+	if !strings.HasPrefix(branchName, expectedPrefix) {
+		t.Fatalf("branch name %q should start with %q", branchName, expectedPrefix)
+	}
+
+	cmd := exec.Command("git", "branch", "--show-current")
+	cmd.Dir = tmpDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git branch --show-current failed: %v\n%s", err, out)
+	}
+	current := strings.TrimSpace(string(out))
+	if current != branchName {
+		t.Fatalf("expected HEAD on %q, got %q", branchName, current)
 	}
 }

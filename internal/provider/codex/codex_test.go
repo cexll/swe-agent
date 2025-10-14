@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cexll/swe/internal/prompt"
 	"github.com/cexll/swe/internal/provider/claude"
 )
 
@@ -39,7 +40,8 @@ func TestNewProvider_APIKey(t *testing.T) {
 func TestListRepoFiles(t *testing.T) {
 	// Test list repo files functionality (no need to test CLI execution)
 	// This is a unit test for the helper function
-	files, err := listRepoFiles(".")
+	manager := prompt.NewManager()
+	files, err := manager.ListRepoFiles(".")
 	if err != nil {
 		t.Fatalf("listRepoFiles() error = %v", err)
 	}
@@ -82,6 +84,7 @@ func TestInvokeCodex_CommandConstruction(t *testing.T) {
 		"codex",
 		"exec",
 		"-m", "gpt-5-codex",
+		"-c", `model_reasoning_effort="high"`,
 		"--dangerously-bypass-approvals-and-sandbox",
 		"-C", "/tmp/test",
 		"test prompt",

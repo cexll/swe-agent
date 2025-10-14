@@ -195,3 +195,54 @@ func TestDispatcherQueueFull(t *testing.T) {
 		t.Fatalf("Expected ErrQueueFull, got %v", err)
 	}
 }
+
+func TestNormalizeConfigDefaults(t *testing.T) {
+	cfg := normalizeConfig(Config{})
+	if cfg.Workers != 4 || cfg.QueueSize != 16 || cfg.MaxAttempts != 3 {
+		t.Fatalf("normalizeConfig did not apply defaults: %+v", cfg)
+	}
+	if cfg.InitialBackoff != 15*time.Second || cfg.MaxBackoff != 5*time.Minute {
+		t.Fatalf("normalizeConfig applied unexpected backoff defaults: %+v", cfg)
+	}
+	if cfg.BackoffMultiplier != 2 {
+		t.Fatalf("expected default multiplier 2, got %f", cfg.BackoffMultiplier)
+	}
+}
+
+func TestDispatcherBackoffDuration(t *testing.T) {
+	d := &Dispatcher{
+		cfg: Config{
+			InitialBackoff:    1 * time.Second,
+			BackoffMultiplier: 2,
+			MaxBackoff:        4 * time.Second,
+		},
+	}
+
+	if got := d.backoffDuration(1); got != 1*time.Second {
+		t.Fatalf("backoff attempt 1 = %s, want 1s", got)
+	}
+	if got := d.backoffDuration(3); got != 4*time.Second {
+		t.Fatalf("backoff attempt 3 = %s, want cap at 4s", got)
+	}
+}
+
+func TestDispatcherHandleRetryMaxAttempts(t *testing.T) {
+	d := &Dispatcher{
+		cfg: Config{MaxAttempts: 1},
+	}
+	item := &queueItem{
+		task:    &webhook.Task{Repo: "owner/repo", Number: 1},
+		attempt: 1,
+	}
+	d.handleRetry(item, errors.New("fail"))
+	// No panic and no enqueue expected
+}
+
+func TestDispatcherEnqueueRetryStopsWhenClosed(t *testing.T) {
+	d := &Dispatcher{
+		queue:  make(chan *queueItem, 1),
+		stopCh: make(chan struct{}),
+	}
+	close(d.stopCh)
+	d.enqueueRetry(&queueItem{task: &webhook.Task{}, attempt: 2})
+}
