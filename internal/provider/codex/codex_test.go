@@ -178,6 +178,17 @@ func main() {
 			wantErr:     false,
 		},
 		{
+			name: "placeholder file ignored when other files valid",
+			response: `<file path="path/to/file.ext"><content>
+... full file content here ...
+</content></file>
+<file path="main.go"><content>package main</content></file>
+<summary>Created main.go</summary>`,
+			wantFiles:   1,
+			wantSummary: "Created main.go",
+			wantErr:     false,
+		},
+		{
 			name:        "raw text (no tags)",
 			response:    `This is a raw response without tags.`,
 			wantFiles:   0,
@@ -212,9 +223,9 @@ Brief description of changes made
 <summary>
 Brief description of changes made
 </summary>`,
-			wantFiles:   0,
-			wantSummary: "",
-			wantErr:     true,
+			wantFiles:   1,
+			wantSummary: "Code changes applied",
+			wantErr:     false,
 		},
 		{
 			name: "relative placeholder path and content",
