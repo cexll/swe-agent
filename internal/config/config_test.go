@@ -120,6 +120,22 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
+			name: "private key with escaped newlines and quotes",
+			env: map[string]string{
+				"GITHUB_APP_ID":         "123456",
+				"GITHUB_PRIVATE_KEY":    "\"line1\\nline2\\nline3\"",
+				"GITHUB_WEBHOOK_SECRET": "test-webhook-secret",
+				"ANTHROPIC_API_KEY":     "sk-ant-test",
+			},
+			wantErr: false,
+			check: func(t *testing.T, cfg *Config) {
+				expected := "line1\nline2\nline3"
+				if cfg.GitHubPrivateKey != expected {
+					t.Errorf("GitHubPrivateKey = %q, want %q", cfg.GitHubPrivateKey, expected)
+				}
+			},
+		},
+		{
 			name: "missing GITHUB_APP_ID",
 			env: map[string]string{
 				"GITHUB_PRIVATE_KEY":    "test-private-key",

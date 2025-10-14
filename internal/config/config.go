@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -47,10 +48,12 @@ type Config struct {
 
 // Load loads configuration from environment variables
 func Load() (*Config, error) {
+	privateKey := normalizePrivateKey(os.Getenv("GITHUB_PRIVATE_KEY"))
+
 	cfg := &Config{
 		Port:                        getEnvInt("PORT", 8000),
 		GitHubAppID:                 os.Getenv("GITHUB_APP_ID"),
-		GitHubPrivateKey:            os.Getenv("GITHUB_PRIVATE_KEY"),
+		GitHubPrivateKey:            privateKey,
 		GitHubWebhookSecret:         os.Getenv("GITHUB_WEBHOOK_SECRET"),
 		Provider:                    getEnv("PROVIDER", "claude"),
 		ClaudeAPIKey:                os.Getenv("ANTHROPIC_API_KEY"),
@@ -74,6 +77,31 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func normalizePrivateKey(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+
+	if strings.HasPrefix(trimmed, "\"") && strings.HasSuffix(trimmed, "\"") {
+		trimmed = strings.TrimPrefix(trimmed, "\"")
+		trimmed = strings.TrimSuffix(trimmed, "\"")
+	}
+	if strings.HasPrefix(trimmed, "'") && strings.HasSuffix(trimmed, "'") {
+		trimmed = strings.TrimPrefix(trimmed, "'")
+		trimmed = strings.TrimSuffix(trimmed, "'")
+	}
+
+	trimmed = strings.ReplaceAll(trimmed, "\r\n", "\n")
+	trimmed = strings.ReplaceAll(trimmed, "\r", "\n")
+	if strings.Contains(trimmed, "\\n") {
+		trimmed = strings.ReplaceAll(trimmed, "\\r", "")
+		trimmed = strings.ReplaceAll(trimmed, "\\n", "\n")
+	}
+
+	return trimmed
 }
 
 // validate checks that all required configuration is present
