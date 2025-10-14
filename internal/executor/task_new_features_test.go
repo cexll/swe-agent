@@ -48,7 +48,8 @@ func TestExecutor_WithDisallowedTools(t *testing.T) {
 	}
 
 	// Execute with custom clone function that avoids actual git operations
-	executor.cloneFn = func(repo, branch string) (workdir string, cleanup func(), err error) {
+	executor.cloneFn = func(repo, branch, token string) (workdir string, cleanup func(), err error) {
+		_ = token
 		tmpDir, _ := os.MkdirTemp("", "test-clone-*")
 		// Initialize git repo
 		cmd := exec.Command("git", "init")
@@ -124,7 +125,8 @@ func TestExecutor_SmartBranchStrategy_OpenPR(t *testing.T) {
 	}
 
 	executor := NewWithClient(mockProvider, mockAuth, mockGH)
-	executor.cloneFn = func(repo, branch string) (workdir string, cleanup func(), err error) {
+	executor.cloneFn = func(repo, branch, token string) (workdir string, cleanup func(), err error) {
+		_ = token
 		return tmpDir, func() {}, nil
 	}
 
@@ -207,7 +209,8 @@ func TestExecutor_SmartBranchStrategy_NewBranch(t *testing.T) {
 	}
 
 	executor := NewWithClient(mockProvider, mockAuth, mockGH)
-	executor.cloneFn = func(repo, branch string) (workdir string, cleanup func(), err error) {
+	executor.cloneFn = func(repo, branch, token string) (workdir string, cleanup func(), err error) {
+		_ = token
 		return tmpDir, func() {}, nil
 	}
 

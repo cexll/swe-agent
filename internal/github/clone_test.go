@@ -15,14 +15,19 @@ func TestClone_UsesRunRepoCloneSuccess(t *testing.T) {
 	orig := runRepoClone
 	defer func() { runRepoClone = orig }()
 
+	const expectedToken = "token-123"
+
 	callCount := 0
-	runRepoClone = func(repo, branch, dest string) error {
+	runRepoClone = func(repo, branch, token, dest string) error {
 		callCount++
 		if repo != "owner/repo" {
 			return fmt.Errorf("unexpected repo %s", repo)
 		}
 		if branch != "main" {
 			return fmt.Errorf("unexpected branch %s", branch)
+		}
+		if token != expectedToken {
+			return fmt.Errorf("unexpected token %s", token)
 		}
 		// Simulate gh clone by creating the target directory.
 		if err := os.MkdirAll(filepath.Join(dest, ".git"), 0o755); err != nil {
@@ -31,7 +36,7 @@ func TestClone_UsesRunRepoCloneSuccess(t *testing.T) {
 		return nil
 	}
 
-	workdir, cleanup, err := Clone("owner/repo", "main")
+	workdir, cleanup, err := Clone("owner/repo", "main", expectedToken)
 	if err != nil {
 		t.Fatalf("Clone() error = %v, want nil", err)
 	}
@@ -54,11 +59,11 @@ func TestClone_ReturnsErrorOnFailure(t *testing.T) {
 	orig := runRepoClone
 	defer func() { runRepoClone = orig }()
 
-	runRepoClone = func(repo, branch, dest string) error {
+	runRepoClone = func(repo, branch, token, dest string) error {
 		return fmt.Errorf("fatal: cannot clone %s", repo)
 	}
 
-	workdir, cleanup, err := Clone("owner/repo", "dev")
+	workdir, cleanup, err := Clone("owner/repo", "dev", "token")
 	if err == nil {
 		t.Fatal("Clone() error = nil, want failure")
 	}
@@ -96,6 +101,13 @@ func skipIfNetworkUnavailable(t *testing.T) {
 	}
 }
 
+func getCloneTestToken() string {
+	if token := os.Getenv("GH_TOKEN"); token != "" {
+		return token
+	}
+	return os.Getenv("GITHUB_TOKEN")
+}
+
 func TestClone_ErrorHandling(t *testing.T) {
 	skipIfNetworkUnavailable(t)
 
@@ -131,7 +143,12 @@ func TestClone_ErrorHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			workdir, cleanup, err := Clone(tt.repo, tt.branch)
+			token := os.Getenv("GH_TOKEN")
+			if token == "" {
+				token = os.Getenv("GITHUB_TOKEN")
+			}
+
+			workdir, cleanup, err := Clone(tt.repo, tt.branch, token)
 
 			if tt.wantErr {
 				if err == nil {
@@ -182,7 +199,7 @@ func TestClone_WorkdirFormat(t *testing.T) {
 	repo := "octocat/Hello-World"
 	branch := "master"
 
-	workdir, cleanup, err := Clone(repo, branch)
+	workdir, cleanup, err := Clone(repo, branch, getCloneTestToken())
 	if err != nil {
 		// If gh CLI not available, skip test
 		if strings.Contains(err.Error(), "executable file not found") {
@@ -212,7 +229,7 @@ func TestClone_CleanupFunction(t *testing.T) {
 	repo := "octocat/Hello-World"
 	branch := "master"
 
-	workdir, cleanup, err := Clone(repo, branch)
+	workdir, cleanup, err := Clone(repo, branch, getCloneTestToken())
 	if err != nil {
 		if strings.Contains(err.Error(), "executable file not found") {
 			t.Skip("gh CLI not available")
@@ -243,7 +260,7 @@ func TestClone_GitDirectoryExists(t *testing.T) {
 	repo := "octocat/Hello-World"
 	branch := "master"
 
-	workdir, cleanup, err := Clone(repo, branch)
+	workdir, cleanup, err := Clone(repo, branch, getCloneTestToken())
 	if err != nil {
 		if strings.Contains(err.Error(), "executable file not found") {
 			t.Skip("gh CLI not available")
@@ -270,7 +287,7 @@ func TestClone_RetryLogic(t *testing.T) {
 	repo := "definitely/nonexistent-repo-xyz-123-456"
 	branch := "main"
 
-	_, cleanup, err := Clone(repo, branch)
+	_, cleanup, err := Clone(repo, branch, getCloneTestToken())
 	if err == nil {
 		t.Error("Clone() should fail for nonexistent repo")
 		if cleanup != nil {

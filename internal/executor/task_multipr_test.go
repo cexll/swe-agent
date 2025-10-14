@@ -84,7 +84,8 @@ func TestExecutor_ExecuteMultiPR_IndependentPRs(t *testing.T) {
 		},
 	}
 
-	mockClone := func(repo, branch string) (string, func(), error) {
+	mockClone := func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		return tmpDir, func() {}, nil
 	}
 
@@ -196,7 +197,8 @@ func TestExecutor_ExecuteMultiPR_WithDependencies(t *testing.T) {
 		},
 	}
 
-	mockClone := func(repo, branch string) (string, func(), error) {
+	mockClone := func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		return tmpDir, func() {}, nil
 	}
 
@@ -295,7 +297,8 @@ func TestExecutor_ExecuteMultiPR_PartialFailure(t *testing.T) {
 		},
 	}
 
-	mockClone := func(repo, branch string) (string, func(), error) {
+	mockClone := func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		return tmpDir, func() {}, nil
 	}
 

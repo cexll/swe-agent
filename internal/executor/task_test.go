@@ -56,6 +56,23 @@ func TestNew(t *testing.T) {
 	}
 }
 
+func TestApplyChangesDebugLogging(t *testing.T) {
+	executor := New(&mockProvider{}, nil)
+	dir := t.TempDir()
+
+	os.Setenv("DEBUG_CLAUDE_PARSING", "true")
+	defer os.Unsetenv("DEBUG_CLAUDE_PARSING")
+
+	change := claude.FileChange{Path: "debug.go", Content: "package debug\n"}
+	if err := executor.applyChanges(dir, []claude.FileChange{change}); err != nil {
+		t.Fatalf("applyChanges with debug logging failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "debug.go")); err != nil {
+		t.Fatalf("debug.go should exist: %v", err)
+	}
+}
+
 func TestApplyChanges(t *testing.T) {
 	// Create temporary directory
 	tmpDir := t.TempDir()
@@ -944,7 +961,8 @@ func TestExecutor_ReusesExistingTrackingComment(t *testing.T) {
 	}
 
 	executor := NewWithClient(&mockProvider{name: "mock"}, mockAuth, mockGH)
-	executor.cloneFn = func(repo, branch string) (string, func(), error) {
+	executor.cloneFn = func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		return "", func() {}, fmt.Errorf("clone failure")
 	}
 
@@ -1035,7 +1053,8 @@ func TestExecutor_Execute_ResponseOnlyFlow(t *testing.T) {
 	store := taskstore.NewStore()
 	executor := NewWithClient(mockProvider, mockAuth, mockGH)
 	executor.WithStore(store)
-	executor.cloneFn = func(repo, branch string) (string, func(), error) {
+	executor.cloneFn = func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		return tmpDir, func() {}, nil
 	}
 
@@ -1120,7 +1139,8 @@ func TestExecutor_Execute_SinglePRWorkflow(t *testing.T) {
 	store := taskstore.NewStore()
 	executor := NewWithClient(mockProvider, mockAuth, mockGH)
 	executor.WithStore(store)
-	executor.cloneFn = func(repo, branch string) (string, func(), error) {
+	executor.cloneFn = func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		cloneDir := filepath.Join(tmpRoot, fmt.Sprintf("clone-%d", time.Now().UnixNano()))
 		if err := os.MkdirAll(cloneDir, 0o755); err != nil {
 			return "", nil, err
@@ -1637,7 +1657,10 @@ func TestExecutor_Execute_HappyPath_WithMockClone(t *testing.T) {
 
 	// Mock clone function
 	cleanupCalled := false
-	mockClone := func(repo, branch string) (string, func(), error) {
+	mockClone := func(repo, branch, token string) (string, func(), error) {
+		if token != "mock-token" {
+			return "", nil, fmt.Errorf("unexpected token passed to clone: %s", token)
+		}
 		cleanup := func() {
 			cleanupCalled = true
 		}
@@ -1695,7 +1718,8 @@ func TestExecutor_Execute_CloneFailure(t *testing.T) {
 	mockProvider := &mockProvider{}
 
 	// Mock clone function that fails
-	mockClone := func(repo, branch string) (string, func(), error) {
+	mockClone := func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		return "", nil, fmt.Errorf("clone failed: repository not found")
 	}
 
@@ -1780,7 +1804,8 @@ func TestExecutor_Execute_NoFileChanges_WithMockClone(t *testing.T) {
 		},
 	}
 
-	mockClone := func(repo, branch string) (string, func(), error) {
+	mockClone := func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		return tmpDir, func() {}, nil
 	}
 
@@ -1861,7 +1886,8 @@ func TestExecutor_Execute_DetectChangesError_WithMockClone(t *testing.T) {
 		},
 	}
 
-	mockClone := func(repo, branch string) (string, func(), error) {
+	mockClone := func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		return tmpDir, func() {}, nil
 	}
 
@@ -1922,7 +1948,8 @@ func TestExecutor_Execute_ProviderGenerateError_WithMockClone(t *testing.T) {
 		},
 	}
 
-	mockClone := func(repo, branch string) (string, func(), error) {
+	mockClone := func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		return tmpDir, func() {}, nil
 	}
 
@@ -2140,7 +2167,8 @@ func TestExecutor_Execute_ApplyChangesError_WithMockClone(t *testing.T) {
 		},
 	}
 
-	mockClone := func(repo, branch string) (string, func(), error) {
+	mockClone := func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		return tmpDir, func() {}, nil
 	}
 
@@ -2217,7 +2245,8 @@ func TestExecutor_Execute_UpdateCommentWarning_WithMockClone(t *testing.T) {
 		},
 	}
 
-	mockClone := func(repo, branch string) (string, func(), error) {
+	mockClone := func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		return tmpDir, func() {}, nil
 	}
 
@@ -2295,7 +2324,8 @@ func TestExecutor_Execute_CreateCommentWarning_WithMockClone(t *testing.T) {
 		},
 	}
 
-	mockClone := func(repo, branch string) (string, func(), error) {
+	mockClone := func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		return tmpDir, func() {}, nil
 	}
 
@@ -2373,7 +2403,8 @@ func TestExecutor_Execute_AddLabelWarning_WithMockClone(t *testing.T) {
 		},
 	}
 
-	mockClone := func(repo, branch string) (string, func(), error) {
+	mockClone := func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		return tmpDir, func() {}, nil
 	}
 
@@ -2590,7 +2621,8 @@ func TestExecutor_Execute_IncludesDiscussionContext(t *testing.T) {
 		},
 	}
 
-	mockClone := func(repo, branch string) (string, func(), error) {
+	mockClone := func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		dir := t.TempDir()
 		cmds := [][]string{
 			{"git", "init"},
@@ -2835,6 +2867,7 @@ func TestApplyChangesEnhanced(t *testing.T) {
 
 	tests := []struct {
 		name      string
+		prepare   func(string) error
 		changes   []claude.FileChange
 		wantError bool
 		validate  func(string) error
@@ -2865,12 +2898,45 @@ func TestApplyChangesEnhanced(t *testing.T) {
 			},
 			wantError: false, // Should skip empty path, continue with valid one
 			validate: func(dir string) error {
-				// Should only create the valid file
 				if _, err := os.Stat(filepath.Join(dir, "valid.go")); err != nil {
 					return fmt.Errorf("valid.go should exist: %v", err)
 				}
 				return nil
 			},
+		},
+		{
+			name: "reject absolute path",
+			changes: []claude.FileChange{
+				{Path: "/tmp/escape.go", Content: "package escape"},
+			},
+			wantError: true,
+		},
+		{
+			name: "reject path traversal",
+			changes: []claude.FileChange{
+				{Path: "../outside.go", Content: "package outside"},
+			},
+			wantError: true,
+		},
+		{
+			name: "directory creation failure due to file conflict",
+			prepare: func(dir string) error {
+				return os.WriteFile(filepath.Join(dir, "blocked"), []byte("conflict"), 0644)
+			},
+			changes: []claude.FileChange{
+				{Path: "blocked/file.go", Content: "package blocked"},
+			},
+			wantError: true,
+		},
+		{
+			name: "write failure when target is directory",
+			prepare: func(dir string) error {
+				return os.Mkdir(filepath.Join(dir, "conflict.go"), 0755)
+			},
+			changes: []claude.FileChange{
+				{Path: "conflict.go", Content: "package conflict"},
+			},
+			wantError: true,
 		},
 	}
 
@@ -2878,6 +2944,12 @@ func TestApplyChangesEnhanced(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			testDir := filepath.Join(tmpDir, tt.name)
 			os.MkdirAll(testDir, 0755)
+
+			if tt.prepare != nil {
+				if err := tt.prepare(testDir); err != nil {
+					t.Fatalf("prepare failed: %v", err)
+				}
+			}
 
 			err := executor.applyChanges(testDir, tt.changes)
 

@@ -23,8 +23,20 @@ import (
 
 var execCommand = exec.Command
 
+// StubExecCommandForTest replaces the command runner for the duration of a test.
+// The returned function must be deferred to restore the default behaviour.
+func StubExecCommandForTest(handler func(name string, args ...string) *exec.Cmd) func() {
+	original := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		return handler(name, args...)
+	}
+	return func() {
+		execCommand = original
+	}
+}
+
 // CloneFunc is a function type for cloning repositories
-type CloneFunc func(repo, branch string) (workdir string, cleanup func(), err error)
+type CloneFunc func(repo, branch, token string) (workdir string, cleanup func(), err error)
 
 // Executor executes pilot tasks
 type Executor struct {
@@ -77,6 +89,17 @@ func cloneStringMap(in map[string]string) map[string]string {
 // WithStore attaches a task store to the executor for tracking execution state
 func (e *Executor) WithStore(store *taskstore.Store) *Executor {
 	e.store = store
+	return e
+}
+
+// WithCloneFunc allows tests to override the repository clone implementation.
+// Passing nil restores the default GitHub-based clone.
+func (e *Executor) WithCloneFunc(fn CloneFunc) *Executor {
+	if fn == nil {
+		e.cloneFn = github.Clone
+		return e
+	}
+	e.cloneFn = fn
 	return e
 }
 
@@ -218,7 +241,7 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 	}
 	log.Printf("Cloning repository %s (branch: %s)", task.Repo, task.Branch)
 	e.addLog(task, "info", "Cloning repository %s (branch %s)", task.Repo, task.Branch)
-	workdir, cleanup, err := e.cloneFn(task.Repo, task.Branch)
+	workdir, cleanup, err := e.cloneFn(task.Repo, task.Branch, installToken.Token)
 	if err != nil {
 		tracker.FailTask("Clone repository")
 		return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to clone repository: %v", err))

@@ -325,7 +325,8 @@ func TestExecutor_ExecuteMultiPR_GitHubAPIFailure(t *testing.T) {
 		},
 	}
 
-	mockClone := func(repo, branch string) (string, func(), error) {
+	mockClone := func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		return tmpDir, func() {}, nil
 	}
 
@@ -395,7 +396,8 @@ func TestExecutor_ExecuteMultiPR_ProviderFailure(t *testing.T) {
 		},
 	}
 
-	mockClone := func(repo, branch string) (string, func(), error) {
+	mockClone := func(repo, branch, token string) (string, func(), error) {
+		_ = token
 		return tmpDir, func() {}, nil
 	}
 

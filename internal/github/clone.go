@@ -8,24 +8,33 @@ import (
 	"time"
 )
 
-var runRepoClone = func(repo, branch, dest string) error {
+var runRepoClone = func(repo, branch, token, dest string) error {
 	cmd := exec.Command("gh", "repo", "clone", repo, dest, "--", "-b", branch)
+	if token != "" {
+		// Ensure gh CLI receives credentials via both GH_TOKEN and GITHUB_TOKEN for compatibility.
+		env := append(os.Environ(),
+			fmt.Sprintf("GH_TOKEN=%s", token),
+			fmt.Sprintf("GITHUB_TOKEN=%s", token),
+		)
+		cmd.Env = env
+	}
+
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("gh repo clone failed: %w\nOutput: %s", err, string(output))
 	}
 	return nil
 }
 
-// Clone clones a GitHub repository to a temporary directory with retry logic
-// Returns: workdir path, cleanup function, error
-func Clone(repo, branch string) (string, func(), error) {
+// Clone clones a GitHub repository to a temporary directory with retry logic.
+// Returns: workdir path, cleanup function, error.
+func Clone(repo, branch, token string) (string, func(), error) {
 	// Create temporary directory with timestamp
 	tmpDir := filepath.Join(os.TempDir(), fmt.Sprintf("pilot-%d", time.Now().Unix()))
 
 	// Execute gh repo clone with retry for transient failures
 	// Note: git flags must be passed after '--' separator
 	err := retryWithBackoff(func() error {
-		return runRepoClone(repo, branch, tmpDir)
+		return runRepoClone(repo, branch, token, tmpDir)
 	})
 
 	if err != nil {
