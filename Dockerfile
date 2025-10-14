@@ -17,7 +17,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o pilot-swe ./cmd
+RUN CGO_ENABLED=0 GOOS=linux go build -o swe-agent ./cmd
 
 # Final stage
 FROM alpine:3.20 AS runtime
@@ -49,14 +49,14 @@ RUN apk add --no-cache \
     && npm cache clean --force
 
 # Copy binary from builder
-COPY --from=builder /build/pilot-swe /usr/local/bin/pilot-swe
+COPY --from=builder /build/swe-agent /usr/local/bin/swe-agent
 
 # Expose port
-EXPOSE 3000
+EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8000/health || exit 1
 
 # Run the application
-ENTRYPOINT ["pilot-swe"]
+ENTRYPOINT ["swe-agent"]

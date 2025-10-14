@@ -81,8 +81,8 @@ func TestLoad(t *testing.T) {
 			},
 			wantErr: false,
 			check: func(t *testing.T, cfg *Config) {
-				if cfg.Port != 3000 {
-					t.Errorf("Port = %d, want 3000 (default)", cfg.Port)
+				if cfg.Port != 8000 {
+					t.Errorf("Port = %d, want 8000 (default)", cfg.Port)
 				}
 				if cfg.ClaudeModel != "claude-3-5-sonnet-20241022" {
 					t.Errorf("ClaudeModel = %s, want default", cfg.ClaudeModel)
@@ -167,8 +167,8 @@ func TestLoad(t *testing.T) {
 			wantErr: false,
 			check: func(t *testing.T, cfg *Config) {
 				// Invalid port should fall back to default
-				if cfg.Port != 3000 {
-					t.Errorf("Port = %d, want 3000 (default for invalid)", cfg.Port)
+				if cfg.Port != 8000 {
+					t.Errorf("Port = %d, want 8000 (default for invalid)", cfg.Port)
 				}
 			},
 		},
@@ -456,28 +456,28 @@ func TestGetEnvInt(t *testing.T) {
 		{
 			name:         "valid int",
 			key:          "TEST_PORT",
-			defaultValue: 3000,
+			defaultValue: 8000,
 			envValue:     "8080",
 			want:         8080,
 		},
 		{
 			name:         "invalid int",
 			key:          "TEST_PORT",
-			defaultValue: 3000,
+			defaultValue: 8000,
 			envValue:     "invalid",
-			want:         3000,
+			want:         8000,
 		},
 		{
 			name:         "empty env var",
 			key:          "TEST_PORT",
-			defaultValue: 3000,
+			defaultValue: 8000,
 			envValue:     "",
-			want:         3000,
+			want:         8000,
 		},
 		{
 			name:         "zero value",
 			key:          "TEST_PORT",
-			defaultValue: 3000,
+			defaultValue: 8000,
 			envValue:     "0",
 			want:         0,
 		},

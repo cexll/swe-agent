@@ -48,7 +48,7 @@ type Config struct {
 // Load loads configuration from environment variables
 func Load() (*Config, error) {
 	cfg := &Config{
-		Port:                        getEnvInt("PORT", 3000),
+		Port:                        getEnvInt("PORT", 8000),
 		GitHubAppID:                 os.Getenv("GITHUB_APP_ID"),
 		GitHubPrivateKey:            os.Getenv("GITHUB_PRIVATE_KEY"),
 		GitHubWebhookSecret:         os.Getenv("GITHUB_WEBHOOK_SECRET"),

@@ -5,6 +5,10 @@ BINARY_NAME=swe
 MAIN_PATH=cmd/main.go
 DOCKER_IMAGE=pilot-swe
 DOCKER_TAG=latest
+GO_VERSION?=1.25.1
+CLAUDE_CLI_VERSION?=latest
+CODEX_CLI_VERSION?=latest
+DOCKER_BUILD_ARGS?=
 
 # Default target
 .DEFAULT_GOAL := help
@@ -118,16 +122,22 @@ clean:
 ## docker-build: Build Docker image
 docker-build:
 	@echo "Building Docker image..."
-	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+	docker build \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) \
+		--build-arg GO_VERSION=$(GO_VERSION) \
+		--build-arg CLAUDE_CLI_VERSION=$(CLAUDE_CLI_VERSION) \
+		--build-arg CODEX_CLI_VERSION=$(CODEX_CLI_VERSION) \
+		$(DOCKER_BUILD_ARGS) \
+		.
 	@echo "Docker image built: $(DOCKER_IMAGE):$(DOCKER_TAG)"
 
 ## docker-run: Run Docker container (requires .env file)
 docker-run:
 	@echo "Running Docker container..."
 	@test -f .env || (echo "Error: .env file not found" && exit 1)
-	docker run -d -p 3000:3000 --env-file .env --name $(DOCKER_IMAGE) $(DOCKER_IMAGE):$(DOCKER_TAG)
+	docker run -d -p 8000:8000 --env-file .env --name $(DOCKER_IMAGE) $(DOCKER_IMAGE):$(DOCKER_TAG)
 	@echo "Container started: $(DOCKER_IMAGE)"
-	@echo "Access at: http://localhost:3000"
+	@echo "Access at: http://localhost:8000"
 
 ## docker-stop: Stop and remove Docker container
 docker-stop:

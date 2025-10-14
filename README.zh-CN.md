@@ -103,7 +103,7 @@ CODEX_MODEL=gpt-5-codex
 
 # Optional Configuration
 TRIGGER_KEYWORD=/code
-PORT=3000
+PORT=8000
 DISPATCHER_WORKERS=4
 DISPATCHER_QUEUE_SIZE=16
 DISPATCHER_MAX_ATTEMPTS=3
@@ -132,9 +132,9 @@ go run cmd/main.go
 
 服务启动后可访问：
 
-- 🏠 服务信息：http://localhost:3000/
-- ❤️ 健康检查：http://localhost:3000/health
-- 🔗 Webhook：http://localhost:3000/webhook
+- 🏠 服务信息：http://localhost:8000/
+- ❤️ 健康检查：http://localhost:8000/health
+- 🔗 Webhook：http://localhost:8000/webhook
 
 ## 使用方法
 
@@ -523,7 +523,7 @@ docker build -t swe-agent .
 
 # Run container
 docker run -d \
-  -p 3000:3000 \
+  -p 8000:8000 \
   -e GITHUB_APP_ID=123456 \
   -e GITHUB_PRIVATE_KEY="$(cat private-key.pem)" \
   -e GITHUB_WEBHOOK_SECRET=secret \
@@ -542,7 +542,7 @@ services:
   swe-agent:
     build: .
     ports:
-      - "3000:3000"
+      - "8000:8000"
     environment:
       - GITHUB_APP_ID=${GITHUB_APP_ID}
       - GITHUB_PRIVATE_KEY=${GITHUB_PRIVATE_KEY}
