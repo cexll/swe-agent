@@ -6,8 +6,8 @@ MAIN_PATH=cmd/main.go
 DOCKER_IMAGE=swe-agent
 DOCKER_TAG=latest
 GO_VERSION?=1.25.1
-CLAUDE_CLI_VERSION?=latest
-CODEX_CLI_VERSION?=latest
+CLAUDE_CLI_VERSION?=1.0.111
+CODEX_CLI_VERSION?=0.23.0
 DOCKER_BUILD_ARGS?=
 
 # Default target
@@ -124,6 +124,7 @@ docker-build:
 	@echo "Building Docker image..."
 	docker build \
 		-t $(DOCKER_IMAGE):$(DOCKER_TAG) \
+		--no-cache \
 		--build-arg GO_VERSION=$(GO_VERSION) \
 		--build-arg CLAUDE_CLI_VERSION=$(CLAUDE_CLI_VERSION) \
 		--build-arg CODEX_CLI_VERSION=$(CODEX_CLI_VERSION) \
