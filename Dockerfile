@@ -1,6 +1,6 @@
 ARG GO_VERSION=1.25.1
 ARG CLAUDE_CLI_VERSION=1.0.111
-ARG CODEX_CLI_VERSION=0.46.0
+ARG CODEX_CLI_VERSION=0.40.0
 
 FROM golang:${GO_VERSION}-alpine AS builder
 
@@ -43,6 +43,7 @@ RUN apk add --no-cache \
         python3 \
         nodejs \
         npm \
+        jq \
     && npm install -g \
         @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION} \
         @openai/codex@${CODEX_CLI_VERSION} \
@@ -57,7 +58,6 @@ RUN mkdir -p /root/.codex /root/.claude \
     && cp /tmp/system-prompt.md /root/.codex/AGENTS.md \
     && cp /tmp/system-prompt.md /root/.claude/CLAUDE.md \
     && printf '%s\n' \
-        'config.toml' \
         'model = "gpt-5-codex"' \
         'model_reasoning_effort = "high"' \
         'model_reasoning_summary = "detailed"' \
@@ -65,7 +65,7 @@ RUN mkdir -p /root/.codex /root/.claude \
         'sandbox_mode = "danger-full-access"' \
         'disable_response_storage = true' \
         'network_access = true' \
-        > /root/.codex/config.yaml \
+        > /root/.codex/config.toml \
     && rm /tmp/system-prompt.md
 
 WORKDIR /app
@@ -78,7 +78,7 @@ RUN cat <<'EOF' > /usr/local/bin/docker-entrypoint.sh
 #!/bin/sh
 set -e
 mkdir -p /root/.codex
-printf '{"OPENAI_API_KEY": "%s"}\n' "${OPENAI_API_KEY:-}" > /root/.codex/auth.json
+jq -n --arg key "${OPENAI_API_KEY:-}" '{OPENAI_API_KEY: $key}' > /root/.codex/auth.json
 exec swe-agent "$@"
 EOF
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
