@@ -275,7 +275,27 @@ func TestApplyChanges_ErrorHandling(t *testing.T) {
 			setup: func() string {
 				return t.TempDir()
 			},
-			wantErr: false, // Will create file in safe location
+			wantErr: true,
+		},
+		{
+			name: "normalized relative path remains inside workdir",
+			changes: []claude.FileChange{
+				{Path: "nested/../safe.txt", Content: "safe"},
+			},
+			setup: func() string {
+				return t.TempDir()
+			},
+			wantErr: false,
+		},
+		{
+			name: "absolute path rejected",
+			changes: []claude.FileChange{
+				{Path: "/tmp/hijack.go", Content: "nope"},
+			},
+			setup: func() string {
+				return t.TempDir()
+			},
+			wantErr: true,
 		},
 	}
 

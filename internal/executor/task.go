@@ -429,18 +429,36 @@ func (e *Executor) applyChanges(workdir string, changes []claude.FileChange) err
 
 	successCount := 0
 	for i, change := range changes {
-		filePath := filepath.Join(workdir, change.Path)
+		if change.Path == "" {
+			log.Printf("Warning: Skipping empty file path at index %d", i)
+			continue
+		}
+
+		cleanPath := filepath.Clean(change.Path)
+
+		if filepath.IsAbs(cleanPath) {
+			return fmt.Errorf("absolute paths are not allowed: %s", change.Path)
+		}
+
+		if cleanPath == "." || cleanPath == ".." {
+			return fmt.Errorf("invalid file path %s: resolves outside workdir", change.Path)
+		}
+
+		filePath := filepath.Join(workdir, cleanPath)
+
+		relative, err := filepath.Rel(workdir, filePath)
+		if err != nil {
+			return fmt.Errorf("failed to resolve file path %s: %w", change.Path, err)
+		}
+
+		if relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+			return fmt.Errorf("path traversal detected for %s", change.Path)
+		}
 
 		// Debug logging
 		if os.Getenv("DEBUG_GIT_DETECTION") == "true" || os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
 			log.Printf("[File Write %d/%d] Processing: %s", i+1, len(changes), change.Path)
 			log.Printf("[File Write %d/%d] Content length: %d chars", i+1, len(changes), len(change.Content))
-		}
-
-		// Validate file path
-		if change.Path == "" {
-			log.Printf("Warning: Skipping empty file path at index %d", i)
-			continue
 		}
 
 		// Check if file already exists
