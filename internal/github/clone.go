@@ -11,12 +11,9 @@ import (
 var runRepoClone = func(repo, branch, token, dest string) error {
 	cmd := exec.Command("gh", "repo", "clone", repo, dest, "--", "-b", branch)
 	if token != "" {
-		// Ensure gh CLI receives credentials via both GH_TOKEN and GITHUB_TOKEN for compatibility.
-		env := append(os.Environ(),
-			fmt.Sprintf("GH_TOKEN=%s", token),
+		cmd.Env = append(os.Environ(),
 			fmt.Sprintf("GITHUB_TOKEN=%s", token),
 		)
-		cmd.Env = env
 	}
 
 	if output, err := cmd.CombinedOutput(); err != nil {

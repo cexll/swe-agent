@@ -111,6 +111,8 @@ DISPATCHER_MAX_ATTEMPTS=3
 DISPATCHER_RETRY_SECONDS=15
 DISPATCHER_RETRY_MAX_SECONDS=300
 DISPATCHER_BACKOFF_MULTIPLIER=2
+# SWE_AGENT_GIT_NAME=swe-agent[bot]
+# SWE_AGENT_GIT_EMAIL=123456+swe-agent[bot]@users.noreply.github.com
 ```
 
 > 🧵 **Queue Configuration Explanation**

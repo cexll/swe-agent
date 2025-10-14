@@ -199,7 +199,7 @@ func TestExecutor_CommitSubPR_GitResetFailure(t *testing.T) {
 		Username: "testuser",
 	}
 
-	err := executor.commitSubPR(tmpDir, "test-branch", subPR, task)
+	err := executor.commitSubPR(tmpDir, "owner/repo", "test-branch", subPR, task, "")
 
 	// Should fail with git error
 	if err == nil {
@@ -257,7 +257,7 @@ func TestExecutor_CommitSubPR_BranchAlreadyExists(t *testing.T) {
 	}
 
 	// Try to create branch with same name
-	err := executor.commitSubPR(tmpDir, branchName, subPR, task)
+	err := executor.commitSubPR(tmpDir, "owner/repo", branchName, subPR, task, "")
 
 	// Should fail because branch already exists
 	if err == nil {

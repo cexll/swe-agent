@@ -397,7 +397,7 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 	}
 
 	commitMsg := e.formatCommitMessage(result.Summary, task)
-	if err := e.commitAndPush(workdir, branchName, commitMsg, isNewBranch); err != nil {
+	if err := e.commitAndPush(workdir, task.Repo, branchName, commitMsg, isNewBranch, installToken.Token); err != nil {
 		tracker.FailTask("Commit and push changes")
 		return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to commit/push: %v", err))
 	}
@@ -689,32 +689,165 @@ func sanitizeBranchSegment(segment string) string {
 }
 
 // commitAndPush commits changes and pushes to remote
-func (e *Executor) commitAndPush(workdir, branchName, commitMessage string, isNewBranch bool) error {
-	var commands [][]string
+func (e *Executor) commitAndPush(workdir, repo, branchName, commitMessage string, isNewBranch bool, token string) error {
+	name, email := resolveGitIdentity()
 
-	// Git config (always needed)
-	commands = append(commands,
-		[]string{"git", "config", "user.name", "Pilot Bot"},
-		[]string{"git", "config", "user.email", "pilot@github.com"},
-	)
+	setupCommands := [][]string{
+		{"git", "config", "user.name", name},
+		{"git", "config", "user.email", email},
+	}
 
-	commands = append(commands,
-		[]string{"git", "add", "."},
-		[]string{"git", "commit", "-m", commitMessage},
-	)
+	for _, args := range setupCommands {
+		if err := runGitCommand(workdir, args, false); err != nil {
+			return err
+		}
+	}
+
+	commands := [][]string{
+		{"git", "add", "."},
+		{"git", "commit", "-m", commitMessage},
+	}
+
+	for _, args := range commands {
+		if err := runGitCommand(workdir, args, false); err != nil {
+			return err
+		}
+	}
+
+	cleanup := func() {}
+	if token != "" && repo != "" {
+		var err error
+		if cleanup, err = configurePushURL(workdir, repo, token); err != nil {
+			return err
+		}
+		defer cleanup()
+	}
 
 	pushArgs := []string{"git", "push", "origin", branchName}
 	if isNewBranch {
 		pushArgs = []string{"git", "push", "-u", "origin", branchName}
 	}
-	commands = append(commands, pushArgs)
 
-	for _, args := range commands {
-		cmd := execCommand(args[0], args[1:]...)
-		cmd.Dir = workdir
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("%s failed: %w\nOutput: %s", strings.Join(args, " "), err, string(output))
+	if err := runGitCommand(workdir, pushArgs, false); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func resolveGitIdentity() (string, string) {
+	name := os.Getenv("SWE_AGENT_GIT_NAME")
+	if strings.TrimSpace(name) == "" {
+		name = "SWE Agent[bot]"
+	}
+
+	email := os.Getenv("SWE_AGENT_GIT_EMAIL")
+	if strings.TrimSpace(email) == "" {
+		email = "swe-agent[bot]@users.noreply.github.com"
+	}
+
+	return name, email
+}
+
+func configurePushURL(workdir, repo, token string) (func(), error) {
+	if strings.TrimSpace(token) == "" {
+		return func() {}, nil
+	}
+
+	pushURL, err := resolvePushURL(workdir, repo, token)
+	if err != nil || pushURL == "" {
+		return func() {}, nil
+	}
+
+	if err := runGitCommand(workdir, []string{"git", "config", "remote.origin.pushurl", pushURL}, true); err != nil {
+		return nil, err
+	}
+
+	cleanup := func() {
+		if err := runGitCommand(workdir, []string{"git", "config", "--unset", "remote.origin.pushurl"}, false); err != nil {
+			if !strings.Contains(err.Error(), "No such section or key") {
+				log.Printf("Warning: cleanup of remote.origin.pushurl failed: %v", err)
+			}
 		}
+	}
+
+	return cleanup, nil
+}
+
+func resolvePushURL(workdir, repo, token string) (string, error) {
+	remoteURL, err := getRemoteOriginURL(workdir)
+	if err == nil {
+		if url := injectToken(remoteURL, token); url != "" {
+			return url, nil
+		}
+		// Remote exists but isn't a GitHub HTTPS URL; don't override.
+		return "", nil
+	}
+
+	if strings.TrimSpace(repo) == "" {
+		return "", nil
+	}
+
+	// Fallback to GitHub HTTPS URL when remote isn't available or isn't GitHub HTTPS.
+	fallback := fmt.Sprintf("https://github.com/%s", strings.TrimSpace(repo))
+	return injectToken(fallback, token), nil
+}
+
+func getRemoteOriginURL(workdir string) (string, error) {
+	cmd := execCommand("git", "remote", "get-url", "origin")
+	cmd.Dir = workdir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git remote get-url origin failed: %w\nOutput: %s", err, strings.TrimSpace(string(output)))
+	}
+
+	return strings.TrimSpace(string(output)), nil
+}
+
+func injectToken(rawURL, token string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+
+	if parsed.Scheme != "https" {
+		return ""
+	}
+
+	host := strings.ToLower(parsed.Host)
+	if host == "" || !strings.Contains(host, "github.com") {
+		return ""
+	}
+
+	parsed.User = url.UserPassword("x-access-token", token)
+	return parsed.String()
+}
+
+func runGitCommand(workdir string, args []string, sensitive bool) error {
+	if len(args) == 0 {
+		return fmt.Errorf("git command is empty")
+	}
+
+	cmd := execCommand(args[0], args[1:]...)
+	cmd.Dir = workdir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		commandLabel := strings.Join(args, " ")
+		outputStr := string(output)
+		if sensitive {
+			commandLabel = fmt.Sprintf("%s (arguments redacted)", args[0])
+			outputStr = "[redacted]"
+		}
+		return fmt.Errorf("%s failed: %w\nOutput: %s", commandLabel, err, outputStr)
 	}
 
 	return nil
@@ -1091,7 +1224,7 @@ func (e *Executor) executeMultiPR(
 		branchName := generateSubPRBranchName(task.Number, string(subPR.Category))
 
 		// Commit only files from this sub-PR
-		if err := e.commitSubPR(workdir, branchName, subPR, task); err != nil {
+		if err := e.commitSubPR(workdir, task.Repo, branchName, subPR, task, token); err != nil {
 			log.Printf("Warning: Failed to create sub-PR #%d: %v", idx, err)
 			// Continue with other PRs
 			continue
@@ -1140,7 +1273,7 @@ func (e *Executor) executeMultiPR(
 }
 
 // commitSubPR commits only the files from a specific sub-PR
-func (e *Executor) commitSubPR(workdir, branchName string, subPR github.SubPR, task *webhook.Task) error {
+func (e *Executor) commitSubPR(workdir, repo, branchName string, subPR github.SubPR, task *webhook.Task, token string) error {
 	// Reset to base branch first
 	resetCmd := execCommand("git", "reset", "--hard", "HEAD")
 	resetCmd.Dir = workdir
@@ -1172,19 +1305,35 @@ func (e *Executor) commitSubPR(workdir, branchName string, subPR github.SubPR, t
 
 	// Create branch and commit
 	commitMsg := e.formatCommitMessage(subPR.Name+"\n\n"+subPR.Description, task)
-	commands := [][]string{
-		{"git", "checkout", "-b", branchName},
-		{"git", "add", "."},
-		{"git", "commit", "-m", commitMsg},
-		{"git", "push", "-u", "origin", branchName},
+	name, email := resolveGitIdentity()
+	if err := runGitCommand(workdir, []string{"git", "config", "user.name", name}, false); err != nil {
+		return err
+	}
+	if err := runGitCommand(workdir, []string{"git", "config", "user.email", email}, false); err != nil {
+		return err
 	}
 
-	for _, args := range commands {
-		cmd := execCommand(args[0], args[1:]...)
-		cmd.Dir = workdir
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("%s failed: %w\nOutput: %s", strings.Join(args, " "), err, string(output))
+	if err := runGitCommand(workdir, []string{"git", "checkout", "-b", branchName}, false); err != nil {
+		return err
+	}
+	if err := runGitCommand(workdir, []string{"git", "add", "."}, false); err != nil {
+		return err
+	}
+	if err := runGitCommand(workdir, []string{"git", "commit", "-m", commitMsg}, false); err != nil {
+		return err
+	}
+
+	cleanup := func() {}
+	if token != "" && repo != "" {
+		var err error
+		if cleanup, err = configurePushURL(workdir, repo, token); err != nil {
+			return err
 		}
+		defer cleanup()
+	}
+
+	if err := runGitCommand(workdir, []string{"git", "push", "-u", "origin", branchName}, false); err != nil {
+		return err
 	}
 
 	return nil

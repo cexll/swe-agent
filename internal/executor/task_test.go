@@ -258,7 +258,7 @@ func TestCommitAndPush_PathValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// commitAndPush will fail in test environment without git,
 			// but we're testing parameter validation
-			err := executor.commitAndPush(tt.workdir, tt.branchName, tt.commitMessage, true)
+			err := executor.commitAndPush(tt.workdir, "", tt.branchName, tt.commitMessage, true, "")
 			// Error is expected since we don't have a git repo
 			_ = err
 		})
@@ -1202,7 +1202,7 @@ func TestExecutor_CommitSubPR_WritesFiles(t *testing.T) {
 	}
 	task := &webhook.Task{Prompt: "docs"}
 
-	if err := executor.commitSubPR(tmpDir, "swe/docs", subPR, task); err != nil {
+	if err := executor.commitSubPR(tmpDir, "owner/repo", "swe/docs", subPR, task, ""); err != nil {
 		t.Fatalf("commitSubPR error: %v", err)
 	}
 
@@ -1523,7 +1523,7 @@ func TestCommitAndPush_EdgeCases(t *testing.T) {
 				}
 			}
 
-			err = executor.commitAndPush(workdir, tt.branchName, tt.commitMessage, true)
+			err = executor.commitAndPush(workdir, "", tt.branchName, tt.commitMessage, true, "")
 
 			if tt.wantErrMsg != "" {
 				if err == nil {
@@ -1572,7 +1572,7 @@ func TestCommitAndPush_LongCommitMessage(t *testing.T) {
 	// Test with very long commit message
 	longMessage := strings.Repeat("This is a very long commit message. ", 50) // ~1850 chars
 
-	err := executor.commitAndPush(tmpDir, "test-long-msg", longMessage, true)
+	err := executor.commitAndPush(tmpDir, "", "test-long-msg", longMessage, true, "")
 
 	// Push will fail (no remote) but commit should succeed
 	if err != nil && !strings.Contains(err.Error(), "push") {

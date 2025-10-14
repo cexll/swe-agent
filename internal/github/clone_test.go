@@ -102,9 +102,6 @@ func skipIfNetworkUnavailable(t *testing.T) {
 }
 
 func getCloneTestToken() string {
-	if token := os.Getenv("GH_TOKEN"); token != "" {
-		return token
-	}
 	return os.Getenv("GITHUB_TOKEN")
 }
 
@@ -143,10 +140,7 @@ func TestClone_ErrorHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			token := os.Getenv("GH_TOKEN")
-			if token == "" {
-				token = os.Getenv("GITHUB_TOKEN")
-			}
+			token := os.Getenv("GITHUB_TOKEN")
 
 			workdir, cleanup, err := Clone(tt.repo, tt.branch, token)
 

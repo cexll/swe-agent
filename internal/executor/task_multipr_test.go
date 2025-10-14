@@ -384,7 +384,7 @@ func TestExecutor_CommitSubPR_AtomicOperation(t *testing.T) {
 	}
 
 	// Execute commitSubPR
-	err := executor.commitSubPR(tmpDir, branchName, subPR, task)
+	err := executor.commitSubPR(tmpDir, "owner/repo", branchName, subPR, task, "")
 
 	// Push will fail (no remote), but commit should succeed
 	if err != nil && !strings.Contains(err.Error(), "push") && !strings.Contains(err.Error(), "remote") {
@@ -485,7 +485,7 @@ func TestExecutor_CommitSubPR_OnlyCommitsSpecifiedFiles(t *testing.T) {
 	}
 
 	// Execute commitSubPR
-	err := executor.commitSubPR(tmpDir, branchName, subPR, task)
+	err := executor.commitSubPR(tmpDir, "owner/repo", branchName, subPR, task, "")
 
 	// Push will fail, but reset/clean/apply should work
 	if err != nil && !strings.Contains(err.Error(), "push") && !strings.Contains(err.Error(), "remote") {

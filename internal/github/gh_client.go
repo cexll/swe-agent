@@ -7,6 +7,26 @@ import (
 	"time"
 )
 
+func withGitHubTokenEnv(token string, fn func() error) error {
+	oldToken, hadToken := os.LookupEnv("GITHUB_TOKEN")
+
+	if token != "" {
+		_ = os.Setenv("GITHUB_TOKEN", token)
+	} else {
+		_ = os.Unsetenv("GITHUB_TOKEN")
+	}
+
+	defer func() {
+		if hadToken {
+			_ = os.Setenv("GITHUB_TOKEN", oldToken)
+		} else {
+			_ = os.Unsetenv("GITHUB_TOKEN")
+		}
+	}()
+
+	return fn()
+}
+
 // GHClient is an interface for GitHub CLI operations
 // This abstraction allows mocking gh CLI in tests
 type GHClient interface {
@@ -67,33 +87,30 @@ func NewRealGHClient() *RealGHClient {
 func (c *RealGHClient) CreateComment(repo string, number int, body, token string) (int, error) {
 	var commentID int
 	err := retryWithBackoff(func() error {
-		args := []string{
-			"api",
-			fmt.Sprintf("/repos/%s/issues/%d/comments", repo, number),
-			"-X", "POST",
-			"-f", fmt.Sprintf("body=%s", body),
-		}
+		return withGitHubTokenEnv(token, func() error {
+			args := []string{
+				"api",
+				fmt.Sprintf("/repos/%s/issues/%d/comments", repo, number),
+				"-X", "POST",
+				"-f", fmt.Sprintf("body=%s", body),
+			}
 
-		// Set token via environment
-		oldToken := os.Getenv("GITHUB_TOKEN")
-		os.Setenv("GITHUB_TOKEN", token)
-		defer os.Setenv("GITHUB_TOKEN", oldToken)
+			output, err := c.runner.Run("gh", args...)
+			if err != nil {
+				return fmt.Errorf("gh api failed: %w\nOutput: %s", err, string(output))
+			}
 
-		output, err := c.runner.Run("gh", args...)
-		if err != nil {
-			return fmt.Errorf("gh api failed: %w\nOutput: %s", err, string(output))
-		}
+			// Parse JSON response
+			var result struct {
+				ID int `json:"id"`
+			}
+			if err := json.Unmarshal(output, &result); err != nil {
+				return fmt.Errorf("failed to parse comment response: %w", err)
+			}
 
-		// Parse JSON response
-		var result struct {
-			ID int `json:"id"`
-		}
-		if err := json.Unmarshal(output, &result); err != nil {
-			return fmt.Errorf("failed to parse comment response: %w", err)
-		}
-
-		commentID = result.ID
-		return nil
+			commentID = result.ID
+			return nil
+		})
 	})
 
 	return commentID, err
@@ -102,23 +119,21 @@ func (c *RealGHClient) CreateComment(repo string, number int, body, token string
 // UpdateComment updates an existing comment
 func (c *RealGHClient) UpdateComment(repo string, commentID int, body, token string) error {
 	return retryWithBackoff(func() error {
-		args := []string{
-			"api",
-			fmt.Sprintf("/repos/%s/issues/comments/%d", repo, commentID),
-			"-X", "PATCH",
-			"-f", fmt.Sprintf("body=%s", body),
-		}
+		return withGitHubTokenEnv(token, func() error {
+			args := []string{
+				"api",
+				fmt.Sprintf("/repos/%s/issues/comments/%d", repo, commentID),
+				"-X", "PATCH",
+				"-f", fmt.Sprintf("body=%s", body),
+			}
 
-		oldToken := os.Getenv("GITHUB_TOKEN")
-		os.Setenv("GITHUB_TOKEN", token)
-		defer os.Setenv("GITHUB_TOKEN", oldToken)
+			output, err := c.runner.Run("gh", args...)
+			if err != nil {
+				return fmt.Errorf("gh api update failed: %w\nOutput: %s", err, string(output))
+			}
 
-		output, err := c.runner.Run("gh", args...)
-		if err != nil {
-			return fmt.Errorf("gh api update failed: %w\nOutput: %s", err, string(output))
-		}
-
-		return nil
+			return nil
+		})
 	})
 }
 
@@ -126,29 +141,27 @@ func (c *RealGHClient) UpdateComment(repo string, commentID int, body, token str
 func (c *RealGHClient) GetCommentBody(repo string, commentID int, token string) (string, error) {
 	var body string
 	err := retryWithBackoff(func() error {
-		args := []string{
-			"api",
-			fmt.Sprintf("/repos/%s/issues/comments/%d", repo, commentID),
-		}
+		return withGitHubTokenEnv(token, func() error {
+			args := []string{
+				"api",
+				fmt.Sprintf("/repos/%s/issues/comments/%d", repo, commentID),
+			}
 
-		oldToken := os.Getenv("GITHUB_TOKEN")
-		os.Setenv("GITHUB_TOKEN", token)
-		defer os.Setenv("GITHUB_TOKEN", oldToken)
+			output, err := c.runner.Run("gh", args...)
+			if err != nil {
+				return fmt.Errorf("gh api get failed: %w\nOutput: %s", err, string(output))
+			}
 
-		output, err := c.runner.Run("gh", args...)
-		if err != nil {
-			return fmt.Errorf("gh api get failed: %w\nOutput: %s", err, string(output))
-		}
+			var result struct {
+				Body string `json:"body"`
+			}
+			if err := json.Unmarshal(output, &result); err != nil {
+				return fmt.Errorf("failed to parse comment: %w", err)
+			}
 
-		var result struct {
-			Body string `json:"body"`
-		}
-		if err := json.Unmarshal(output, &result); err != nil {
-			return fmt.Errorf("failed to parse comment: %w", err)
-		}
-
-		body = result.Body
-		return nil
+			body = result.Body
+			return nil
+		})
 	})
 
 	return body, err
@@ -158,44 +171,42 @@ func (c *RealGHClient) GetCommentBody(repo string, commentID int, token string) 
 func (c *RealGHClient) ListIssueComments(repo string, number int, token string) ([]IssueComment, error) {
 	var comments []IssueComment
 	err := retryWithBackoff(func() error {
-		args := []string{
-			"api",
-			fmt.Sprintf("/repos/%s/issues/%d/comments", repo, number),
-		}
-
-		oldToken := os.Getenv("GITHUB_TOKEN")
-		os.Setenv("GITHUB_TOKEN", token)
-		defer os.Setenv("GITHUB_TOKEN", oldToken)
-
-		output, err := c.runner.Run("gh", args...)
-		if err != nil {
-			return fmt.Errorf("gh api list issue comments failed: %w\nOutput: %s", err, string(output))
-		}
-
-		var raw []struct {
-			Body      string `json:"body"`
-			CreatedAt string `json:"created_at"`
-			User      struct {
-				Login string `json:"login"`
-			} `json:"user"`
-		}
-		if err := json.Unmarshal(output, &raw); err != nil {
-			return fmt.Errorf("failed to parse issue comments: %w", err)
-		}
-
-		comments = make([]IssueComment, 0, len(raw))
-		for _, item := range raw {
-			createdAt, err := time.Parse(time.RFC3339, item.CreatedAt)
-			if err != nil {
-				createdAt = time.Time{}
+		return withGitHubTokenEnv(token, func() error {
+			args := []string{
+				"api",
+				fmt.Sprintf("/repos/%s/issues/%d/comments", repo, number),
 			}
-			comments = append(comments, IssueComment{
-				Author:    item.User.Login,
-				Body:      item.Body,
-				CreatedAt: createdAt,
-			})
-		}
-		return nil
+
+			output, err := c.runner.Run("gh", args...)
+			if err != nil {
+				return fmt.Errorf("gh api list issue comments failed: %w\nOutput: %s", err, string(output))
+			}
+
+			var raw []struct {
+				Body      string `json:"body"`
+				CreatedAt string `json:"created_at"`
+				User      struct {
+					Login string `json:"login"`
+				} `json:"user"`
+			}
+			if err := json.Unmarshal(output, &raw); err != nil {
+				return fmt.Errorf("failed to parse issue comments: %w", err)
+			}
+
+			comments = make([]IssueComment, 0, len(raw))
+			for _, item := range raw {
+				createdAt, err := time.Parse(time.RFC3339, item.CreatedAt)
+				if err != nil {
+					createdAt = time.Time{}
+				}
+				comments = append(comments, IssueComment{
+					Author:    item.User.Login,
+					Body:      item.Body,
+					CreatedAt: createdAt,
+				})
+			}
+			return nil
+		})
 	})
 
 	return comments, err
@@ -205,48 +216,46 @@ func (c *RealGHClient) ListIssueComments(repo string, number int, token string) 
 func (c *RealGHClient) ListReviewComments(repo string, number int, token string) ([]ReviewComment, error) {
 	var comments []ReviewComment
 	err := retryWithBackoff(func() error {
-		args := []string{
-			"api",
-			fmt.Sprintf("/repos/%s/pulls/%d/comments", repo, number),
-		}
-
-		oldToken := os.Getenv("GITHUB_TOKEN")
-		os.Setenv("GITHUB_TOKEN", token)
-		defer os.Setenv("GITHUB_TOKEN", oldToken)
-
-		output, err := c.runner.Run("gh", args...)
-		if err != nil {
-			return fmt.Errorf("gh api list review comments failed: %w\nOutput: %s", err, string(output))
-		}
-
-		var raw []struct {
-			Body      string `json:"body"`
-			Path      string `json:"path"`
-			DiffHunk  string `json:"diff_hunk"`
-			CreatedAt string `json:"created_at"`
-			User      struct {
-				Login string `json:"login"`
-			} `json:"user"`
-		}
-		if err := json.Unmarshal(output, &raw); err != nil {
-			return fmt.Errorf("failed to parse review comments: %w", err)
-		}
-
-		comments = make([]ReviewComment, 0, len(raw))
-		for _, item := range raw {
-			createdAt, err := time.Parse(time.RFC3339, item.CreatedAt)
-			if err != nil {
-				createdAt = time.Time{}
+		return withGitHubTokenEnv(token, func() error {
+			args := []string{
+				"api",
+				fmt.Sprintf("/repos/%s/pulls/%d/comments", repo, number),
 			}
-			comments = append(comments, ReviewComment{
-				Author:    item.User.Login,
-				Body:      item.Body,
-				Path:      item.Path,
-				DiffHunk:  item.DiffHunk,
-				CreatedAt: createdAt,
-			})
-		}
-		return nil
+
+			output, err := c.runner.Run("gh", args...)
+			if err != nil {
+				return fmt.Errorf("gh api list review comments failed: %w\nOutput: %s", err, string(output))
+			}
+
+			var raw []struct {
+				Body      string `json:"body"`
+				Path      string `json:"path"`
+				DiffHunk  string `json:"diff_hunk"`
+				CreatedAt string `json:"created_at"`
+				User      struct {
+					Login string `json:"login"`
+				} `json:"user"`
+			}
+			if err := json.Unmarshal(output, &raw); err != nil {
+				return fmt.Errorf("failed to parse review comments: %w", err)
+			}
+
+			comments = make([]ReviewComment, 0, len(raw))
+			for _, item := range raw {
+				createdAt, err := time.Parse(time.RFC3339, item.CreatedAt)
+				if err != nil {
+					createdAt = time.Time{}
+				}
+				comments = append(comments, ReviewComment{
+					Author:    item.User.Login,
+					Body:      item.Body,
+					Path:      item.Path,
+					DiffHunk:  item.DiffHunk,
+					CreatedAt: createdAt,
+				})
+			}
+			return nil
+		})
 	})
 
 	return comments, err
@@ -255,22 +264,20 @@ func (c *RealGHClient) ListReviewComments(repo string, number int, token string)
 // AddLabel adds a label to an issue/PR
 func (c *RealGHClient) AddLabel(repo string, number int, label, token string) error {
 	return retryWithBackoff(func() error {
-		args := []string{
-			"issue", "edit", fmt.Sprintf("%d", number),
-			"--repo", repo,
-			"--add-label", label,
-		}
+		return withGitHubTokenEnv(token, func() error {
+			args := []string{
+				"issue", "edit", fmt.Sprintf("%d", number),
+				"--repo", repo,
+				"--add-label", label,
+			}
 
-		oldToken := os.Getenv("GITHUB_TOKEN")
-		os.Setenv("GITHUB_TOKEN", token)
-		defer os.Setenv("GITHUB_TOKEN", oldToken)
+			output, err := c.runner.Run("gh", args...)
+			if err != nil {
+				return fmt.Errorf("gh issue edit failed: %w\nOutput: %s", err, string(output))
+			}
 
-		output, err := c.runner.Run("gh", args...)
-		if err != nil {
-			return fmt.Errorf("gh issue edit failed: %w\nOutput: %s", err, string(output))
-		}
-
-		return nil
+			return nil
+		})
 	})
 }
 
