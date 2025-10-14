@@ -871,22 +871,46 @@ func configurePushURL(workdir, repo, token string) (func(), error) {
 }
 
 func resolvePushURL(workdir, repo, token string) (string, error) {
-	remoteURL, err := getRemoteOriginURL(workdir)
-	if err == nil {
-		if url := injectToken(remoteURL, token); url != "" {
-			return url, nil
-		}
-		// Remote exists but isn't a GitHub HTTPS URL; don't override.
-		return "", nil
-	}
+    remoteURL, err := getRemoteOriginURL(workdir)
+    if err == nil {
+        // Prefer using existing HTTPS GitHub remote when possible
+        if url := injectToken(remoteURL, token); url != "" {
+            return url, nil
+        }
+        // If the existing remote is a GitHub SSH URL, configure a separate
+        // pushurl that uses HTTPS + token so we can push without SSH keys.
+        if looksLikeGitHubSSH(remoteURL) && strings.TrimSpace(repo) != "" {
+            fallback := fmt.Sprintf("https://github.com/%s", strings.TrimSpace(repo))
+            if url := injectToken(fallback, token); url != "" {
+                return url, nil
+            }
+        }
+        // Could not construct a tokenized push URL; return empty to skip override.
+        return "", nil
+    }
 
-	if strings.TrimSpace(repo) == "" {
-		return "", nil
-	}
+    if strings.TrimSpace(repo) == "" {
+        return "", nil
+    }
 
-	// Fallback to GitHub HTTPS URL when remote isn't available or isn't GitHub HTTPS.
-	fallback := fmt.Sprintf("https://github.com/%s", strings.TrimSpace(repo))
-	return injectToken(fallback, token), nil
+    // Fallback to GitHub HTTPS URL when remote isn't available.
+    fallback := fmt.Sprintf("https://github.com/%s", strings.TrimSpace(repo))
+    return injectToken(fallback, token), nil
+}
+
+func looksLikeGitHubSSH(remote string) bool {
+    s := strings.TrimSpace(remote)
+    if s == "" {
+        return false
+    }
+    // Common SSH URL patterns for GitHub
+    if strings.HasPrefix(s, "git@github.com:") {
+        return true
+    }
+    if strings.HasPrefix(strings.ToLower(s), "ssh://git@github.com/") {
+        return true
+    }
+    return false
 }
 
 func getRemoteOriginURL(workdir string) (string, error) {

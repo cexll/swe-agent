@@ -6,3 +6,5 @@ swe
 .claude
 coverage.out
 swe-agent
+
+claude-code-action
