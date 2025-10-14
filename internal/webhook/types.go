@@ -50,12 +50,20 @@ type Repository struct {
 }
 
 type PullRequest struct {
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-	Body   string `json:"body"`
-	Base   struct {
-		Ref string `json:"ref"`
-	} `json:"base"`
+    Number int    `json:"number"`
+    Title  string `json:"title"`
+    Body   string `json:"body"`
+    Base   struct {
+        Ref string `json:"ref"`
+    } `json:"base"`
+    // Include head info so we can operate on the PR's source branch
+    Head   struct {
+        Ref  string `json:"ref"`
+        Sha  string `json:"sha"`
+        Repo struct {
+            FullName string `json:"full_name"`
+        } `json:"repo"`
+    } `json:"head"`
 }
 
 type User struct {

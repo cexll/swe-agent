@@ -15,17 +15,21 @@ import (
 
 // Task represents a pilot task to be executed
 type Task struct {
-	ID            string
-	Repo          string
-	Number        int
-	Branch        string
-	Prompt        string
-	PromptSummary string
-	IssueTitle    string
-	IssueBody     string
-	IsPR          bool
-	Username      string // User who triggered the task
-	Attempt       int    // Current attempt number (managed by dispatcher)
+    ID            string
+    Repo          string
+    Number        int
+    Branch        string
+    // PR head info for same-branch fixes
+    PRHeadRepo    string
+    PRHeadRef     string
+    PRHeadSHA     string
+    Prompt        string
+    PromptSummary string
+    IssueTitle    string
+    IssueBody     string
+    IsPR          bool
+    Username      string // User who triggered the task
+    Attempt       int    // Current attempt number (managed by dispatcher)
 }
 
 // TaskDispatcher enqueues tasks for asynchronous execution
@@ -220,23 +224,26 @@ func (h *Handler) handleReviewComment(w http.ResponseWriter, payload []byte) {
 	prompt := buildPrompt(event.PullRequest.Title, event.PullRequest.Body, customInstruction)
 	promptSummary := buildPromptSummary(event.PullRequest.Title, customInstruction, true)
 
-	branch := event.PullRequest.Base.Ref
-	if branch == "" {
-		branch = event.Repository.DefaultBranch
-	}
+    branch := event.PullRequest.Base.Ref
+    if branch == "" {
+        branch = event.Repository.DefaultBranch
+    }
 
-	task := &Task{
-		ID:            h.generateTaskID(event.Repository.FullName, event.PullRequest.Number),
-		Repo:          event.Repository.FullName,
-		Number:        event.PullRequest.Number,
-		Branch:        branch,
-		Prompt:        prompt,
-		PromptSummary: promptSummary,
-		IssueTitle:    event.PullRequest.Title,
-		IssueBody:     event.PullRequest.Body,
-		IsPR:          true,
-		Username:      event.Comment.User.Login,
-	}
+    task := &Task{
+        ID:            h.generateTaskID(event.Repository.FullName, event.PullRequest.Number),
+        Repo:          event.Repository.FullName,
+        Number:        event.PullRequest.Number,
+        Branch:        branch,
+        PRHeadRepo:    event.PullRequest.Head.Repo.FullName,
+        PRHeadRef:     event.PullRequest.Head.Ref,
+        PRHeadSHA:     event.PullRequest.Head.Sha,
+        Prompt:        prompt,
+        PromptSummary: promptSummary,
+        IssueTitle:    event.PullRequest.Title,
+        IssueBody:     event.PullRequest.Body,
+        IsPR:          true,
+        Username:      event.Comment.User.Login,
+    }
 
 	h.createStoreTask(task)
 

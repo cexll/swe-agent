@@ -117,16 +117,27 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 		e.addLog(task, "error", "Failed to add swe label: %v", err)
 	}
 
-	// 2. Clone repository
-	log.Printf("Cloning repository %s (branch: %s)", task.Repo, task.Branch)
-	e.addLog(task, "info", "Cloning repository %s (branch %s)", task.Repo, task.Branch)
-	workdir, cleanup, err := e.cloneFn(task.Repo, task.Branch)
-	if err != nil {
-		return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to clone repository: %v", err))
-	}
-	defer cleanup()
-	log.Printf("Repository cloned to %s", workdir)
-	e.addLog(task, "info", "Repository cloned to %s", workdir)
+    // 2. Determine effective repo/branch (support PR head for same-branch fix)
+    cloneRepo := task.Repo
+    cloneBranch := task.Branch
+    if task.IsPR && task.PRHeadRef != "" {
+        // Prefer cloning the PR head branch for direct fixes; if head repo is provided, use it
+        cloneBranch = task.PRHeadRef
+        if task.PRHeadRepo != "" {
+            cloneRepo = task.PRHeadRepo
+        }
+    }
+
+    // 2. Clone repository
+    log.Printf("Cloning repository %s (branch: %s)", cloneRepo, cloneBranch)
+    e.addLog(task, "info", "Cloning repository %s (branch %s)", cloneRepo, cloneBranch)
+    workdir, cleanup, err := e.cloneFn(cloneRepo, cloneBranch)
+    if err != nil {
+        return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to clone repository: %v", err))
+    }
+    defer cleanup()
+    log.Printf("Repository cloned to %s", workdir)
+    e.addLog(task, "info", "Repository cloned to %s", workdir)
 
 	// 3. Call AI provider to generate changes
 	log.Printf("Calling %s provider (prompt length: %d chars)", e.provider.Name(), len(task.Prompt))
@@ -241,36 +252,62 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 		return e.executeMultiPR(ctx, task, workdir, plan, result, tracker, installToken.Token)
 	}
 
-	// 5.8. Single PR workflow (original logic)
-	log.Printf("Using single-PR workflow")
-	e.addLog(task, "info", "Using single-PR workflow")
+    // 5.8. Single PR workflow or direct commit to PR head
+    directCommit := task.IsPR && task.PRHeadRef != ""
+    if directCommit {
+        log.Printf("Using direct-commit workflow on PR head branch: %s", cloneBranch)
+        e.addLog(task, "info", "Using direct-commit workflow on PR head branch: %s", cloneBranch)
+    } else {
+        log.Printf("Using single-PR workflow")
+        e.addLog(task, "info", "Using single-PR workflow")
+    }
 
-	// 6. Create branch and commit changes
-	branchName := fmt.Sprintf("pilot/%d-%d", task.Number, time.Now().Unix())
-	log.Printf("Creating branch %s and committing changes", branchName)
-	e.addLog(task, "info", "Creating branch %s and committing changes", branchName)
-	if err := e.commitAndPush(workdir, branchName, result.Summary); err != nil {
-		return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to commit/push: %v", err))
-	}
+    // 6. Commit and push
+    var branchName string
+    if directCommit {
+        branchName = cloneBranch
+        log.Printf("Committing directly to %s", branchName)
+        e.addLog(task, "info", "Committing directly to %s", branchName)
+        if err := e.commitAndPushDirect(workdir, branchName, result.Summary); err != nil {
+            return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to commit/push to PR head: %v", err))
+        }
+    } else {
+        branchName = fmt.Sprintf("pilot/%d-%d", task.Number, time.Now().Unix())
+        log.Printf("Creating branch %s and committing changes", branchName)
+        e.addLog(task, "info", "Creating branch %s and committing changes", branchName)
+        if err := e.commitAndPush(workdir, branchName, result.Summary); err != nil {
+            return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to commit/push: %v", err))
+        }
+    }
 
-	// 7. Create PR link
-	log.Printf("Creating PR from %s to %s", branchName, task.Branch)
-	e.addLog(task, "info", "Creating PR from %s to %s", branchName, task.Branch)
-	prURL, err := e.createPRLink(task.Repo, branchName, task.Branch, result.Summary)
-	if err != nil {
-		return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to create PR: %v", err))
-	}
-	log.Printf("PR link created: %s", prURL)
-	e.addLog(task, "info", "PR link created: %s", prURL)
+    // 7. Create PR link (only for non-direct workflow)
+    var prURL string
+    if !directCommit {
+        log.Printf("Creating PR from %s to %s", branchName, task.Branch)
+        e.addLog(task, "info", "Creating PR from %s to %s", branchName, task.Branch)
+        var err error
+        prURL, err = e.createPRLink(task.Repo, branchName, task.Branch, result.Summary)
+        if err != nil {
+            return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to create PR: %v", err))
+        }
+        log.Printf("PR link created: %s", prURL)
+        e.addLog(task, "info", "PR link created: %s", prURL)
+    }
 
-	// 8. Build branch URL
-	branchURL := fmt.Sprintf("https://github.com/%s/tree/%s", task.Repo, url.PathEscape(branchName))
+    // 8. Build branch URL
+    repoForBranchURL := task.Repo
+    if directCommit && task.PRHeadRepo != "" {
+        repoForBranchURL = task.PRHeadRepo
+    }
+    branchURL := fmt.Sprintf("https://github.com/%s/tree/%s", repoForBranchURL, url.PathEscape(branchName))
 
 	// 9. Update tracking comment with success
-	tracker.MarkEnd()
-	tracker.SetCompleted(result.Summary, e.extractFilePaths(result.Files), result.CostUSD)
-	tracker.SetBranch(branchName, branchURL)
-	tracker.SetPRURL(prURL)
+    tracker.MarkEnd()
+    tracker.SetCompleted(result.Summary, e.extractFilePaths(result.Files), result.CostUSD)
+    tracker.SetBranch(branchName, branchURL)
+    if prURL != "" {
+        tracker.SetPRURL(prURL)
+    }
 
 	if err := tracker.Update(installToken.Token); err != nil {
 		log.Printf("Warning: Failed to update tracking comment: %v", err)
@@ -423,6 +460,28 @@ func (e *Executor) commitAndPush(workdir, branchName, commitMessage string) erro
 	}
 
 	return nil
+}
+
+// commitAndPushDirect commits changes on the current branch and pushes to remote without creating a new branch
+func (e *Executor) commitAndPushDirect(workdir, branchName, commitMessage string) error {
+    commands := [][]string{
+        {"git", "config", "user.name", "Pilot Bot"},
+        {"git", "config", "user.email", "pilot@github.com"},
+        {"git", "checkout", branchName},
+        {"git", "add", "."},
+        {"git", "commit", "-m", commitMessage},
+        {"git", "push", "origin", branchName},
+    }
+
+    for _, args := range commands {
+        cmd := exec.Command(args[0], args[1:]...)
+        cmd.Dir = workdir
+        if output, err := cmd.CombinedOutput(); err != nil {
+            return fmt.Errorf("%s failed: %w\nOutput: %s", strings.Join(args, " "), err, string(output))
+        }
+    }
+
+    return nil
 }
 
 // createPRLink generates a GitHub URL for creating a PR
