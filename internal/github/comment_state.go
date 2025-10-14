@@ -41,6 +41,7 @@ type CommentState struct {
 	CostUSD      float64
 	Username     string
 	OriginalBody string
+	Context      map[string]string
 
 	// Results
 	Summary       string
@@ -58,6 +59,16 @@ type CommentState struct {
 	// Multi-PR support (for split plans)
 	SplitPlan  *SplitPlan
 	CreatedPRs []CreatedPR
+
+	// Task progress tracking (checkbox UI)
+	Tasks []TaskStep
+}
+
+// TaskStep represents a step in the execution with checkbox status
+type TaskStep struct {
+	Name      string
+	Status    string // "pending", "running", "completed", "failed"
+	Timestamp time.Time
 }
 
 // Duration calculates the execution duration

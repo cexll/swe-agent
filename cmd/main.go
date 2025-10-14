@@ -18,14 +18,29 @@ import (
 	"github.com/joho/godotenv"
 )
 
+var (
+	loadDotEnv         = godotenv.Load
+	newTaskStore       = taskstore.NewStore
+	newProvider        = provider.NewProvider
+	newDispatcher      = dispatcher.New
+	newWebHandler      = web.NewHandler
+	defaultListenServe = http.ListenAndServe
+)
+
 func main() {
+	if err := run(context.Background(), defaultListenServe); err != nil {
+		log.Fatalf("Server failed: %v", err)
+	}
+}
+
+func run(ctx context.Context, serve func(string, http.Handler) error) error {
 	// Load .env file (ignore error if file doesn't exist)
-	_ = godotenv.Load()
+	_ = loadDotEnv()
 
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	log.Printf("Starting Pilot SWE server...")
@@ -36,7 +51,7 @@ func main() {
 	log.Printf("Dispatcher workers: %d, queue size: %d, max attempts: %d", cfg.DispatcherWorkers, cfg.DispatcherQueueSize, cfg.DispatcherMaxAttempts)
 
 	// Initialize in-memory task store for UI
-	taskStore := taskstore.NewStore()
+	taskStore := newTaskStore()
 
 	// Initialize GitHub App authentication
 	appAuth := &github.AppAuth{
@@ -50,7 +65,7 @@ func main() {
 	switch cfg.Provider {
 	case "claude":
 		log.Printf("Claude model: %s", cfg.ClaudeModel)
-		aiProvider, err = provider.NewProvider(&provider.Config{
+		aiProvider, err = newProvider(&provider.Config{
 			Name:         "claude",
 			ClaudeAPIKey: cfg.ClaudeAPIKey,
 			ClaudeModel:  cfg.ClaudeModel,
@@ -60,24 +75,25 @@ func main() {
 		if cfg.OpenAIBaseURL != "" {
 			log.Printf("Using custom OpenAI Base URL: %s", cfg.OpenAIBaseURL)
 		}
-		aiProvider, err = provider.NewProvider(&provider.Config{
+		aiProvider, err = newProvider(&provider.Config{
 			Name:          "codex",
 			OpenAIAPIKey:  cfg.OpenAIAPIKey,
 			OpenAIBaseURL: cfg.OpenAIBaseURL,
 			CodexModel:    cfg.CodexModel,
 		})
 	default:
-		log.Fatalf("Unsupported provider: %s", cfg.Provider)
+		return fmt.Errorf("unsupported provider: %s", cfg.Provider)
 	}
 
 	if err != nil {
-		log.Fatalf("Failed to initialize AI provider: %v", err)
+		return fmt.Errorf("failed to initialize AI provider: %w", err)
 	}
 	log.Printf("AI Provider: %s", aiProvider.Name())
 
 	// Initialize executor
 	exec := executor.New(aiProvider, appAuth)
 	exec.WithStore(taskStore)
+	exec.WithDisallowedTools(cfg.DisallowedTools)
 
 	// Initialize dispatcher (task queue with retries)
 	dispatcherConfig := dispatcher.Config{
@@ -88,16 +104,16 @@ func main() {
 		BackoffMultiplier: cfg.DispatcherBackoffMultiplier,
 		MaxBackoff:        cfg.DispatcherRetryMax,
 	}
-	taskDispatcher := dispatcher.New(exec, dispatcherConfig)
-	defer taskDispatcher.Shutdown(context.Background())
+	taskDispatcher := newDispatcher(exec, dispatcherConfig)
+	defer taskDispatcher.Shutdown(ctx)
 
 	// Initialize webhook handler
-	handler := webhook.NewHandler(cfg.GitHubWebhookSecret, cfg.TriggerKeyword, taskDispatcher, taskStore)
+	handler := webhook.NewHandler(cfg.GitHubWebhookSecret, cfg.TriggerKeyword, taskDispatcher, taskStore, appAuth)
 
 	// Initialize web UI handler
-	webHandler, err := web.NewHandler(taskStore)
+	webHandler, err := newWebHandler(taskStore)
 	if err != nil {
-		log.Fatalf("Failed to initialize web handler: %v", err)
+		return fmt.Errorf("failed to initialize web handler: %w", err)
 	}
 
 	// Setup router
@@ -130,7 +146,9 @@ func main() {
 	log.Printf("Health check: http://localhost%s/health", addr)
 	log.Printf("Tasks UI: http://localhost%s/tasks", addr)
 
-	if err := http.ListenAndServe(addr, r); err != nil {
-		log.Fatalf("Server failed to start: %v", err)
+	if err := serve(addr, r); err != nil {
+		return fmt.Errorf("server failed to start: %w", err)
 	}
+
+	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cexll/swe/internal/executor"
 	"github.com/cexll/swe/internal/webhook"
 )
 
@@ -139,6 +140,10 @@ func (d *Dispatcher) process(item *queueItem) {
 
 	if err != nil {
 		log.Printf("Task %s attempt %d failed: %v", key, item.attempt, err)
+		if executor.IsNonRetryable(err) {
+			log.Printf("Task %s attempt %d marked non-retryable; no further attempts", key, item.attempt)
+			return
+		}
 		d.handleRetry(item, err)
 		return
 	}

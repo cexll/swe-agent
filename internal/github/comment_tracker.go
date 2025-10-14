@@ -2,6 +2,7 @@ package github
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -26,6 +27,7 @@ func NewCommentTracker(repo string, number int, username string) *CommentTracker
 		State: &CommentState{
 			Status:   StatusWorking,
 			Username: username,
+			Context:  make(map[string]string),
 		},
 		ghClient: defaultGHClient,
 	}
@@ -40,6 +42,7 @@ func NewCommentTrackerWithClient(repo string, number int, username string, ghCli
 		State: &CommentState{
 			Status:   StatusWorking,
 			Username: username,
+			Context:  make(map[string]string),
 		},
 		ghClient: ghClient,
 	}
@@ -71,53 +74,59 @@ func (t *CommentTracker) Update(token string) error {
 func (t *CommentTracker) renderBody() string {
 	state := t.State
 
-	// Build header based on status
-	header := t.buildHeader()
+	// Minimal view for queued/working statuses
+	if state.Status == StatusWorking || state.Status == StatusQueued {
+		username := state.Username
+		if username == "" {
+			username = "user"
+		}
 
-	// Build links section
+		message := ""
+		if state.Status == StatusWorking {
+			message = fmt.Sprintf("SWE Agent is working on @%s's task", username)
+		} else {
+			message = fmt.Sprintf("SWE Agent is queued for @%s's task", username)
+		}
+
+		return message + " <img src=\"https://github.githubassets.com/images/spinners/octocat-spinner-32.gif\" width=\"20\" height=\"20\" alt=\"loading\" />"
+	}
+
+	header := t.buildHeader()
 	links := t.buildLinks()
 
-	// Build body sections
-	var sections []string
-
-	// Add header with links
+	headerLine := header
 	if links != "" {
-		sections = append(sections, header+" "+links)
-	} else {
-		sections = append(sections, header)
+		headerLine = headerLine + " " + links
 	}
 
-	// Add separator
-	sections = append(sections, "---")
+	var sections []string
+	sections = append(sections, headerLine)
 
-	// Add original request if available
-	if state.OriginalBody != "" {
-		sections = append(sections, state.OriginalBody)
-	}
-
-	// Add split plan section if present
-	if state.SplitPlan != nil {
-		sections = append(sections, "", t.buildSplitPlanSection())
-	}
-
-	// Add summary for completed tasks
-	if state.IsCompleted() && state.Summary != "" {
-		sections = append(sections, "", "**Summary:** "+state.Summary)
-
-		// Add modified files if available (only for non-split workflows)
-		if len(state.ModifiedFiles) > 0 && state.SplitPlan == nil {
+	switch {
+	case state.IsCompleted():
+		if state.Summary != "" {
+			sections = append(sections, "", state.Summary)
+		}
+		if len(state.ModifiedFiles) > 0 {
 			sections = append(sections, "", t.buildModifiedFilesList())
+		}
+		if state.SplitPlan != nil {
+			if splitSection := t.buildSplitPlanSection(); splitSection != "" {
+				sections = append(sections, "", splitSection)
+			}
+		}
+	case state.IsFailed():
+		if state.ErrorDetails != "" {
+			sections = append(sections, "", "```", state.ErrorDetails, "```")
+		}
+	default:
+		if jobLink := t.buildFooter(); jobLink != "" {
+			sections = append(sections, "", jobLink)
+			return strings.Join(sections, "\n")
 		}
 	}
 
-	// Add error details for failed tasks
-	if state.IsFailed() && state.ErrorDetails != "" {
-		sections = append(sections, "", "```", state.ErrorDetails, "```")
-	}
-
-	// Add footer
 	sections = append(sections, "", t.buildFooter())
-
 	return strings.Join(sections, "\n")
 }
 
@@ -131,26 +140,26 @@ func (t *CommentTracker) buildHeader() string {
 
 	switch state.Status {
 	case StatusQueued:
-		return fmt.Sprintf("⏳ **Pilot queued @%s's task...**", username)
+		return fmt.Sprintf("**SWE Agent is queued for @%s's task**", username)
 	case StatusWorking:
-		return fmt.Sprintf("🤖 **Pilot is working on @%s's task...**", username)
+		return fmt.Sprintf("**SWE Agent is working on @%s's task**", username)
 
 	case StatusCompleted:
 		duration := state.Duration()
 		if duration != "" {
-			return fmt.Sprintf("✅ **Pilot finished @%s's task in %s**", username, duration)
+			return fmt.Sprintf("**SWE Agent finished @%s's task in %s**", username, duration)
 		}
-		return fmt.Sprintf("✅ **Pilot finished @%s's task**", username)
+		return fmt.Sprintf("**SWE Agent finished @%s's task**", username)
 
 	case StatusFailed:
 		duration := state.Duration()
 		if duration != "" {
-			return fmt.Sprintf("❌ **Pilot encountered an error after %s**", duration)
+			return fmt.Sprintf("**SWE Agent encountered an error after %s**", duration)
 		}
-		return "❌ **Pilot encountered an error**"
+		return "**SWE Agent encountered an error**"
 
 	default:
-		return "**Pilot Task Status**"
+		return "**SWE Agent Task Status**"
 	}
 }
 
@@ -159,7 +168,12 @@ func (t *CommentTracker) buildLinks() string {
 	state := t.State
 	var links []string
 
-	// Add branch link
+	// Add job link first (matches claude-code-action)
+	if state.JobURL != "" {
+		links = append(links, fmt.Sprintf("[View job](%s)", state.JobURL))
+	}
+
+	// Add branch link second
 	if state.BranchName != "" {
 		if state.BranchURL != "" {
 			links = append(links, fmt.Sprintf("[`%s`](%s)", state.BranchName, state.BranchURL))
@@ -168,23 +182,44 @@ func (t *CommentTracker) buildLinks() string {
 		}
 	}
 
-	// Add PR link
+	// Add PR link last
 	if state.PRURL != "" {
 		links = append(links, fmt.Sprintf("[Create PR ➔](%s)", state.PRURL))
 	}
 
-	// Add job link
-	if state.JobURL != "" {
-		links = append(links, fmt.Sprintf("[View job](%s)", state.JobURL))
+	if len(state.CreatedPRs) > 0 {
+		seen := make(map[string]struct{})
+		for _, pr := range state.CreatedPRs {
+			if pr.URL == "" {
+				continue
+			}
+
+			if _, exists := seen[pr.URL]; exists {
+				continue
+			}
+			seen[pr.URL] = struct{}{}
+
+			label := strings.TrimSpace(pr.Name)
+			if label == "" {
+				label = fmt.Sprintf("PR %d", pr.Index+1)
+			}
+			label = escapeMarkdownLinkText(label)
+
+			links = append(links, fmt.Sprintf("[Create PR: %s ➔](%s)", label, pr.URL))
+		}
 	}
 
 	if len(links) == 0 {
 		return ""
 	}
 
-	// Format: —— link1 • link2 • link3
-	return "—— " + strings.Join(links, " • ")
+	// Format: —— link1 • link2 • link3 (with space before ——)
+	return " —— " + strings.Join(links, " • ")
 }
+
+// Deprecated sections removed for simplified comment layout
+
+// (removed) instruction section builder to avoid dumping full prompt into comments
 
 // buildModifiedFilesList builds the modified files list
 func (t *CommentTracker) buildModifiedFilesList() string {
@@ -207,10 +242,10 @@ func (t *CommentTracker) buildFooter() string {
 
 	// For completed tasks, show cost if available
 	if state.IsCompleted() && state.CostUSD > 0 {
-		return fmt.Sprintf("*Generated by Pilot SWE • Cost: $%.4f*", state.CostUSD)
+		return fmt.Sprintf("*Generated with [SWE Agent](https://github.com/cexll/swe-agent) • Cost: $%.4f*", state.CostUSD)
 	}
 
-	return "*Generated by Pilot SWE*"
+	return "*Generated with [SWE Agent](https://github.com/cexll/swe-agent)*"
 }
 
 // SetWorking sets the task status to working
@@ -241,6 +276,12 @@ func (t *CommentTracker) SetFailed(errorDetails string) {
 func (t *CommentTracker) SetBranch(branchName, branchURL string) {
 	t.State.BranchName = branchName
 	t.State.BranchURL = branchURL
+	if t.State.Context == nil {
+		t.State.Context = make(map[string]string)
+	}
+	if branchName != "" {
+		t.State.Context["claude_branch"] = branchName
+	}
 }
 
 // SetPRURL sets the PR creation URL
@@ -272,7 +313,27 @@ func (t *CommentTracker) AddCreatedPR(pr CreatedPR) {
 // SetCompletedWithSplit marks the task as completed with split workflow
 func (t *CommentTracker) SetCompletedWithSplit(plan *SplitPlan, createdPRs []CreatedPR, costUSD float64) {
 	t.State.Status = StatusCompleted
-	t.State.Summary = fmt.Sprintf("Split into %d PRs", len(plan.SubPRs))
+
+	if plan != nil {
+		if t.State.SplitPlan == nil {
+			t.State.SplitPlan = plan
+		}
+
+		if len(t.State.ModifiedFiles) == 0 {
+			files := collectPlanFilePaths(plan)
+			if len(files) > 0 {
+				sort.Strings(files)
+				t.State.ModifiedFiles = files
+			}
+		}
+
+		if t.State.Summary == "" {
+			t.State.Summary = fmt.Sprintf("Split into %d PRs", len(plan.SubPRs))
+		}
+	} else if t.State.Summary == "" {
+		t.State.Summary = "Split into multiple PRs"
+	}
+
 	t.State.CreatedPRs = createdPRs
 	t.State.CostUSD = costUSD
 }
@@ -326,4 +387,78 @@ func (t *CommentTracker) buildSplitPlanSection() string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func collectPlanFilePaths(plan *SplitPlan) []string {
+	if plan == nil {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	for _, subPR := range plan.SubPRs {
+		for _, file := range subPR.Files {
+			if file.Path == "" {
+				continue
+			}
+			seen[file.Path] = struct{}{}
+		}
+	}
+
+	if len(seen) == 0 {
+		return nil
+	}
+
+	files := make([]string, 0, len(seen))
+	for path := range seen {
+		files = append(files, path)
+	}
+
+	return files
+}
+
+func escapeMarkdownLinkText(text string) string {
+	replacer := strings.NewReplacer("[", "\\[", "]", "\\]")
+	return replacer.Replace(text)
+}
+
+// AddTask adds a new task step to the progress tracker
+func (t *CommentTracker) AddTask(name string) {
+	t.State.Tasks = append(t.State.Tasks, TaskStep{
+		Name:      name,
+		Status:    "pending",
+		Timestamp: time.Now(),
+	})
+}
+
+// StartTask marks a task as running
+func (t *CommentTracker) StartTask(name string) {
+	for i, task := range t.State.Tasks {
+		if task.Name == name && task.Status == "pending" {
+			t.State.Tasks[i].Status = "running"
+			t.State.Tasks[i].Timestamp = time.Now()
+			return
+		}
+	}
+}
+
+// CompleteTask marks a task as completed
+func (t *CommentTracker) CompleteTask(name string) {
+	for i, task := range t.State.Tasks {
+		if task.Name == name {
+			t.State.Tasks[i].Status = "completed"
+			t.State.Tasks[i].Timestamp = time.Now()
+			return
+		}
+	}
+}
+
+// FailTask marks a task as failed
+func (t *CommentTracker) FailTask(name string) {
+	for i, task := range t.State.Tasks {
+		if task.Name == name {
+			t.State.Tasks[i].Status = "failed"
+			t.State.Tasks[i].Timestamp = time.Now()
+			return
+		}
+	}
 }

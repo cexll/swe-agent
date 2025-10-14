@@ -8,6 +8,14 @@ import (
 	"time"
 )
 
+var runRepoClone = func(repo, branch, dest string) error {
+	cmd := exec.Command("gh", "repo", "clone", repo, dest, "--", "-b", branch)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("gh repo clone failed: %w\nOutput: %s", err, string(output))
+	}
+	return nil
+}
+
 // Clone clones a GitHub repository to a temporary directory with retry logic
 // Returns: workdir path, cleanup function, error
 func Clone(repo, branch string) (string, func(), error) {
@@ -17,11 +25,7 @@ func Clone(repo, branch string) (string, func(), error) {
 	// Execute gh repo clone with retry for transient failures
 	// Note: git flags must be passed after '--' separator
 	err := retryWithBackoff(func() error {
-		cmd := exec.Command("gh", "repo", "clone", repo, tmpDir, "--", "-b", branch)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("gh repo clone failed: %w\nOutput: %s", err, string(output))
-		}
-		return nil
+		return runRepoClone(repo, branch, tmpDir)
 	})
 
 	if err != nil {

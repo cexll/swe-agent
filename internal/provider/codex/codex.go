@@ -7,11 +7,11 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/cexll/swe/internal/prompt"
 	"github.com/cexll/swe/internal/provider/claude"
 )
 
@@ -21,6 +21,7 @@ const (
 )
 
 var execCommandContext = exec.CommandContext
+var promptManager = prompt.NewManager()
 
 // Provider implements the AI provider interface for Codex MCP
 type Provider struct {
@@ -57,35 +58,13 @@ func (p *Provider) Name() string {
 func (p *Provider) GenerateCode(ctx context.Context, req *claude.CodeRequest) (*claude.CodeResponse, error) {
 	log.Printf("[Codex] Starting code generation (prompt length: %d chars)", len(req.Prompt))
 
-	files, err := listRepoFiles(req.RepoPath)
+	files, err := promptManager.ListRepoFiles(req.RepoPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list repo files: %w", err)
 	}
 
-	systemPrompt := buildSystemPrompt(files, req.Context)
-
-	userPrompt := fmt.Sprintf(`Task: %s
-
-You can choose to either:
-
-1. Provide code changes (if modifications are needed):
-<file path="path/to/file.ext">
-<content>
-... full file content here ...
-</content>
-</file>
-
-<summary>
-Brief description of changes made
-</summary>
-
-2. Provide analysis/answer only (if no code changes needed):
-<summary>
-Your analysis, recommendations, or answer here.
-You can include explanations, task lists, or any helpful information.
-</summary>
-
-Make sure to include the COMPLETE file content when providing code changes, not just the changes.`, req.Prompt)
+	systemPrompt := promptManager.BuildDefaultSystemPrompt(files, req.Context)
+	userPrompt := promptManager.BuildUserPrompt(req.Prompt)
 
 	fullPrompt := executionPrefix + systemPrompt + "\n\n" + userPrompt
 
@@ -157,14 +136,15 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 		if stderrText == "" {
 			stderrText = err.Error()
 		}
+		stderrPreview := truncateLogString(stderrText, 1000)
 
 		// Check if it was a timeout
 		if ctx.Err() == context.DeadlineExceeded {
-			return "", 0, fmt.Errorf("codex CLI timeout after %v: %s", duration, stderrText)
+			return "", 0, fmt.Errorf("codex CLI timeout after %v: %s", duration, stderrPreview)
 		}
 
-		log.Printf("[Codex] Error: %s", stderrText)
-		return "", 0, fmt.Errorf("codex CLI error: %s", stderrText)
+		log.Printf("[Codex] Error: %s", stderrPreview)
+		return "", 0, fmt.Errorf("codex CLI error: %s", stderrPreview)
 	}
 
 	duration := time.Since(startTime)
@@ -174,108 +154,6 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 	// Codex CLI returns the full conversation/output
 	// We'll use the raw output as the response
 	return output, 0, nil
-}
-
-// listRepoFiles lists all files in the repository (excluding .git and dotfiles)
-func listRepoFiles(repoPath string) ([]string, error) {
-	var files []string
-
-	err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if info.IsDir() && info.Name() == ".git" {
-			return filepath.SkipDir
-		}
-
-		if info.IsDir() || strings.HasPrefix(info.Name(), ".") {
-			return nil
-		}
-
-		relPath, err := filepath.Rel(repoPath, path)
-		if err != nil {
-			return err
-		}
-
-		files = append(files, relPath)
-		return nil
-	})
-
-	return files, err
-}
-
-// buildSystemPrompt creates the system prompt for Codex
-func buildSystemPrompt(files []string, context map[string]string) string {
-	fileList := strings.Join(files, "\n- ")
-
-	prompt := fmt.Sprintf(`You are a code modification assistant working on a GitHub repository.
-
-Repository structure:
-- %s
-
-`, fileList)
-
-	additionalContext := make([]string, 0, len(context))
-	for key, value := range context {
-		trimmedValue := strings.TrimSpace(value)
-		if trimmedValue == "" {
-			continue
-		}
-		switch key {
-		case "issue_title", "issue_body":
-			continue
-		default:
-			additionalContext = append(additionalContext, fmt.Sprintf("- %s: %s", key, trimmedValue))
-		}
-	}
-
-	if len(additionalContext) > 0 {
-		prompt += "\nAdditional Context:\n"
-		prompt += strings.Join(additionalContext, "\n")
-		prompt += "\n"
-	}
-
-	prompt += `
-When making changes:
-1. Understand the task thoroughly before making modifications
-2. Make minimal, focused changes that address the specific request
-3. Preserve existing code style and conventions
-4. Include complete file content in your response (not just diffs)
-
-## PR Size Best Practices
-
-**Small PRs are preferred and more likely to be merged quickly.**
-
-If you need to modify more than 8 files or 300 lines:
-- Consider splitting the work into multiple logical PRs
-- Separate independent changes:
-  * Tests can be added in a separate PR
-  * Documentation updates can be independent
-  * Infrastructure/internal changes separate from core logic
-  * Command-line interface changes separate from core
-
-Example split strategy:
-- PR 1: Add test infrastructure
-- PR 2: Update documentation
-- PR 3: Implement core functionality
-- PR 4: Update CLI
-
-**Note:** The system will automatically split large changes into multiple PRs.
-Focus on making logical, atomic changes that are easy to review.
-
-Return your changes in this exact format:
-<file path="path/to/file">
-<content>
-... complete file content ...
-</content>
-</file>
-
-<summary>
-Brief description of what was changed
-</summary>`
-
-	return prompt
 }
 
 // parseCodeResponse extracts file changes and summary from Codex response
@@ -314,4 +192,11 @@ func parseCodeResponse(response string) (*claude.CodeResponse, error) {
 	}
 
 	return result, nil
+}
+
+func truncateLogString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

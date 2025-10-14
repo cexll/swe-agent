@@ -15,6 +15,7 @@ import (
 // AuthProvider defines the interface for GitHub authentication
 type AuthProvider interface {
 	GetInstallationToken(repo string) (*InstallationToken, error)
+	GetInstallationOwner(repo string) (string, error)
 }
 
 // AppAuth holds GitHub App authentication configuration
@@ -77,6 +78,24 @@ func (a *AppAuth) GetInstallationToken(repo string) (*InstallationToken, error) 
 
 	// 3. Get installation access token
 	return a.getInstallationAccessToken(jwtToken, installationID)
+}
+
+// GetInstallationOwner gets the owner (installer) of the GitHub App for a repository
+func (a *AppAuth) GetInstallationOwner(repo string) (string, error) {
+	// 1. Generate JWT
+	jwtToken, err := a.GenerateJWT()
+	if err != nil {
+		return "", err
+	}
+
+	// 2. Get installation ID for the repository
+	installationID, err := a.getInstallationID(jwtToken, repo)
+	if err != nil {
+		return "", err
+	}
+
+	// 3. Get installation details
+	return a.getInstallationAccountLogin(jwtToken, installationID)
 }
 
 // getInstallationID retrieves the installation ID for a repository
@@ -157,4 +176,40 @@ func (a *AppAuth) getInstallationAccessToken(jwtToken string, installationID int
 		Token:     result.Token,
 		ExpiresAt: result.ExpiresAt,
 	}, nil
+}
+
+// getInstallationAccountLogin retrieves the account login (owner) for an installation
+func (a *AppAuth) getInstallationAccountLogin(jwtToken string, installationID int64) (string, error) {
+	url := fmt.Sprintf("https://api.github.com/app/installations/%d", installationID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+jwtToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to get installation: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("GitHub API error: %d - %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Account struct {
+			Login string `json:"login"`
+		} `json:"account"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Account.Login, nil
 }

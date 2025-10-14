@@ -53,9 +53,13 @@ type PullRequest struct {
 	Number int    `json:"number"`
 	Title  string `json:"title"`
 	Body   string `json:"body"`
+	State  string `json:"state"` // "open" or "closed"
 	Base   struct {
 		Ref string `json:"ref"`
 	} `json:"base"`
+	Head struct {
+		Ref string `json:"ref"` // Source branch name
+	} `json:"head"`
 }
 
 type User struct {

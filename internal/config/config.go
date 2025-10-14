@@ -33,6 +33,9 @@ type Config struct {
 	// Trigger settings
 	TriggerKeyword string
 
+	// Security settings
+	DisallowedTools string
+
 	// Dispatcher settings
 	DispatcherWorkers           int
 	DispatcherQueueSize         int
@@ -56,6 +59,7 @@ func Load() (*Config, error) {
 		OpenAIBaseURL:               os.Getenv("OPENAI_BASE_URL"),
 		CodexModel:                  getEnv("CODEX_MODEL", "gpt-5-codex"),
 		TriggerKeyword:              getEnv("TRIGGER_KEYWORD", "/code"),
+		DisallowedTools:             getEnv("DISALLOWED_TOOLS", ""),
 		DispatcherWorkers:           getEnvInt("DISPATCHER_WORKERS", 4),
 		DispatcherQueueSize:         getEnvInt("DISPATCHER_QUEUE_SIZE", 16),
 		DispatcherMaxAttempts:       getEnvInt("DISPATCHER_MAX_ATTEMPTS", 3),

@@ -7,10 +7,11 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/cexll/swe/internal/prompt"
 )
 
 // FileChange represents a file modification
@@ -45,6 +46,8 @@ type Provider struct {
 	model string
 }
 
+var promptManager = prompt.NewManager()
+
 // NewProvider creates a new Claude provider
 func NewProvider(apiKey, model string) *Provider {
 	// Set environment variables for Claude Code CLI
@@ -69,11 +72,16 @@ func (p *Provider) Name() string {
 }
 
 // callClaudeCLI calls the Claude CLI directly with proper working directory
-func callClaudeCLI(workDir, prompt, model string) (*CLIResult, error) {
+func callClaudeCLI(workDir, prompt, model, disallowedTools string) (*CLIResult, error) {
 	// Build command arguments
 	args := []string{"-p", "--output-format", "json"}
 	if model != "" {
 		args = append(args, "--model", model)
+	}
+	// Add disallowed tools if specified
+	if disallowedTools != "" {
+		args = append(args, "--disallowedTools", disallowedTools)
+		log.Printf("[Claude CLI] Disallowed tools: %s", disallowedTools)
 	}
 
 	// Create command
@@ -94,9 +102,10 @@ func callClaudeCLI(workDir, prompt, model string) (*CLIResult, error) {
 	duration := time.Since(start)
 
 	if err != nil {
+		outputPreview := truncateString(string(output), 1000)
 		log.Printf("[Claude CLI] Command failed after %v: %v", duration, err)
-		log.Printf("[Claude CLI] Output: %s", string(output))
-		return nil, fmt.Errorf("claude CLI execution failed: %w\nOutput: %s", err, string(output))
+		log.Printf("[Claude CLI] Output preview: %s", outputPreview)
+		return nil, fmt.Errorf("claude CLI execution failed: %w (output preview: %s)", err, outputPreview)
 	}
 
 	log.Printf("[Claude CLI] Command completed in %v", duration)
@@ -104,9 +113,10 @@ func callClaudeCLI(workDir, prompt, model string) (*CLIResult, error) {
 	// Parse JSON response
 	var result CLIResult
 	if err := json.Unmarshal(output, &result); err != nil {
+		outputPreview := truncateString(string(output), 1000)
 		log.Printf("[Claude CLI] Failed to parse JSON response: %v", err)
-		log.Printf("[Claude CLI] Raw output: %s", string(output))
-		return nil, fmt.Errorf("failed to parse claude CLI JSON response: %w", err)
+		log.Printf("[Claude CLI] Raw output preview: %s", outputPreview)
+		return nil, fmt.Errorf("failed to parse claude CLI JSON response: %w (output preview: %s)", err, outputPreview)
 	}
 
 	if result.IsError {
@@ -129,21 +139,29 @@ func (p *Provider) GenerateCode(ctx context.Context, req *CodeRequest) (*CodeRes
 	}
 
 	// 1. List repository files
-	files, err := listRepoFiles(req.RepoPath)
+	files, err := promptManager.ListRepoFiles(req.RepoPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list repo files: %w", err)
 	}
 
 	// 2. Build system prompt
-	systemPrompt := buildSystemPrompt(files, req.Context)
+	systemPrompt := promptManager.BuildDefaultSystemPrompt(files, req.Context)
 
 	// 3. Build full prompt with system and user content
-	fullPrompt := fmt.Sprintf("System: %s\n\nUser: %s", systemPrompt, buildUserPrompt(req.Prompt))
+	fullPrompt := fmt.Sprintf("System: %s\n\nUser: %s", systemPrompt, promptManager.BuildUserPrompt(req.Prompt))
 
 	log.Printf("[Claude] Calling Claude CLI with model: %s in directory: %s", p.model, req.RepoPath)
 
-	// 4. Call Claude CLI with correct working directory
-	result, err := callClaudeCLI(req.RepoPath, fullPrompt, p.model)
+	// 4. Get disallowed tools from context
+	disallowedTools := ""
+	if req.Context != nil {
+		if tools, ok := req.Context["disallowed_tools"]; ok {
+			disallowedTools = tools
+		}
+	}
+
+	// 5. Call Claude CLI with correct working directory
+	result, err := callClaudeCLI(req.RepoPath, fullPrompt, p.model, disallowedTools)
 	if err != nil {
 		return nil, fmt.Errorf("Claude CLI error: %w", err)
 	}
@@ -167,138 +185,6 @@ func (p *Provider) GenerateCode(ctx context.Context, req *CodeRequest) (*CodeRes
 
 	log.Printf("[Claude] Extracted %d file changes", len(response.Files))
 	return response, nil
-}
-
-// listRepoFiles lists all files in the repository (excluding .git)
-func listRepoFiles(repoPath string) ([]string, error) {
-	var files []string
-
-	err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Skip .git directory
-		if info.IsDir() && info.Name() == ".git" {
-			return filepath.SkipDir
-		}
-
-		// Skip directories and hidden files
-		if info.IsDir() || strings.HasPrefix(info.Name(), ".") {
-			return nil
-		}
-
-		// Get relative path
-		relPath, err := filepath.Rel(repoPath, path)
-		if err != nil {
-			return err
-		}
-
-		files = append(files, relPath)
-		return nil
-	})
-
-	return files, err
-}
-
-// buildSystemPrompt creates the system prompt for Claude
-func buildSystemPrompt(files []string, context map[string]string) string {
-	fileList := strings.Join(files, "\n- ")
-
-	prompt := fmt.Sprintf(`You are a code modification assistant working on a GitHub repository.
-
-Repository structure:
-- %s
-
-`, fileList)
-
-	// Add context if available (excluding issue content which is already part of the main prompt)
-	additionalContext := make([]string, 0, len(context))
-	for key, value := range context {
-		trimmedValue := strings.TrimSpace(value)
-		if trimmedValue == "" {
-			continue
-		}
-		switch key {
-		case "issue_title", "issue_body":
-			continue
-		default:
-			additionalContext = append(additionalContext, fmt.Sprintf("- %s: %s", key, trimmedValue))
-		}
-	}
-
-	if len(additionalContext) > 0 {
-		prompt += "\nAdditional Context:\n"
-		prompt += strings.Join(additionalContext, "\n")
-		prompt += "\n"
-	}
-
-	prompt += `
-When making changes:
-1. Understand the task thoroughly before making modifications
-2. Make minimal, focused changes that address the specific request
-3. Preserve existing code style and conventions
-4. Include complete file content in your response (not just diffs)
-
-## PR Size Best Practices
-
-**Small PRs are preferred and more likely to be merged quickly.**
-
-If you need to modify more than 8 files or 300 lines:
-- Consider splitting the work into multiple logical PRs
-- Separate independent changes:
-  * Tests can be added in a separate PR
-  * Documentation updates can be independent
-  * Infrastructure/internal changes separate from core logic
-  * Command-line interface changes separate from core
-
-Example split strategy:
-- PR 1: Add test infrastructure
-- PR 2: Update documentation
-- PR 3: Implement core functionality
-- PR 4: Update CLI
-
-**Note:** The system will automatically split large changes into multiple PRs.
-Focus on making logical, atomic changes that are easy to review.
-
-Return your changes in this exact format:
-<file path="path/to/file">
-<content>
-... complete file content ...
-</content>
-</file>
-
-<summary>
-Brief description of what was changed
-</summary>`
-
-	return prompt
-}
-
-// buildUserPrompt creates the user prompt with task instructions
-func buildUserPrompt(taskPrompt string) string {
-	return fmt.Sprintf(`Task: %s
-
-You can choose to either:
-
-1. Provide code changes (if modifications are needed):
-<file path="path/to/file.ext">
-<content>
-... full file content here ...
-</content>
-</file>
-
-<summary>
-Brief description of changes made
-</summary>
-
-2. Provide analysis/answer only (if no code changes needed):
-<summary>
-Your analysis, recommendations, or answer here.
-You can include explanations, task lists, or any helpful information.
-</summary>
-
-Make sure to include the COMPLETE file content when providing code changes, not just the changes.`, taskPrompt)
 }
 
 // parseCodeResponse extracts file changes and summary from Claude's response
