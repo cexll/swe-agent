@@ -167,9 +167,20 @@ func parseCodeResponse(response string) (*claude.CodeResponse, error) {
 
 	for _, match := range fileMatches {
 		if len(match) >= 3 {
+			path := strings.TrimSpace(match[1])
+			content := match[2]
+
+			if strings.EqualFold(path, "path/to/file.ext") || strings.EqualFold(path, "relative/path/to/file.go") {
+				return nil, fmt.Errorf("placeholder file path detected in response")
+			}
+
+			if strings.Contains(content, "... full file content here ...") || strings.Contains(content, "entire updated file content here") {
+				return nil, fmt.Errorf("placeholder file content detected in response")
+			}
+
 			result.Files = append(result.Files, claude.FileChange{
-				Path:    match[1],
-				Content: match[2],
+				Path:    path,
+				Content: content,
 			})
 		}
 	}
@@ -183,6 +194,20 @@ func parseCodeResponse(response string) (*claude.CodeResponse, error) {
 		result.Summary = strings.TrimSpace(response)
 	} else {
 		result.Summary = "Code changes applied"
+	}
+
+	if len(result.Files) > 0 {
+		trimmedSummary := strings.TrimSpace(result.Summary)
+		placeholderSummaries := []string{
+			"Brief description of changes made",
+			"Add user authentication to handler.go",
+		}
+
+		for _, placeholder := range placeholderSummaries {
+			if strings.EqualFold(trimmedSummary, placeholder) {
+				return nil, fmt.Errorf("placeholder summary detected in response")
+			}
+		}
 	}
 
 	// Allow responses without file changes (analysis/Q&A/recommendations)

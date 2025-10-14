@@ -191,6 +191,45 @@ func main() {
 			wantSummary: "",
 			wantErr:     true,
 		},
+		{
+			name: "placeholder template response",
+			response: `<file path="path/to/file.ext">
+<content>
+... full file content here ...
+</content>
+</file>
+
+<summary>
+Brief description of changes made
+</summary>`,
+			wantFiles:   0,
+			wantSummary: "",
+			wantErr:     true,
+		},
+		{
+			name: "placeholder summary with real file path",
+			response: `<file path="main.go"><content>package main</content></file>
+<summary>
+Brief description of changes made
+</summary>`,
+			wantFiles:   0,
+			wantSummary: "",
+			wantErr:     true,
+		},
+		{
+			name: "relative placeholder path and content",
+			response: `<file path="relative/path/to/file.go"><content>
+package example
+
+// entire updated file content here
+</content></file>
+<summary>
+Add user authentication to handler.go
+</summary>`,
+			wantFiles:   0,
+			wantSummary: "",
+			wantErr:     true,
+		},
 	}
 
 	for _, tt := range tests {

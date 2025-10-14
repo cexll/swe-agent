@@ -320,26 +320,32 @@ func (m Manager) BuildSystemPrompt(files []string, context map[string]string) st
 func (Manager) BuildUserPrompt(taskPrompt string) string {
 	return fmt.Sprintf(`Task: %s
 
-You can choose to either:
+Use the templates below. Replace the EXAMPLE placeholders with real repository data.
 
-1. Provide code changes (if modifications are needed):
-<file path="path/to/file.ext">
+Code changes required (EXAMPLE — replace all placeholder values):
+<file path="relative/path/to/file.go">
 <content>
-... full file content here ...
+package example
+
+// entire updated file content here
 </content>
 </file>
 
 <summary>
-Brief description of changes made
+Add user authentication to handler.go
 </summary>
 
-2. Provide analysis/answer only (if no code changes needed):
+Rules:
+- Replace all example values with real repository paths, code, and summaries.
+- Never return the literal strings "path/to/file.ext", "relative/path/to/file.go", "... full file content here ...", or "Brief description of changes made".
+- Include the complete file content for every modified file.
+- If multiple files change, include additional <file ...> blocks.
+
+Analysis only (when no code changes are needed):
 <summary>
 Your analysis, recommendations, or answer here.
 You can include explanations, task lists, or any helpful information.
-</summary>
-
-Make sure to include the COMPLETE file content when providing code changes, not just the changes.`, taskPrompt)
+</summary>`, taskPrompt)
 }
 
 // BuildInstructionChecklist exposes the shared execution checklist for use in status comments.

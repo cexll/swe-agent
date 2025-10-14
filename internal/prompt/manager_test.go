@@ -245,8 +245,11 @@ func TestManager_BuildUserPrompt_Format(t *testing.T) {
 	if !strings.Contains(output, "Task: Implement feature X") {
 		t.Fatalf("User prompt missing task line:\n%s", output)
 	}
-	if !strings.Contains(output, "<file path=\"path/to/file.ext\">") {
-		t.Fatalf("User prompt missing file template:\n%s", output)
+	if !strings.Contains(output, "Code changes required (EXAMPLE") {
+		t.Fatalf("User prompt missing code change example section:\n%s", output)
+	}
+	if !strings.Contains(output, "Never return the literal strings \"path/to/file.ext\"") {
+		t.Fatalf("User prompt missing placeholder warning:\n%s", output)
 	}
 	if !strings.Contains(output, "<summary>") {
 		t.Fatalf("User prompt missing summary guidance:\n%s", output)
