@@ -89,43 +89,10 @@ func (p *Provider) GenerateCode(ctx context.Context, req *claude.CodeRequest) (*
 }
 
 func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (string, float64, error) {
-	// Use codex CLI exec for non-interactive execution
-	// Format: codex exec [OPTIONS] [PROMPT]
-	// Reference: codex exec -h for all options
+	ctx, cancel := ensureCodexTimeout(ctx)
+	defer cancel()
 
-	// Add timeout to prevent hanging (default 10 minutes if no context deadline)
-	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 10*time.Minute)
-		defer cancel()
-	}
-
-	args := []string{
-		"exec",
-		"-m", p.model, // Model selection
-		"-c", `model_reasoning_effort="high"`, // Request deeper reasoning
-		"--dangerously-bypass-approvals-and-sandbox", // Skip all confirmation prompts
-		"--json",       // Structured output for easier parsing
-		"-C", repoPath, // Working directory
-		prompt, // Initial instructions
-	}
-
-	cmd := execCommandContext(ctx, codexCommand, args...)
-
-	// Set environment variables for OpenAI API if provided
-	env := os.Environ()
-	if p.apiKey != "" {
-		env = append(env, "OPENAI_API_KEY="+p.apiKey)
-	}
-	if p.baseURL != "" {
-		env = append(env, "OPENAI_BASE_URL="+p.baseURL)
-	}
-	cmd.Env = env
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd, stdout, stderr := p.buildCodexCommand(ctx, repoPath, prompt)
 
 	log.Printf("[Codex] Executing: codex exec -m %s -c model_reasoning_effort=\"high\" --dangerously-bypass-approvals-and-sandbox -C %s", p.model, repoPath)
 	log.Printf("[Codex] Prompt length: %d characters", len(prompt))
@@ -135,21 +102,7 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 		duration := time.Since(startTime)
 		log.Printf("[Codex] Command failed after %v", duration)
 
-		stderrText := strings.TrimSpace(stderr.String())
-		stdoutText := strings.TrimSpace(stdout.String())
-		if stderrText == "" {
-			if parsed := aggregateCodexOutput(stdoutText); parsed != "" {
-				stderrText = parsed
-			} else if stdoutText != "" {
-				stderrText = stdoutText
-			}
-		}
-		if stderrText == "" {
-			stderrText = err.Error()
-		}
-		stderrPreview := truncateLogString(stderrText, 1000)
-
-		// Check if it was a timeout
+		stderrPreview := summarizeCodexError(err, stdout, stderr)
 		if ctx.Err() == context.DeadlineExceeded {
 			return "", 0, fmt.Errorf("codex CLI timeout after %v: %s", duration, stderrPreview)
 		}
@@ -164,10 +117,9 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 	if parsedOutput == "" {
 		parsedOutput = strings.TrimSpace(output)
 	}
+
 	log.Printf("[Codex] Command completed in %v, output length: %d bytes", duration, len(output))
 
-	// Codex CLI returns the full conversation/output
-	// We'll use the raw output as the response
 	return parsedOutput, 0, nil
 }
 
@@ -326,4 +278,60 @@ func getString(m map[string]interface{}, key string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func ensureCodexTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, 10*time.Minute)
+}
+
+func (p *Provider) buildCodexCommand(ctx context.Context, repoPath, prompt string) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer) {
+	args := []string{
+		"exec",
+		"-m", p.model,
+		"-c", `model_reasoning_effort="high"`,
+		"--dangerously-bypass-approvals-and-sandbox",
+		"--json",
+		"-C", repoPath,
+		prompt,
+	}
+
+	cmd := execCommandContext(ctx, codexCommand, args...)
+
+	env := os.Environ()
+	if p.apiKey != "" {
+		env = append(env, "OPENAI_API_KEY="+p.apiKey)
+	}
+	if p.baseURL != "" {
+		env = append(env, "OPENAI_BASE_URL="+p.baseURL)
+	}
+	cmd.Env = env
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	return cmd, &stdout, &stderr
+}
+
+func summarizeCodexError(runErr error, stdout, stderr *bytes.Buffer) string {
+	stderrText := strings.TrimSpace(stderr.String())
+	stdoutText := strings.TrimSpace(stdout.String())
+
+	if stderrText == "" {
+		if parsed := aggregateCodexOutput(stdoutText); parsed != "" {
+			stderrText = parsed
+		} else if stdoutText != "" {
+			stderrText = stdoutText
+		}
+	}
+
+	if stderrText == "" && runErr != nil {
+		stderrText = runErr.Error()
+	}
+
+	return truncateLogString(stderrText, 1000)
 }

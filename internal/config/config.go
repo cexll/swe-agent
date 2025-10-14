@@ -106,6 +106,19 @@ func normalizePrivateKey(value string) string {
 
 // validate checks that all required configuration is present
 func (c *Config) validate() error {
+	if err := c.validateGitHubCredentials(); err != nil {
+		return err
+	}
+
+	if err := c.validateProviderConfig(); err != nil {
+		return err
+	}
+
+	c.applyDispatcherDefaults()
+	return c.validateDispatcherConfig()
+}
+
+func (c *Config) validateGitHubCredentials() error {
 	if c.GitHubAppID == "" {
 		return fmt.Errorf("GITHUB_APP_ID is required")
 	}
@@ -115,22 +128,26 @@ func (c *Config) validate() error {
 	if c.GitHubWebhookSecret == "" {
 		return fmt.Errorf("GITHUB_WEBHOOK_SECRET is required")
 	}
+	return nil
+}
 
-	// Validate provider-specific configuration
+func (c *Config) validateProviderConfig() error {
 	switch c.Provider {
 	case "claude":
 		if c.ClaudeAPIKey == "" {
 			return fmt.Errorf("ANTHROPIC_API_KEY is required for claude provider")
 		}
 	case "codex":
-		// OpenAI API key is optional (can use default credentials)
 		if c.OpenAIAPIKey == "" {
 			log.Printf("Warning: OPENAI_API_KEY not set, using default OpenAI credentials")
 		}
 	default:
 		return fmt.Errorf("invalid provider: %s (must be 'claude' or 'codex')", c.Provider)
 	}
+	return nil
+}
 
+func (c *Config) applyDispatcherDefaults() {
 	if c.DispatcherWorkers <= 0 {
 		c.DispatcherWorkers = 4
 	}
@@ -149,7 +166,9 @@ func (c *Config) validate() error {
 	if c.DispatcherBackoffMultiplier < 1 {
 		c.DispatcherBackoffMultiplier = 2
 	}
+}
 
+func (c *Config) validateDispatcherConfig() error {
 	if c.DispatcherWorkers <= 0 {
 		return fmt.Errorf("DISPATCHER_WORKERS must be greater than 0")
 	}
@@ -168,7 +187,6 @@ func (c *Config) validate() error {
 	if c.DispatcherBackoffMultiplier < 1 {
 		return fmt.Errorf("DISPATCHER_BACKOFF_MULTIPLIER must be >= 1")
 	}
-
 	return nil
 }
 

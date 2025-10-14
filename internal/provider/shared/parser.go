@@ -169,24 +169,31 @@ func extractMarkdownFileBlocks(response string) []FileChange {
 	return files
 }
 
+func isPlaceholderPath(path string) bool {
+	key := strings.ToLower(strings.TrimSpace(path))
+	_, ok := placeholderPaths[key]
+	return ok
+}
+
+func isPlaceholderContent(content string) bool {
+	for _, snippet := range placeholderContentSnippets {
+		if strings.Contains(content, snippet) {
+			return true
+		}
+	}
+	return false
+}
+
 func filterPlaceholderFiles(providerLabel string, files []FileChange) []FileChange {
 	var filtered []FileChange
 
 	for _, file := range files {
-		pathKey := strings.ToLower(strings.TrimSpace(file.Path))
-		if _, ok := placeholderPaths[pathKey]; ok {
+		if isPlaceholderPath(file.Path) {
 			logPlaceholder(providerLabel, "Ignoring placeholder file path entry: %s", file.Path)
 			continue
 		}
 
-		isPlaceholder := false
-		for _, snippet := range placeholderContentSnippets {
-			if strings.Contains(file.Content, snippet) {
-				isPlaceholder = true
-				break
-			}
-		}
-		if isPlaceholder {
+		if isPlaceholderContent(file.Content) {
 			logPlaceholder(providerLabel, "Ignoring placeholder file content for path: %s", file.Path)
 			continue
 		}

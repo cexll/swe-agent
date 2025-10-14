@@ -2,7 +2,6 @@ package executor
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -103,24 +102,16 @@ func (e *Executor) WithCloneFunc(fn CloneFunc) *Executor {
 	return e
 }
 
-// Execute executes a pilot task
-func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
+func (e *Executor) ensureAttempt(task *webhook.Task) int {
 	attempt := task.Attempt
 	if attempt <= 0 {
 		attempt = 1
 	}
 	task.Attempt = attempt
+	return attempt
+}
 
-	var (
-		branchName  string
-		isNewBranch bool
-	)
-
-	e.updateStatus(task, taskstore.StatusRunning)
-	e.addLog(task, "info", "Starting task execution for %s#%d (attempt %d)", task.Repo, task.Number, attempt)
-	log.Printf("Starting task execution for %s#%d (attempt %d)", task.Repo, task.Number, attempt)
-
-	// Build context map early
+func (e *Executor) buildExecutionContext(task *webhook.Task) map[string]string {
 	contextMap := cloneStringMap(task.PromptContext)
 	if contextMap == nil {
 		contextMap = make(map[string]string)
@@ -152,28 +143,34 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 			contextMap["trigger_display_name"] = task.Username
 		}
 	}
-
-	// Add disallowed tools to context
 	if e.disallowedTools != "" {
 		contextMap["disallowed_tools"] = e.disallowedTools
 	}
+	return contextMap
+}
 
-	// 0. Get GitHub App installation token first (needed for tracker creation)
+func (e *Executor) authenticateWithGitHub(task *webhook.Task) (*github.InstallationToken, error) {
 	log.Printf("Authenticating as GitHub App for %s", task.Repo)
 	e.addLog(task, "info", "Authenticating as GitHub App for %s", task.Repo)
+
 	installToken, err := e.appAuth.GetInstallationToken(task.Repo)
 	if err != nil {
 		e.addLog(task, "error", "Failed to authenticate: %v", err)
-		return fmt.Errorf("failed to authenticate: %v", err)
+		return nil, fmt.Errorf("failed to authenticate: %v", err)
 	}
+
 	log.Printf("Successfully authenticated (token expires at %s)", installToken.ExpiresAt.Format(time.RFC3339))
 	e.addLog(task, "info", "Authenticated as GitHub App (expires %s)", installToken.ExpiresAt.Format(time.RFC3339))
+	return installToken, nil
+}
 
-	if discussion := e.composeDiscussionSection(task, installToken.Token); discussion != "" {
+func (e *Executor) enrichPromptWithDiscussion(task *webhook.Task, token string) {
+	if discussion := e.composeDiscussionSection(task, token); discussion != "" {
 		task.Prompt = injectDiscussion(task.Prompt, discussion)
 	}
+}
 
-	// 1. Create tracking comment
+func (e *Executor) initializeTracker(task *webhook.Task, contextMap map[string]string, token string) *github.CommentTracker {
 	tracker := github.NewCommentTrackerWithClient(task.Repo, task.Number, task.Username, e.ghClient)
 	tracker.SetQueued()
 	if task.PromptSummary != "" {
@@ -183,9 +180,8 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 	}
 	tracker.State.Context = cloneStringMap(contextMap)
 
-	// Initialize task steps for progress tracking
 	tracker.AddTask("Authenticate with GitHub")
-	tracker.CompleteTask("Authenticate with GitHub") // Already completed above
+	tracker.CompleteTask("Authenticate with GitHub")
 	tracker.AddTask("Clone repository")
 	tracker.AddTask("Generate code changes")
 	tracker.AddTask("Commit and push changes")
@@ -193,24 +189,16 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 		tracker.AddTask("Create pull request")
 	}
 
-	existingCommentID := -1
-	if idStr, ok := contextMap["claude_comment_id"]; ok {
-		if parsed, err := strconv.Atoi(strings.TrimSpace(idStr)); err == nil && parsed > 0 {
-			existingCommentID = parsed
-		}
-	}
-
-	if existingCommentID > 0 {
-		tracker.CommentID = existingCommentID
-		if err := tracker.Update(installToken.Token); err != nil {
+	if existingID := extractTrackerID(contextMap["claude_comment_id"]); existingID > 0 {
+		tracker.CommentID = existingID
+		if err := tracker.Update(token); err != nil {
 			log.Printf("Warning: Failed to update existing tracking comment: %v", err)
 			e.addLog(task, "error", "Failed to update tracking comment: %v", err)
 		}
 	} else {
-		if err := tracker.Create(installToken.Token); err != nil {
+		if err := tracker.Create(token); err != nil {
 			log.Printf("Warning: Failed to create tracking comment: %v", err)
 			e.addLog(task, "error", "Failed to create tracking comment: %v", err)
-			// Continue execution even if comment creation fails
 		} else {
 			log.Printf("Created tracking comment (ID: %d)", tracker.CommentID)
 			e.addLog(task, "info", "Created tracking comment (ID: %d)", tracker.CommentID)
@@ -222,66 +210,88 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 		contextMap["claude_comment_id"] = strconv.Itoa(tracker.CommentID)
 		tracker.State.Context = cloneStringMap(contextMap)
 		tracker.SetWorking()
-		if err := tracker.Update(installToken.Token); err != nil {
+		if err := tracker.Update(token); err != nil {
 			log.Printf("Warning: Failed to update tracking comment to working status: %v", err)
 			e.addLog(task, "error", "Failed to set tracking comment to working: %v", err)
 		}
 	}
 
-	// Add "swe" label to the issue for tracking
-	if err := e.ghClient.AddLabel(task.Repo, task.Number, "swe", installToken.Token); err != nil {
+	return tracker
+}
+
+func extractTrackerID(raw string) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return -1
+	}
+	id, err := strconv.Atoi(raw)
+	if err != nil || id <= 0 {
+		return -1
+	}
+	return id
+}
+
+func (e *Executor) ensureTrackingLabel(task *webhook.Task, tracker *github.CommentTracker, token string) {
+	if err := e.ghClient.AddLabel(task.Repo, task.Number, "swe", token); err != nil {
 		log.Printf("Warning: Failed to add label: %v", err)
 		e.addLog(task, "error", "Failed to add swe label: %v", err)
 	}
+}
 
-	// 2. Clone repository
+func (e *Executor) cloneAndPrepareWorkspace(
+	task *webhook.Task,
+	tracker *github.CommentTracker,
+	token string,
+	contextMap map[string]string,
+) (workdir string, cleanup func(), branchName string, isNewBranch bool, err error) {
 	tracker.StartTask("Clone repository")
-	if err := tracker.Update(installToken.Token); err != nil {
+	if err := tracker.Update(token); err != nil {
 		log.Printf("Warning: Failed to update progress: %v", err)
 	}
+
 	log.Printf("Cloning repository %s (branch: %s)", task.Repo, task.Branch)
 	e.addLog(task, "info", "Cloning repository %s (branch %s)", task.Repo, task.Branch)
-	workdir, cleanup, err := e.cloneFn(task.Repo, task.Branch, installToken.Token)
+
+	workdir, cleanup, err = e.cloneFn(task.Repo, task.Branch, token)
 	if err != nil {
 		tracker.FailTask("Clone repository")
-		return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to clone repository: %v", err))
+		return "", nil, "", false, e.handleError(task, tracker, token, fmt.Sprintf("Failed to clone repository: %v", err))
 	}
-	defer cleanup()
 
 	branchName, isNewBranch, err = e.prepareBranch(workdir, task)
 	if err != nil {
 		tracker.FailTask("Clone repository")
-		return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to prepare branch: %v", err))
+		cleanup()
+		return "", nil, "", false, e.handleError(task, tracker, token, fmt.Sprintf("Failed to prepare branch: %v", err))
 	}
 
 	contextMap["claude_branch"] = branchName
-	if tracker.State.Context == nil {
-		tracker.State.Context = make(map[string]string)
-	}
-	tracker.State.Context["claude_branch"] = branchName
+	tracker.State.Context = cloneStringMap(contextMap)
 
 	tracker.CompleteTask("Clone repository")
 	log.Printf("Repository cloned to %s", workdir)
 	e.addLog(task, "info", "Repository cloned to %s", workdir)
 
-	// 3. Call AI provider to generate changes
+	return workdir, cleanup, branchName, isNewBranch, nil
+}
+
+func (e *Executor) generateCodeChanges(
+	ctx context.Context,
+	task *webhook.Task,
+	workdir string,
+	contextMap map[string]string,
+	tracker *github.CommentTracker,
+	token string,
+) (*claude.CodeResponse, error) {
 	tracker.StartTask("Generate code changes")
-	if err := tracker.Update(installToken.Token); err != nil {
+	if err := tracker.Update(token); err != nil {
 		log.Printf("Warning: Failed to update progress: %v", err)
 	}
+
 	log.Printf("Calling %s provider (prompt length: %d chars)", e.provider.Name(), len(task.Prompt))
 	e.addLog(task, "info", "Calling %s provider", e.provider.Name())
 
-	// Record git status before calling Claude for comparison
-	preClaudeStatus := ""
-	if os.Getenv("DEBUG_GIT_DETECTION") == "true" {
-		cmd := execCommand("git", "status", "--porcelain", "--untracked-files=all")
-		cmd.Dir = workdir
-		if output, err := cmd.CombinedOutput(); err == nil {
-			preClaudeStatus = strings.TrimSpace(string(output))
-			log.Printf("[Pre-Claude] Git status:\n%s", preClaudeStatus)
-		}
-	}
+	preStatus := captureGitStatus(workdir)
 
 	result, err := e.provider.GenerateCode(ctx, &claude.CodeRequest{
 		Prompt:   task.Prompt,
@@ -290,47 +300,72 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 	})
 	if err != nil {
 		tracker.FailTask("Generate code changes")
-		return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("%s error: %v", e.provider.Name(), err))
+		return nil, e.handleError(task, tracker, token, fmt.Sprintf("%s error: %v", e.provider.Name(), err))
 	}
+
 	tracker.CompleteTask("Generate code changes")
 
 	log.Printf("%s completed (cost: $%.4f)", e.provider.Name(), result.CostUSD)
 	e.addLog(task, "info", "%s completed (cost: $%.4f)", e.provider.Name(), result.CostUSD)
 
-	// Record git status after calling Claude for comparison
-	if os.Getenv("DEBUG_GIT_DETECTION") == "true" {
-		cmd := execCommand("git", "status", "--porcelain", "--untracked-files=all")
-		cmd.Dir = workdir
-		if output, err := cmd.CombinedOutput(); err == nil {
-			postClaudeStatus := strings.TrimSpace(string(output))
-			log.Printf("[Post-Claude] Git status:\n%s", postClaudeStatus)
-			if preClaudeStatus != postClaudeStatus {
-				log.Printf("[Git Comparison] Status changed during Claude execution")
-			} else {
-				log.Printf("[Git Comparison] No status changes from Claude execution")
-			}
-		}
+	compareGitStatus(workdir, preStatus)
+
+	return result, nil
+}
+
+func captureGitStatus(workdir string) string {
+	if os.Getenv("DEBUG_GIT_DETECTION") != "true" {
+		return ""
 	}
 
-	// 4. Apply file changes if provider returned file list
-	if len(result.Files) > 0 {
-		log.Printf("%s returned %d file changes, applying them", e.provider.Name(), len(result.Files))
-		e.addLog(task, "info", "%s returned %d file changes, applying them", e.provider.Name(), len(result.Files))
-		if err := e.applyChanges(workdir, result.Files); err != nil {
-			return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to apply changes: %v", err))
-		}
+	cmd := execCommand("git", "status", "--porcelain", "--untracked-files=all")
+	cmd.Dir = workdir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	status := strings.TrimSpace(string(output))
+	if status != "" {
+		log.Printf("[Pre-Claude] Git status:\n%s", status)
 	} else {
-		log.Printf("%s did not return file list, checking git status for direct modifications", e.provider.Name())
-		e.addLog(task, "info", "%s did not return file list, checking git status", e.provider.Name())
+		log.Printf("[Pre-Claude] Git status: clean")
+	}
+	return status
+}
+
+func compareGitStatus(workdir, before string) {
+	if os.Getenv("DEBUG_GIT_DETECTION") != "true" {
+		return
 	}
 
-	// 5. Detect actual file changes using git
+	cmd := execCommand("git", "status", "--porcelain", "--untracked-files=all")
+	cmd.Dir = workdir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return
+	}
+	after := strings.TrimSpace(string(output))
+	log.Printf("[Post-Claude] Git status:\n%s", after)
+	switch {
+	case before != after:
+		log.Printf("[Git Comparison] Status changed during provider execution")
+	default:
+		log.Printf("[Git Comparison] No status changes from provider execution")
+	}
+}
+
+func (e *Executor) prepareChangePlan(
+	task *webhook.Task,
+	workdir string,
+	result *claude.CodeResponse,
+	tracker *github.CommentTracker,
+	token string,
+) (*github.SplitPlan, []claude.FileChange, bool, error) {
 	hasChanges, err := e.detectGitChanges(workdir)
 	if err != nil {
-		return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to detect changes: %v", err))
+		return nil, nil, false, e.handleError(task, tracker, token, fmt.Sprintf("Failed to detect changes: %v", err))
 	}
 
-	// 5.1. If no changes detected but we had file responses, try alternative detection
 	if !hasChanges && len(result.Files) > 0 {
 		log.Printf("Git detected no changes but we have %d file responses - performing manual verification", len(result.Files))
 		e.addLog(task, "info", "Performing manual file verification")
@@ -345,97 +380,98 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 	}
 
 	if !hasChanges {
-		// No actual file changes detected, just post the AI's response
 		log.Printf("No file changes detected in working directory (analysis/answer only)")
 		e.addLog(task, "info", "No file changes detected (response only)")
-		return e.handleResponseOnly(task, tracker, installToken.Token, result)
+		if err := e.handleResponseOnly(task, tracker, token, result); err != nil {
+			return nil, nil, true, err
+		}
+		return nil, nil, true, nil
 	}
 
 	log.Printf("File changes detected in working directory, proceeding with commit")
 	e.addLog(task, "info", "File changes detected, preparing commit")
 
-	// 5.5. Get changed files from git status
 	changedFiles, err := e.getChangedFiles(workdir)
 	if err != nil {
-		return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to get changed files: %v", err))
+		return nil, nil, false, e.handleError(task, tracker, token, fmt.Sprintf("Failed to get changed files: %v", err))
 	}
+
 	log.Printf("Detected %d changed files", len(changedFiles))
 	e.addLog(task, "info", "Detected %d changed files", len(changedFiles))
 
-	// 5.6. Analyze and decide if splitting is needed
 	splitter := github.NewPRSplitter(8, 300)
 	plan := splitter.Analyze(changedFiles, task.Prompt)
 
 	log.Printf("Split analysis: %d sub-PRs planned", len(plan.SubPRs))
 	e.addLog(task, "info", "Split analysis planned %d sub-PRs", len(plan.SubPRs))
 
-	// 5.7. Execute based on split plan
-	if len(plan.SubPRs) > 1 {
-		// Multiple PRs needed - use split workflow
-		log.Printf("Using multi-PR workflow")
-		e.addLog(task, "info", "Using multi-PR workflow")
-		return e.executeMultiPR(ctx, task, workdir, plan, result, tracker, installToken.Token)
-	}
+	return plan, changedFiles, false, nil
+}
 
-	// 5.8. Single PR workflow (original logic)
+func (e *Executor) executeSinglePRWorkflow(
+	task *webhook.Task,
+	tracker *github.CommentTracker,
+	token string,
+	result *claude.CodeResponse,
+	workdir string,
+	branchName string,
+	isNewBranch bool,
+) error {
 	log.Printf("Using single-PR workflow")
 	e.addLog(task, "info", "Using single-PR workflow")
 
-	// 6. Smart branch strategy: branch was prepared during clone step
-	if branchName == "" {
-		err := errors.New("branch preparation missing")
+	if strings.TrimSpace(branchName) == "" {
 		tracker.FailTask("Commit and push changes")
-		return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to determine branch: %v", err))
+		return e.handleError(task, tracker, token, "Failed to determine branch: branch name is empty")
 	}
 
 	log.Printf("Committing changes to branch %s", branchName)
 	e.addLog(task, "info", "Committing changes to branch %s", branchName)
 
 	tracker.StartTask("Commit and push changes")
-	if err := tracker.Update(installToken.Token); err != nil {
+	if err := tracker.Update(token); err != nil {
 		log.Printf("Warning: Failed to update progress: %v", err)
 	}
 
 	commitMsg := e.formatCommitMessage(result.Summary, task)
-	if err := e.commitAndPush(workdir, task.Repo, branchName, commitMsg, isNewBranch, installToken.Token); err != nil {
+	if err := e.commitAndPush(workdir, task.Repo, branchName, commitMsg, isNewBranch, token); err != nil {
 		tracker.FailTask("Commit and push changes")
-		return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to commit/push: %v", err))
+		return e.handleError(task, tracker, token, fmt.Sprintf("Failed to commit/push: %v", err))
 	}
 	tracker.CompleteTask("Commit and push changes")
 
-	// 7. Create PR link
 	if !task.IsPR || task.PRState != "open" {
 		tracker.StartTask("Create pull request")
-		if err := tracker.Update(installToken.Token); err != nil {
+		if err := tracker.Update(token); err != nil {
 			log.Printf("Warning: Failed to update progress: %v", err)
 		}
 	}
 
 	log.Printf("Creating PR from %s to %s", branchName, task.Branch)
 	e.addLog(task, "info", "Creating PR from %s to %s", branchName, task.Branch)
+
 	prURL, err := e.createPRLink(task.Repo, branchName, task.Branch, result.Summary)
 	if err != nil {
 		if !task.IsPR || task.PRState != "open" {
 			tracker.FailTask("Create pull request")
 		}
-		return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to create PR: %v", err))
+		return e.handleError(task, tracker, token, fmt.Sprintf("Failed to create PR: %v", err))
 	}
 	if !task.IsPR || task.PRState != "open" {
 		tracker.CompleteTask("Create pull request")
 	}
+
 	log.Printf("PR link created: %s", prURL)
 	e.addLog(task, "info", "PR link created: %s", prURL)
 
-	// 8. Build branch URL
 	branchURL := fmt.Sprintf("https://github.com/%s/tree/%s", task.Repo, url.PathEscape(branchName))
 
-	// 9. Update tracking comment with success
 	tracker.MarkEnd()
 	tracker.SetCompleted(result.Summary, e.extractFilePaths(result.Files), result.CostUSD)
 	tracker.SetBranch(branchName, branchURL)
 	tracker.SetPRURL(prURL)
 
-	if err := tracker.Update(installToken.Token); err != nil {
+	if err := tracker.Update(token); err != nil {
 		log.Printf("Warning: Failed to update tracking comment: %v", err)
 		e.addLog(task, "error", "Failed to update tracking comment: %v", err)
 	}
@@ -444,6 +480,66 @@ func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
 	e.addLog(task, "success", "Task completed successfully")
 	e.updateStatus(task, taskstore.StatusCompleted)
 	return nil
+}
+
+// Execute executes a pilot task
+func (e *Executor) Execute(ctx context.Context, task *webhook.Task) error {
+	attempt := e.ensureAttempt(task)
+
+	e.updateStatus(task, taskstore.StatusRunning)
+	e.addLog(task, "info", "Starting task execution for %s#%d (attempt %d)", task.Repo, task.Number, attempt)
+	log.Printf("Starting task execution for %s#%d (attempt %d)", task.Repo, task.Number, attempt)
+
+	contextMap := e.buildExecutionContext(task)
+
+	installToken, err := e.authenticateWithGitHub(task)
+	if err != nil {
+		return err
+	}
+
+	e.enrichPromptWithDiscussion(task, installToken.Token)
+
+	tracker := e.initializeTracker(task, contextMap, installToken.Token)
+
+	e.ensureTrackingLabel(task, tracker, installToken.Token)
+
+	workdir, cleanup, branchName, isNewBranch, err := e.cloneAndPrepareWorkspace(task, tracker, installToken.Token, contextMap)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	result, err := e.generateCodeChanges(ctx, task, workdir, contextMap, tracker, installToken.Token)
+	if err != nil {
+		return err
+	}
+
+	if len(result.Files) > 0 {
+		log.Printf("%s returned %d file changes, applying them", e.provider.Name(), len(result.Files))
+		e.addLog(task, "info", "%s returned %d file changes, applying them", e.provider.Name(), len(result.Files))
+		if err := e.applyChanges(workdir, result.Files); err != nil {
+			return e.handleError(task, tracker, installToken.Token, fmt.Sprintf("Failed to apply changes: %v", err))
+		}
+	} else {
+		log.Printf("%s did not return file list, checking git status for direct modifications", e.provider.Name())
+		e.addLog(task, "info", "%s did not return file list, checking git status", e.provider.Name())
+	}
+
+	plan, _, handled, err := e.prepareChangePlan(task, workdir, result, tracker, installToken.Token)
+	if err != nil {
+		return err
+	}
+	if handled {
+		return nil
+	}
+
+	if len(plan.SubPRs) > 1 {
+		log.Printf("Using multi-PR workflow")
+		e.addLog(task, "info", "Using multi-PR workflow")
+		return e.executeMultiPR(ctx, task, workdir, plan, result, tracker, installToken.Token)
+	}
+
+	return e.executeSinglePRWorkflow(task, tracker, installToken.Token, result, workdir, branchName, isNewBranch)
 }
 
 // applyChanges writes file changes to disk with enhanced validation and logging
