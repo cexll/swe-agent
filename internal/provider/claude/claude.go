@@ -7,11 +7,11 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/cexll/swe/internal/prompt"
+	"github.com/cexll/swe/internal/provider/shared"
 )
 
 // FileChange represents a file modification
@@ -190,146 +190,34 @@ func (p *Provider) GenerateCode(ctx context.Context, req *CodeRequest) (*CodeRes
 // parseCodeResponse extracts file changes and summary from Claude's response
 // Enhanced with multiple format support and debugging
 func parseCodeResponse(response string) (*CodeResponse, error) {
-	result := &CodeResponse{
-		Files: []FileChange{},
-	}
-
-	// Debug logging if enabled
 	if os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
 		log.Printf("[Parse] Parsing response of %d characters", len(response))
 		log.Printf("[Parse] Response preview: %s...", truncateString(response, 200))
 	}
 
-	// Primary parsing: XML-style file blocks
-	result.Files = append(result.Files, parseXMLFileBlocks(response)...)
-
-	// Fallback parsing: Markdown code blocks if no XML found
-	if len(result.Files) == 0 {
-		result.Files = append(result.Files, parseMarkdownCodeBlocks(response)...)
+	parsed, err := shared.ParseResponse("Claude", response)
+	if err != nil {
+		return nil, err
 	}
 
-	// Extract summary
-	result.Summary = extractSummary(response, len(result.Files) > 0)
+	result := &CodeResponse{
+		Summary: parsed.Summary,
+		Files:   make([]FileChange, 0, len(parsed.Files)),
+	}
 
-	// Debug results
+	for _, file := range parsed.Files {
+		result.Files = append(result.Files, FileChange{
+			Path:    file.Path,
+			Content: file.Content,
+		})
+	}
+
 	if os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
 		log.Printf("[Parse] Found %d file changes", len(result.Files))
 		log.Printf("[Parse] Summary: %s", truncateString(result.Summary, 100))
 	}
 
-	// Validation
-	if len(result.Files) == 0 && strings.TrimSpace(result.Summary) == "" {
-		return nil, fmt.Errorf("no content found in response")
-	}
-
 	return result, nil
-}
-
-// parseXMLFileBlocks extracts files from XML-style blocks
-func parseXMLFileBlocks(response string) []FileChange {
-	var files []FileChange
-
-	// Enhanced regex for XML file blocks - more flexible with whitespace
-	fileRegex := regexp.MustCompile(`(?s)<file\s+path=["']([^"']+)["']>\s*<content>\s*(.*?)\s*</content>\s*</file>`)
-	fileMatches := fileRegex.FindAllStringSubmatch(response, -1)
-
-	for _, match := range fileMatches {
-		if len(match) >= 3 {
-			path := strings.TrimSpace(match[1])
-			content := match[2] // Don't trim content as it might be significant
-
-			if path != "" {
-				files = append(files, FileChange{
-					Path:    path,
-					Content: content,
-				})
-			}
-		}
-	}
-
-	return files
-}
-
-// parseMarkdownCodeBlocks extracts files from markdown-style code blocks
-func parseMarkdownCodeBlocks(response string) []FileChange {
-	var files []FileChange
-
-	// Look for patterns like:
-	// ```go filename.go
-	// code content
-	// ```
-	// or
-	// **filename.go:**
-	// ```go
-	// code content
-	// ```
-
-	// Pattern 1: ```language filename (require language, more specific matching)
-	// Only match if there's actually a filename (contains . or /) after language
-	codeBlockRegex1 := regexp.MustCompile("```(\\w+)\\s+([^\\s\\n]*[./][^\\s\\n]*)\\s*\\n([\\s\\S]*?)\\n```")
-	matches1 := codeBlockRegex1.FindAllStringSubmatch(response, -1)
-
-	for _, match := range matches1 {
-		if len(match) >= 4 {
-			// match[1] = language, match[2] = path, match[3] = content
-			path := strings.TrimSpace(match[2])
-			content := match[3]
-
-			// Regex already ensures path contains . or /, so no need to check again
-			files = append(files, FileChange{
-				Path:    path,
-				Content: content,
-			})
-		}
-	}
-
-	// Pattern 2: **filename:** followed by code block
-	headerRegex := regexp.MustCompile(`(?s)\*\*([^*]+)\*\*:?\s*\n` + "`" + `{3}\w*\s*\n(.*?)\n` + "`" + `{3}`)
-	matches2 := headerRegex.FindAllStringSubmatch(response, -1)
-
-	for _, match := range matches2 {
-		if len(match) >= 3 {
-			path := strings.TrimSpace(match[1])
-			// Remove any trailing colon
-			path = strings.TrimSuffix(path, ":")
-			content := match[2]
-
-			// Only consider it a file if path looks like a file path
-			if strings.Contains(path, ".") || strings.Contains(path, "/") {
-				files = append(files, FileChange{
-					Path:    path,
-					Content: content,
-				})
-			}
-		}
-	}
-
-	return files
-}
-
-// extractSummary extracts summary from various formats
-func extractSummary(response string, hasFiles bool) string {
-	// Try <summary> tags first
-	summaryRegex := regexp.MustCompile(`(?s)<summary>\s*(.*?)\s*</summary>`)
-	summaryMatch := summaryRegex.FindStringSubmatch(response)
-	if len(summaryMatch) >= 2 {
-		return strings.TrimSpace(summaryMatch[1])
-	}
-
-	// Try ## Summary or ### Summary headers
-	headerRegex := regexp.MustCompile(`(?s)#+\s*Summary\s*\n(.*?)(?:\n#+|$)`)
-	headerMatch := headerRegex.FindStringSubmatch(response)
-	if len(headerMatch) >= 2 {
-		return strings.TrimSpace(headerMatch[1])
-	}
-
-	// If no files found, use entire response as summary
-	if !hasFiles {
-		return strings.TrimSpace(response)
-	}
-
-	// Default summary for file changes
-	return "Code changes applied"
 }
 
 // truncateString truncates a string for logging

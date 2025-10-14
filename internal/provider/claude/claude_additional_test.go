@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cexll/swe/internal/provider/shared"
 )
 
 func writeExecutable(t *testing.T, dir, name, content string) string {
@@ -108,15 +110,18 @@ func TestGenerateCode_CLIReportedError(t *testing.T) {
 
 func TestParseMarkdownCodeBlocksVariants(t *testing.T) {
 	response := "```go handlers/login.go\npackage handlers\n```\n\n**docs/setup.md:**\n```md\n# Setup\n```"
-	files := parseMarkdownCodeBlocks(response)
-	if len(files) != 2 {
-		t.Fatalf("expected 2 files, got %d", len(files))
+	parsed, err := shared.ParseResponse("ClaudeTest", response)
+	if err != nil {
+		t.Fatalf("ParseResponse() error = %v", err)
 	}
-	if files[0].Path != "handlers/login.go" {
-		t.Fatalf("first path = %q", files[0].Path)
+	if len(parsed.Files) != 2 {
+		t.Fatalf("expected 2 files, got %d", len(parsed.Files))
 	}
-	if files[1].Path != "docs/setup.md" {
-		t.Fatalf("second path = %q", files[1].Path)
+	if parsed.Files[0].Path != "handlers/login.go" {
+		t.Fatalf("first path = %q", parsed.Files[0].Path)
+	}
+	if parsed.Files[1].Path != "docs/setup.md" {
+		t.Fatalf("second path = %q", parsed.Files[1].Path)
 	}
 }
 

@@ -9,12 +9,12 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/cexll/swe/internal/prompt"
 	"github.com/cexll/swe/internal/provider/claude"
+	"github.com/cexll/swe/internal/provider/shared"
 )
 
 const (
@@ -24,21 +24,6 @@ const (
 
 var execCommandContext = exec.CommandContext
 var promptManager = prompt.NewManager()
-
-var (
-	placeholderPaths = map[string]struct{}{
-		"path/to/file.ext":         {},
-		"relative/path/to/file.go": {},
-	}
-	placeholderContentSnippets = []string{
-		"... full file content here ...",
-		"entire updated file content here",
-	}
-	placeholderSummaries = map[string]struct{}{
-		"brief description of changes made":     {},
-		"add user authentication to handler.go": {},
-	}
-)
 
 // Provider implements the AI provider interface for Codex MCP
 type Provider struct {
@@ -188,67 +173,21 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 
 // parseCodeResponse extracts file changes and summary from Codex response
 func parseCodeResponse(response string) (*claude.CodeResponse, error) {
+	parsed, err := shared.ParseResponse("Codex", response)
+	if err != nil {
+		return nil, err
+	}
+
 	result := &claude.CodeResponse{
-		Files: []claude.FileChange{},
+		Summary: parsed.Summary,
+		Files:   make([]claude.FileChange, 0, len(parsed.Files)),
 	}
 
-	fileRegex := regexp.MustCompile(`(?s)<file path="([^"]+)">\s*<content>\s*(.*?)\s*</content>\s*</file>`)
-	fileMatches := fileRegex.FindAllStringSubmatch(response, -1)
-
-	for _, match := range fileMatches {
-		if len(match) < 3 {
-			continue
-		}
-
-		path := strings.TrimSpace(match[1])
-		content := match[2]
-
-		if _, ok := placeholderPaths[strings.ToLower(path)]; ok {
-			log.Printf("[Codex] Ignoring placeholder file path entry: %s", path)
-			continue
-		}
-
-		isPlaceholderContent := false
-		for _, snippet := range placeholderContentSnippets {
-			if strings.Contains(content, snippet) {
-				isPlaceholderContent = true
-				break
-			}
-		}
-		if isPlaceholderContent {
-			log.Printf("[Codex] Ignoring placeholder file content for path: %s", path)
-			continue
-		}
-
+	for _, file := range parsed.Files {
 		result.Files = append(result.Files, claude.FileChange{
-			Path:    path,
-			Content: content,
+			Path:    file.Path,
+			Content: file.Content,
 		})
-	}
-
-	summaryRegex := regexp.MustCompile(`(?s)<summary>\s*(.*?)\s*</summary>`)
-	summaryMatch := summaryRegex.FindStringSubmatch(response)
-	if len(summaryMatch) >= 2 {
-		result.Summary = strings.TrimSpace(summaryMatch[1])
-	} else if len(result.Files) == 0 {
-		// No files and no <summary> tag, use raw response as content
-		result.Summary = strings.TrimSpace(response)
-	} else {
-		result.Summary = "Code changes applied"
-	}
-
-	if len(result.Files) > 0 {
-		if _, ok := placeholderSummaries[strings.ToLower(result.Summary)]; ok {
-			result.Summary = "Code changes applied"
-		}
-	} else if _, ok := placeholderSummaries[strings.ToLower(result.Summary)]; ok {
-		return nil, fmt.Errorf("placeholder summary detected in response")
-	}
-
-	// Allow responses without file changes (analysis/Q&A/recommendations)
-	// As long as there's meaningful content in the summary
-	if len(result.Files) == 0 && strings.TrimSpace(result.Summary) == "" {
-		return nil, fmt.Errorf("no content found in response")
 	}
 
 	return result, nil

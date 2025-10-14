@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cexll/swe/internal/provider/shared"
 )
 
 // TestCodexInvoke_EndToEndIgnoresPlaceholders performs a live Codex CLI call to ensure
@@ -81,7 +83,7 @@ Integration success
 		t.Fatalf("missing integration.txt output; files: %+v", response.Files)
 	}
 
-	if _, isPlaceholder := placeholderSummaries[strings.ToLower(response.Summary)]; isPlaceholder {
+	if shared.IsPlaceholderSummary(response.Summary) {
 		t.Fatalf("summary should not be placeholder, got %q", response.Summary)
 	}
 }

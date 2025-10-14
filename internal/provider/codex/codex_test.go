@@ -246,6 +246,23 @@ Add user authentication to handler.go
 			wantSummary: "",
 			wantErr:     true,
 		},
+		{
+			name: "permission request summary",
+			response: `<summary>
+The M1 implementation provides:
+- WorkflowState data structure for tracking multi-stage workflow
+- Clarify prompt generator for Stage 0
+
+Next Steps:
+- Create the files listed above
+- Add unit tests for each component
+
+Would you like me to proceed with creating these files if you grant the necessary permissions, or would you prefer to create them manually?
+</summary>`,
+			wantFiles:   0,
+			wantSummary: "",
+			wantErr:     true,
+		},
 	}
 
 	for _, tt := range tests {
