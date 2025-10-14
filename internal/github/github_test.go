@@ -287,9 +287,10 @@ func TestClone_ParameterTypes(t *testing.T) {
 	// Test that function accepts correct parameter types
 	var repo string = "owner/repo"
 	var branch string = "main"
+	var token string = "token"
 
 	// Type checking - this will compile if types are correct
-	_, _, _ = Clone(repo, branch)
+	_, _, _ = Clone(repo, branch, token)
 }
 
 // TestClone_CommandConstruction verifies that the gh clone command is constructed correctly

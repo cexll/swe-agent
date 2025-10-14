@@ -604,6 +604,43 @@ func TestNewCommentTrackerWithClient(t *testing.T) {
 	}
 }
 
+func TestCommentTracker_TaskLifecycle(t *testing.T) {
+	tracker := NewCommentTracker("owner/repo", 999, "user")
+
+	tracker.AddTask("clone")
+	if len(tracker.State.Tasks) != 1 {
+		t.Fatalf("expected 1 task after AddTask, got %d", len(tracker.State.Tasks))
+	}
+	if tracker.State.Tasks[0].Status != "pending" {
+		t.Fatalf("initial status = %s, want pending", tracker.State.Tasks[0].Status)
+	}
+
+	tracker.StartTask("clone")
+	if tracker.State.Tasks[0].Status != "running" {
+		t.Fatalf("status after StartTask = %s, want running", tracker.State.Tasks[0].Status)
+	}
+
+	tracker.CompleteTask("clone")
+	if tracker.State.Tasks[0].Status != "completed" {
+		t.Fatalf("status after CompleteTask = %s, want completed", tracker.State.Tasks[0].Status)
+	}
+	if tracker.State.Tasks[0].Timestamp.IsZero() {
+		t.Fatal("expected timestamp to be set after completion")
+	}
+
+	tracker.AddTask("apply")
+	tracker.FailTask("apply")
+
+	if tracker.State.Tasks[1].Status != "failed" {
+		t.Fatalf("status after FailTask = %s, want failed", tracker.State.Tasks[1].Status)
+	}
+
+	// Calling StartTask on nonexistent task should be a no-op
+	tracker.StartTask("does-not-exist")
+	if len(tracker.State.Tasks) != 2 {
+		t.Fatalf("unexpected task mutation after StartTask on missing task: %d", len(tracker.State.Tasks))
+	}
+}
 func TestCommentTracker_CreateSuccess(t *testing.T) {
 	mockClient := NewMockGHClient()
 	mockClient.CreateCommentFunc = func(repo string, number int, body, token string) (int, error) {
