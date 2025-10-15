@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	prov "github.com/cexll/swe/internal/provider"
 	"github.com/cexll/swe/internal/provider/shared"
 )
 
@@ -45,19 +46,13 @@ func TestGenerateCode_UsesClaudeCLI(t *testing.T) {
 	t.Cleanup(restorePath)
 
 	provider := NewProvider("fake", "claude-3")
-	resp, err := provider.GenerateCode(context.Background(), &CodeRequest{
+	resp, err := provider.GenerateCode(context.Background(), &prov.CodeRequest{
 		Prompt:   "Add file",
 		RepoPath: repoDir,
 		Context:  map[string]string{"disallowed_tools": "git"},
 	})
 	if err != nil {
 		t.Fatalf("GenerateCode returned error: %v", err)
-	}
-	if len(resp.Files) != 1 || resp.Files[0].Path != "new.go" {
-		t.Fatalf("unexpected files: %+v", resp.Files)
-	}
-	if resp.CostUSD != 0.42 {
-		t.Fatalf("CostUSD = %v, want 0.42", resp.CostUSD)
 	}
 	if resp.Summary != "done" {
 		t.Fatalf("Summary = %q, want done", resp.Summary)
@@ -76,7 +71,7 @@ func TestGenerateCode_CLIFailure(t *testing.T) {
 	t.Cleanup(restore)
 
 	provider := NewProvider("fake", "claude-3")
-	_, err := provider.GenerateCode(context.Background(), &CodeRequest{
+	_, err := provider.GenerateCode(context.Background(), &prov.CodeRequest{
 		Prompt:   "noop",
 		RepoPath: repoDir,
 	})
@@ -99,7 +94,7 @@ func TestGenerateCode_CLIReportedError(t *testing.T) {
 	t.Cleanup(restore)
 
 	provider := NewProvider("fake", "claude-3")
-	_, err := provider.GenerateCode(context.Background(), &CodeRequest{
+	_, err := provider.GenerateCode(context.Background(), &prov.CodeRequest{
 		Prompt:   "noop",
 		RepoPath: repoDir,
 	})

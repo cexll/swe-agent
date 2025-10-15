@@ -11,8 +11,8 @@ import (
 )
 
 var runRepoClone = func(repo, branch, token, dest string) error {
-    // Pass through to underlying git clone with shallow/single-branch options for stability/perf
-    cmd := exec.Command("gh", "repo", "clone", repo, dest, "--", "-b", branch, "--depth=1", "--single-branch")
+	// Pass through to underlying git clone with shallow/single-branch options for stability/perf
+	cmd := exec.Command("gh", "repo", "clone", repo, dest, "--", "-b", branch, "--depth=1", "--single-branch")
 	if token != "" {
 		// Set both GITHUB_TOKEN and GH_TOKEN for maximum compatibility with gh CLI
 		cmd.Env = append(os.Environ(),

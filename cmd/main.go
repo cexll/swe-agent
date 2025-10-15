@@ -10,7 +10,6 @@ import (
 	"github.com/cexll/swe/internal/dispatcher"
 	"github.com/cexll/swe/internal/executor"
 	"github.com/cexll/swe/internal/github"
-	"github.com/cexll/swe/internal/provider"
 	"github.com/cexll/swe/internal/taskstore"
 	"github.com/cexll/swe/internal/web"
 	"github.com/cexll/swe/internal/webhook"
@@ -21,7 +20,6 @@ import (
 var (
 	loadDotEnv         = godotenv.Load
 	newTaskStore       = taskstore.NewStore
-	newProvider        = provider.NewProvider
 	newDispatcher      = dispatcher.New
 	newWebHandler      = web.NewHandler
 	defaultListenServe = http.ListenAndServe
@@ -60,31 +58,7 @@ func run(ctx context.Context, serve func(string, http.Handler) error) error {
 	}
 
 	// Initialize AI provider based on configuration
-	var aiProvider provider.Provider
-
-	switch cfg.Provider {
-	case "claude":
-		log.Printf("Claude model: %s", cfg.ClaudeModel)
-		aiProvider, err = newProvider(&provider.Config{
-			Name:         "claude",
-			ClaudeAPIKey: cfg.ClaudeAPIKey,
-			ClaudeModel:  cfg.ClaudeModel,
-		})
-	case "codex":
-		log.Printf("Codex model: %s", cfg.CodexModel)
-		if cfg.OpenAIBaseURL != "" {
-			log.Printf("Using custom OpenAI Base URL: %s", cfg.OpenAIBaseURL)
-		}
-		aiProvider, err = newProvider(&provider.Config{
-			Name:          "codex",
-			OpenAIAPIKey:  cfg.OpenAIAPIKey,
-			OpenAIBaseURL: cfg.OpenAIBaseURL,
-			CodexModel:    cfg.CodexModel,
-		})
-	default:
-		return fmt.Errorf("unsupported provider: %s", cfg.Provider)
-	}
-
+	aiProvider, err := cfg.NewProvider()
 	if err != nil {
 		return fmt.Errorf("failed to initialize AI provider: %w", err)
 	}
@@ -92,8 +66,8 @@ func run(ctx context.Context, serve func(string, http.Handler) error) error {
 
 	// Initialize executor
 	exec := executor.New(aiProvider, appAuth)
-	exec.WithStore(taskStore)
-	exec.WithDisallowedTools(cfg.DisallowedTools)
+	// Wrap the new executor with an adapter to satisfy dispatcher.TaskExecutor
+	adapted := executor.NewAdapter(exec)
 
 	// Initialize dispatcher (task queue with retries)
 	dispatcherConfig := dispatcher.Config{
@@ -104,7 +78,7 @@ func run(ctx context.Context, serve func(string, http.Handler) error) error {
 		BackoffMultiplier: cfg.DispatcherBackoffMultiplier,
 		MaxBackoff:        cfg.DispatcherRetryMax,
 	}
-	taskDispatcher := newDispatcher(exec, dispatcherConfig)
+	taskDispatcher := newDispatcher(adapted, dispatcherConfig)
 	defer taskDispatcher.Shutdown(ctx)
 
 	// Initialize webhook handler
@@ -136,7 +110,7 @@ func run(ctx context.Context, serve func(string, http.Handler) error) error {
 	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"service":"swe-agent","status":"running","trigger":"%s"}`, cfg.TriggerKeyword)
+		fmt.Fprint(w, "OK")
 	}).Methods("GET")
 
 	// Start server

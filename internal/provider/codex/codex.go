@@ -12,9 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cexll/swe/internal/prompt"
-	"github.com/cexll/swe/internal/provider/claude"
-	"github.com/cexll/swe/internal/provider/shared"
+	"github.com/cexll/swe/internal/provider"
 )
 
 const (
@@ -23,7 +21,8 @@ const (
 )
 
 var execCommandContext = exec.CommandContext
-var promptManager = prompt.NewManager()
+
+// No prompt manager here; executor builds the full prompt already
 
 // Provider implements the AI provider interface for Codex MCP
 type Provider struct {
@@ -57,35 +56,30 @@ func (p *Provider) Name() string {
 }
 
 // GenerateCode generates code changes using Codex MCP CLI
-func (p *Provider) GenerateCode(ctx context.Context, req *claude.CodeRequest) (*claude.CodeResponse, error) {
+func (p *Provider) GenerateCode(ctx context.Context, req *provider.CodeRequest) (*provider.CodeResponse, error) {
 	log.Printf("[Codex] Starting code generation (prompt length: %d chars)", len(req.Prompt))
 
-	files, err := promptManager.ListRepoFiles(req.RepoPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list repo files: %w", err)
+	// Provide GitHub token to MCP tools via env
+	if req.Context != nil {
+		if tok, ok := req.Context["github_token"]; ok && tok != "" {
+			os.Setenv("GITHUB_TOKEN", tok)
+			os.Setenv("GH_TOKEN", tok)
+		}
 	}
+	// Ensure sandbox runs with full access per instruction
+	os.Setenv("SANDBOX_MODE", "danger-full-access")
 
-	systemPrompt := promptManager.BuildDefaultSystemPrompt(files, req.Context)
-	userPrompt := promptManager.BuildUserPrompt(req.Prompt)
+	// Executor already constructed the full prompt (system + user + GH XML)
+	fullPrompt := executionPrefix + req.Prompt
 
-	fullPrompt := executionPrefix + systemPrompt + "\n\n" + userPrompt
-
-	responseText, cost, err := p.invokeCodex(ctx, fullPrompt, req.RepoPath)
+	responseText, _, err := p.invokeCodex(ctx, fullPrompt, req.RepoPath)
 	if err != nil {
 		return nil, err
 	}
 
-	response, err := parseCodeResponse(responseText)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	response.CostUSD = cost
-
-	log.Printf("[Codex] Response length: %d characters, cost: $%.4f", len(responseText), response.CostUSD)
-	log.Printf("[Codex] Extracted %d file changes", len(response.Files))
-
-	return response, nil
+	// We only need to return a summary for bookkeeping.
+	log.Printf("[Codex] Response length: %d characters", len(responseText))
+	return &provider.CodeResponse{Summary: truncateLogString(responseText, 2000)}, nil
 }
 
 func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (string, float64, error) {
@@ -121,28 +115,6 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 	log.Printf("[Codex] Command completed in %v, output length: %d bytes", duration, len(output))
 
 	return parsedOutput, 0, nil
-}
-
-// parseCodeResponse extracts file changes and summary from Codex response
-func parseCodeResponse(response string) (*claude.CodeResponse, error) {
-	parsed, err := shared.ParseResponse("Codex", response)
-	if err != nil {
-		return nil, err
-	}
-
-	result := &claude.CodeResponse{
-		Summary: parsed.Summary,
-		Files:   make([]claude.FileChange, 0, len(parsed.Files)),
-	}
-
-	for _, file := range parsed.Files {
-		result.Files = append(result.Files, claude.FileChange{
-			Path:    file.Path,
-			Content: file.Content,
-		})
-	}
-
-	return result, nil
 }
 
 func truncateLogString(s string, maxLen int) string {
@@ -307,6 +279,15 @@ func (p *Provider) buildCodexCommand(ctx context.Context, repoPath, prompt strin
 	if p.baseURL != "" {
 		env = append(env, "OPENAI_BASE_URL="+p.baseURL)
 	}
+	// Pass through GitHub token for MCP tools
+	if gh := os.Getenv("GITHUB_TOKEN"); gh != "" {
+		env = append(env, "GITHUB_TOKEN="+gh, "GH_TOKEN="+gh)
+	}
+	// Prefer request-scoped token if provided in context
+	// Note: executor should set this env before invoking provider, but we also
+	// propagate if present in req.Context to be explicit.
+	// (We cannot read req here, so ensure executor sets process env.)
+	env = append(env, "SANDBOX_MODE=danger-full-access")
 	cmd.Env = env
 
 	var stdout bytes.Buffer

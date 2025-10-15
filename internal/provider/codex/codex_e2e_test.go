@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	prov "github.com/cexll/swe/internal/provider"
 	"github.com/cexll/swe/internal/provider/shared"
 )
 
@@ -55,35 +56,17 @@ Integration success
 </summary>
 `
 
-	raw, _, err := provider.invokeCodex(ctx, prompt, tmpDir)
+	req := &prov.CodeRequest{Prompt: prompt, RepoPath: tmpDir, Context: map[string]string{}}
+	resp, err := provider.GenerateCode(ctx, req)
 	if err != nil {
-		t.Fatalf("invokeCodex() error: %v", err)
+		t.Fatalf("GenerateCode() error: %v", err)
 	}
 
-	if !strings.Contains(raw, `<file path="relative/path/to/file.go">`) {
-		t.Fatalf("live output missing placeholder path; raw response:\n%s", raw)
+	if strings.TrimSpace(resp.Summary) == "" {
+		t.Fatalf("expected non-empty summary from Codex")
 	}
 
-	response, err := parseCodeResponse(raw)
-	if err != nil {
-		t.Fatalf("parseCodeResponse() error: %v", err)
-	}
-
-	var integrationMatches int
-	for _, file := range response.Files {
-		if strings.Contains(strings.ToLower(file.Path), "relative/path/to/file.go") {
-			t.Fatalf("placeholder file path still present in parsed files: %s", file.Path)
-		}
-		if file.Path == "integration.txt" && strings.Contains(file.Content, "integration success") {
-			integrationMatches++
-		}
-	}
-
-	if integrationMatches == 0 {
-		t.Fatalf("missing integration.txt output; files: %+v", response.Files)
-	}
-
-	if shared.IsPlaceholderSummary(response.Summary) {
-		t.Fatalf("summary should not be placeholder, got %q", response.Summary)
+	if shared.IsPlaceholderSummary(resp.Summary) {
+		t.Fatalf("summary should not be placeholder, got %q", resp.Summary)
 	}
 }

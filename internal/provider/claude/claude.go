@@ -11,28 +11,11 @@ import (
 	"time"
 
 	"github.com/cexll/swe/internal/prompt"
+	"github.com/cexll/swe/internal/provider"
 	"github.com/cexll/swe/internal/provider/shared"
 )
 
-// FileChange represents a file modification
-type FileChange struct {
-	Path    string
-	Content string
-}
-
-// CodeRequest contains input for code generation
-type CodeRequest struct {
-	Prompt   string            // User instruction
-	RepoPath string            // Repository path
-	Context  map[string]string // Additional context
-}
-
-// CodeResponse contains the AI-generated code changes
-type CodeResponse struct {
-	Files   []FileChange // Modified files
-	Summary string       // Summary of changes
-	CostUSD float64      // Cost in USD
-}
+// Legacy types removed; use provider.CodeRequest/CodeResponse
 
 // CLIResult represents the result from Claude CLI
 type CLIResult struct {
@@ -127,7 +110,7 @@ func callClaudeCLI(workDir, prompt, model, disallowedTools string) (*CLIResult, 
 }
 
 // GenerateCode generates code changes using Claude Code CLI
-func (p *Provider) GenerateCode(ctx context.Context, req *CodeRequest) (*CodeResponse, error) {
+func (p *Provider) GenerateCode(ctx context.Context, req *provider.CodeRequest) (*provider.CodeResponse, error) {
 	log.Printf("[Claude] Starting code generation (prompt length: %d chars)", len(req.Prompt))
 
 	// Validate working directory
@@ -175,21 +158,19 @@ func (p *Provider) GenerateCode(ctx context.Context, req *CodeRequest) (*CodeRes
 	}
 
 	// 5. Parse response
-	response, err := parseCodeResponse(responseText)
+	parsed, err := parseCodeResponse(responseText)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Set cost
-	response.CostUSD = result.CostUSD
-
-	log.Printf("[Claude] Extracted %d file changes", len(response.Files))
-	return response, nil
+	// Return minimal response per new interface
+	log.Printf("[Claude] Response length: %d characters", len(responseText))
+	return &provider.CodeResponse{Summary: parsed.Summary}, nil
 }
 
 // parseCodeResponse extracts file changes and summary from Claude's response
 // Enhanced with multiple format support and debugging
-func parseCodeResponse(response string) (*CodeResponse, error) {
+func parseCodeResponse(response string) (*provider.CodeResponse, error) {
 	if os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
 		log.Printf("[Parse] Parsing response of %d characters", len(response))
 		log.Printf("[Parse] Response preview: %s...", truncateString(response, 200))
@@ -199,24 +180,10 @@ func parseCodeResponse(response string) (*CodeResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	result := &CodeResponse{
-		Summary: parsed.Summary,
-		Files:   make([]FileChange, 0, len(parsed.Files)),
-	}
-
-	for _, file := range parsed.Files {
-		result.Files = append(result.Files, FileChange{
-			Path:    file.Path,
-			Content: file.Content,
-		})
-	}
-
+	result := &provider.CodeResponse{Summary: parsed.Summary}
 	if os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
-		log.Printf("[Parse] Found %d file changes", len(result.Files))
 		log.Printf("[Parse] Summary: %s", truncateString(result.Summary, 100))
 	}
-
 	return result, nil
 }
 

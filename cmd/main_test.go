@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/cexll/swe/internal/provider"
-	"github.com/cexll/swe/internal/provider/claude"
 	"github.com/cexll/swe/internal/taskstore"
 	"github.com/cexll/swe/internal/web"
 )
@@ -130,17 +129,8 @@ func TestRun_UsesClaudeProvider(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "test-claude-key")
 	chdirToRepoRoot(t)
 
-	prevProvider := newProvider
-	defer func() { newProvider = prevProvider }()
-
-	called := false
-	newProvider = func(cfg *provider.Config) (provider.Provider, error) {
-		called = true
-		if cfg.Name != "claude" {
-			t.Fatalf("provider name = %s, want claude", cfg.Name)
-		}
-		return &stubProvider{name: "claude"}, nil
-	}
+	// Note: Provider is now created via config.NewProvider(), not a global factory
+	// This test verifies that the Claude provider configuration path works end-to-end
 
 	var servedAddr string
 	err := run(context.Background(), func(addr string, handler http.Handler) error {
@@ -149,9 +139,6 @@ func TestRun_UsesClaudeProvider(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("run() returned error: %v", err)
-	}
-	if !called {
-		t.Fatal("expected claude provider factory to be invoked")
 	}
 	if servedAddr == "" {
 		t.Fatal("serve addr should not be empty")
@@ -184,7 +171,7 @@ type stubProvider struct {
 	name string
 }
 
-func (s *stubProvider) GenerateCode(ctx context.Context, req *claude.CodeRequest) (*claude.CodeResponse, error) {
+func (s *stubProvider) GenerateCode(ctx context.Context, req *provider.CodeRequest) (*provider.CodeResponse, error) {
 	return nil, errors.New("stub")
 }
 

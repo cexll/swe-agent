@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/cexll/swe/internal/prompt"
+	prov "github.com/cexll/swe/internal/provider"
 )
 
 var testPromptManager = prompt.NewManager()
@@ -42,7 +43,6 @@ func TestParseCodeResponse(t *testing.T) {
 		name        string
 		response    string
 		wantErr     bool
-		wantFiles   int
 		wantSummary string
 	}{
 		{
@@ -61,7 +61,6 @@ func main() {
 Added hello world program
 </summary>`,
 			wantErr:     false,
-			wantFiles:   1,
 			wantSummary: "Added hello world program",
 		},
 		{
@@ -82,7 +81,6 @@ package utils
 Created main and utils files
 </summary>`,
 			wantErr:     false,
-			wantFiles:   2,
 			wantSummary: "Created main and utils files",
 		},
 		{
@@ -93,21 +91,18 @@ package test
 </content>
 </file>`,
 			wantErr:     false,
-			wantFiles:   1,
 			wantSummary: "Code changes applied",
 		},
 		{
 			name:        "no file changes (text response only)",
 			response:    `<summary>Nothing to do</summary>`,
 			wantErr:     false,
-			wantFiles:   0,
 			wantSummary: "Nothing to do",
 		},
 		{
 			name:        "plain text response without tags",
 			response:    `This is a plain text analysis without any XML tags. The issue is caused by X and can be fixed by doing Y.`,
 			wantErr:     false,
-			wantFiles:   0,
 			wantSummary: "This is a plain text analysis without any XML tags. The issue is caused by X and can be fixed by doing Y.",
 		},
 		{
@@ -121,7 +116,6 @@ package test
 package test
 </file>`,
 			wantErr:     false,
-			wantFiles:   0,
 			wantSummary: "<file path=\"test.go\">\npackage test\n</file>",
 		},
 		{
@@ -136,7 +130,6 @@ package utils
 Added helper functions
 </summary>`,
 			wantErr:     false,
-			wantFiles:   1,
 			wantSummary: "Added helper functions",
 		},
 		{
@@ -159,7 +152,6 @@ func main() {
 Implemented main function with proper formatting
 </summary>`,
 			wantErr:     false,
-			wantFiles:   1,
 			wantSummary: "Implemented main function with proper formatting",
 		},
 	}
@@ -177,22 +169,8 @@ Implemented main function with proper formatting
 				return
 			}
 
-			if len(result.Files) != tt.wantFiles {
-				t.Errorf("Files count = %d, want %d", len(result.Files), tt.wantFiles)
-			}
-
 			if result.Summary != tt.wantSummary {
 				t.Errorf("Summary = %q, want %q", result.Summary, tt.wantSummary)
-			}
-
-			// Verify file contents are not empty
-			for i, file := range result.Files {
-				if file.Path == "" {
-					t.Errorf("File[%d].Path is empty", i)
-				}
-				if file.Content == "" {
-					t.Errorf("File[%d].Content is empty", i)
-				}
 			}
 		})
 	}
@@ -476,7 +454,7 @@ func TestListRepoFiles_NestedGitDirectory(t *testing.T) {
 
 func TestCodeRequest_Validation(t *testing.T) {
 	// Test CodeRequest structure
-	req := &CodeRequest{
+	req := &prov.CodeRequest{
 		Prompt:   "test prompt",
 		RepoPath: "/tmp/repo",
 		Context: map[string]string{
@@ -496,38 +474,13 @@ func TestCodeRequest_Validation(t *testing.T) {
 }
 
 func TestCodeResponse_Validation(t *testing.T) {
-	// Test CodeResponse structure
-	resp := &CodeResponse{
-		Files: []FileChange{
-			{Path: "test.go", Content: "package test"},
-		},
+	// Test CodeResponse structure (Summary only in new interface)
+	resp := &prov.CodeResponse{
 		Summary: "Test summary",
-		CostUSD: 0.05,
 	}
 
-	if len(resp.Files) == 0 {
-		t.Error("Files should not be empty")
-	}
 	if resp.Summary == "" {
 		t.Error("Summary should not be empty")
-	}
-	if resp.CostUSD < 0 {
-		t.Error("CostUSD should not be negative")
-	}
-}
-
-func TestFileChange_Validation(t *testing.T) {
-	// Test FileChange structure
-	change := FileChange{
-		Path:    "main.go",
-		Content: "package main",
-	}
-
-	if change.Path == "" {
-		t.Error("Path should not be empty")
-	}
-	if change.Content == "" {
-		t.Error("Content should not be empty")
 	}
 }
 
@@ -587,9 +540,6 @@ package test
 			}
 
 			if !tt.wantErr {
-				if len(result.Files) == 0 {
-					t.Error("parseCodeResponse() should return at least one file")
-				}
 				if result.Summary == "" {
 					t.Error("parseCodeResponse() should return a summary")
 				}

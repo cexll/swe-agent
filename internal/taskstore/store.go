@@ -95,3 +95,30 @@ func (s *Store) AddLog(id string, level, message string) {
 		task.UpdatedAt = time.Now()
 	}
 }
+
+// SupersedeOlder marks older tasks for the same repo/issue as failed so that
+// only the newest /code comment drives execution. Returns the number of tasks affected.
+// KISS: linear scan is sufficient for webhook loads and keeps code simple.
+func (s *Store) SupersedeOlder(owner, name string, number int, exceptID string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for id, t := range s.tasks {
+		if id == exceptID {
+			continue
+		}
+		if t.RepoOwner == owner && t.RepoName == name && t.IssueNumber == number {
+			if t.Status == StatusPending {
+				t.Status = StatusFailed
+				t.UpdatedAt = time.Now()
+				t.Logs = append(t.Logs, LogEntry{
+					Timestamp: time.Now(),
+					Level:     "info",
+					Message:   "Superseded by newer /code comment",
+				})
+				n++
+			}
+		}
+	}
+	return n
+}

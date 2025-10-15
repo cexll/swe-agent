@@ -1,16 +1,16 @@
 package webhook
 
 import (
-    "encoding/json"
-    "errors"
-    "fmt"
-    "io"
-    "log"
-    "os"
-    "net/http"
-    "strconv"
-    "strings"
-    "time"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/cexll/swe/internal/github"
 	"github.com/cexll/swe/internal/taskstore"
@@ -32,6 +32,9 @@ type Task struct {
 	Username      string // User who triggered the task
 	Attempt       int    // Current attempt number (managed by dispatcher)
 	PromptContext map[string]string
+	// Raw webhook preservation for adapter-based execution
+	RawPayload []byte
+	EventType  string
 }
 
 // TaskDispatcher enqueues tasks for asynchronous execution
@@ -162,10 +165,10 @@ func (h *Handler) handleIssueComment(w http.ResponseWriter, payload []byte) {
 	// 7. Check if this is a PR or issue
 	isPR := event.Issue.PullRequest != nil
 
-    prompt := buildPrompt(event.Issue.Title, event.Issue.Body, customInstruction)
+	prompt := buildPrompt(event.Issue.Title, event.Issue.Body, customInstruction)
 	promptSummary := buildPromptSummary(event.Issue.Title, customInstruction, isPR)
 
-	// 8. Create task
+	// 8. Create task (preserve raw payload for executor adapter)
 	task := &Task{
 		ID:            h.generateTaskID(event.Repository.FullName, event.Issue.Number),
 		Repo:          event.Repository.FullName,
@@ -178,11 +181,13 @@ func (h *Handler) handleIssueComment(w http.ResponseWriter, payload []byte) {
 		IsPR:          isPR,
 		Username:      event.Comment.User.Login,
 		PromptContext: buildPromptContextForIssue(event, h.triggerKeyword, isPR),
+		RawPayload:    payload,
+		EventType:     "issue_comment",
 	}
 
 	h.createStoreTask(task)
 
-    // No extra execution mode hints: keep KISS and rely on latest trigger comment
+	// No extra execution mode hints: keep KISS and rely on latest trigger comment
 
 	log.Printf("Received task: repo=%s, number=%d, commentID=%d, user=%s", task.Repo, task.Number, event.Comment.ID, task.Username)
 
@@ -244,7 +249,7 @@ func (h *Handler) handleReviewComment(w http.ResponseWriter, payload []byte) {
 		return
 	}
 
-    prompt := buildPrompt(event.PullRequest.Title, event.PullRequest.Body, customInstruction)
+	prompt := buildPrompt(event.PullRequest.Title, event.PullRequest.Body, customInstruction)
 	promptSummary := buildPromptSummary(event.PullRequest.Title, customInstruction, true)
 
 	branch := event.PullRequest.Base.Ref
@@ -266,11 +271,13 @@ func (h *Handler) handleReviewComment(w http.ResponseWriter, payload []byte) {
 		PRState:       event.PullRequest.State,
 		Username:      event.Comment.User.Login,
 		PromptContext: buildPromptContextForReview(event, h.triggerKeyword),
+		RawPayload:    payload,
+		EventType:     "pull_request_review_comment",
 	}
 
 	h.createStoreTask(task)
 
-    // No execution mode injection to avoid over-design
+	// No execution mode injection to avoid over-design
 
 	log.Printf("Received review task: repo=%s, number=%d, commentID=%d, user=%s", task.Repo, task.Number, event.Comment.ID, task.Username)
 
@@ -286,18 +293,18 @@ func (h *Handler) generateTaskID(repo string, number int) string {
 // verifyPermission checks if the user has permission to trigger tasks
 // Returns true if user is the GitHub App installer
 func (h *Handler) verifyPermission(repo, username string) bool {
-    // Allow override via environment for development or lenient deployments
-    if strings.EqualFold(strings.TrimSpace(os.Getenv("ALLOW_ALL_USERS")), "true") ||
-        strings.EqualFold(strings.TrimSpace(os.Getenv("PERMISSION_MODE")), "open") {
-        log.Printf("Permission override enabled via env (ALLOW_ALL_USERS/PERMISSION_MODE), allowing user %s", username)
-        return true
-    }
+	// Allow override via environment for development or lenient deployments
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("ALLOW_ALL_USERS")), "true") ||
+		strings.EqualFold(strings.TrimSpace(os.Getenv("PERMISSION_MODE")), "open") {
+		log.Printf("Permission override enabled via env (ALLOW_ALL_USERS/PERMISSION_MODE), allowing user %s", username)
+		return true
+	}
 
-    if h.appAuth == nil {
-        // No auth provider, allow all (for testing)
-        log.Printf("Warning: No app auth provider configured, allowing all users")
-        return true
-    }
+	if h.appAuth == nil {
+		// No auth provider, allow all (for testing)
+		log.Printf("Warning: No app auth provider configured, allowing all users")
+		return true
+	}
 
 	// Get the installation owner
 	owner, err := h.appAuth.GetInstallationOwner(repo)
@@ -334,6 +341,12 @@ func (h *Handler) createStoreTask(task *Task) {
 	}
 	h.store.Create(storeTask)
 	h.store.AddLog(task.ID, "info", "Task queued")
+
+	// Ensure newest comment wins: mark older tasks for the same issue as superseded.
+	if n := h.store.SupersedeOlder(owner, name, task.Number, task.ID); n > 0 {
+		log.Printf("Superseded %d older task(s) for %s#%d", n, task.Repo, task.Number)
+		h.store.AddLog(task.ID, "info", fmt.Sprintf("Superseded %d older task(s)", n))
+	}
 }
 
 func splitRepo(full string) (string, string) {
@@ -489,6 +502,11 @@ func buildPromptContextForIssue(event IssueCommentEvent, trigger string, isPR bo
 		"base_branch":          event.Repository.DefaultBranch,
 		"is_pr":                strconv.FormatBool(isPR),
 		"issue_number":         strconv.Itoa(event.Issue.Number),
+	}
+
+	// Heuristic: analysis/review-only requests should avoid branch creation
+	if isAnalysisOnly(event.Comment.Body) {
+		context["analysis_only"] = "true"
 	}
 
 	if isPR {

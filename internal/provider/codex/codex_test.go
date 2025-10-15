@@ -10,9 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cexll/swe/internal/github"
 	"github.com/cexll/swe/internal/prompt"
-	"github.com/cexll/swe/internal/provider/claude"
+	prov "github.com/cexll/swe/internal/provider"
 )
 
 func TestNewProvider_Name(t *testing.T) {
@@ -144,150 +143,7 @@ func TestInvokeCodex_Timeout(t *testing.T) {
 	}
 }
 
-// TestParseCodeResponse tests the response parsing logic
-func TestParseCodeResponse(t *testing.T) {
-	tests := []struct {
-		name        string
-		response    string
-		wantFiles   int
-		wantSummary string
-		wantErr     bool
-	}{
-		{
-			name: "valid response with files",
-			response: `<file path="main.go"><content>package main
-
-func main() {
-}
-</content></file>
-
-<summary>Created main.go</summary>`,
-			wantFiles:   1,
-			wantSummary: "Created main.go",
-			wantErr:     false,
-		},
-		{
-			name: "multiple files",
-			response: `<file path="main.go"><content>package main</content></file>
-<file path="utils.go"><content>package utils</content></file>
-<summary>Created multiple files</summary>`,
-			wantFiles:   2,
-			wantSummary: "Created multiple files",
-			wantErr:     false,
-		},
-		{
-			name:        "analysis only (no files)",
-			response:    `<summary>This is an analysis of the code.</summary>`,
-			wantFiles:   0,
-			wantSummary: "This is an analysis of the code.",
-			wantErr:     false,
-		},
-		{
-			name: "placeholder file ignored when other files valid",
-			response: `<file path="path/to/file.ext"><content>
-... full file content here ...
-</content></file>
-<file path="main.go"><content>package main</content></file>
-<summary>Created main.go</summary>`,
-			wantFiles:   1,
-			wantSummary: "Created main.go",
-			wantErr:     false,
-		},
-		{
-			name:        "raw text (no tags)",
-			response:    `This is a raw response without tags.`,
-			wantFiles:   0,
-			wantSummary: "This is a raw response without tags.",
-			wantErr:     false,
-		},
-		{
-			name:        "empty response",
-			response:    "",
-			wantFiles:   0,
-			wantSummary: "",
-			wantErr:     true,
-		},
-		{
-			name: "placeholder template response",
-			response: `<file path="path/to/file.ext">
-<content>
-... full file content here ...
-</content>
-</file>
-
-<summary>
-Brief description of changes made
-</summary>`,
-			wantFiles:   0,
-			wantSummary: "",
-			wantErr:     true,
-		},
-		{
-			name: "placeholder summary with real file path",
-			response: `<file path="main.go"><content>package main</content></file>
-<summary>
-Brief description of changes made
-</summary>`,
-			wantFiles:   1,
-			wantSummary: "Code changes applied",
-			wantErr:     false,
-		},
-		{
-			name: "relative placeholder path and content",
-			response: `<file path="relative/path/to/file.go"><content>
-package example
-
-// entire updated file content here
-</content></file>
-<summary>
-Add user authentication to handler.go
-</summary>`,
-			wantFiles:   0,
-			wantSummary: "",
-			wantErr:     true,
-		},
-		{
-			name: "permission request summary",
-			response: `<summary>
-The M1 implementation provides:
-- WorkflowState data structure for tracking multi-stage workflow
-- Clarify prompt generator for Stage 0
-
-Next Steps:
-- Create the files listed above
-- Add unit tests for each component
-
-Would you like me to proceed with creating these files if you grant the necessary permissions, or would you prefer to create them manually?
-</summary>`,
-			wantFiles:   0,
-			wantSummary: "",
-			wantErr:     true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseCodeResponse(tt.response)
-
-			if (err != nil) != tt.wantErr {
-				t.Errorf("parseCodeResponse() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if err != nil {
-				return
-			}
-
-			if len(result.Files) != tt.wantFiles {
-				t.Errorf("Files count = %d, want %d", len(result.Files), tt.wantFiles)
-			}
-
-			if result.Summary != tt.wantSummary {
-				t.Errorf("Summary = %q, want %q", result.Summary, tt.wantSummary)
-			}
-		})
-	}
-}
+// parseCodeResponse was removed; tests relying on it are no longer applicable.
 
 // TestGenerateCode_Integration tests the full GenerateCode flow (without actual codex execution)
 func TestGenerateCode_Integration(t *testing.T) {
@@ -316,7 +172,7 @@ func TestGenerateCode_Integration(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	req := &claude.CodeRequest{
+	req := &prov.CodeRequest{
 		Prompt:   "Test prompt",
 		RepoPath: tmpDir,
 		Context:  map[string]string{"test": "context"},
@@ -412,7 +268,7 @@ func TestGenerateCode_JSONOutputFeedsComment(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	req := &claude.CodeRequest{
+	req := &prov.CodeRequest{
 		Prompt:   "Test prompt",
 		RepoPath: tmpDir,
 		Context:  map[string]string{"test": "value"},
@@ -423,40 +279,13 @@ func TestGenerateCode_JSONOutputFeedsComment(t *testing.T) {
 		t.Fatalf("GenerateCode() error = %v", err)
 	}
 
-	if result.Summary != "JSON summary" {
-		t.Fatalf("Summary = %q, want %q", result.Summary, "JSON summary")
+	if !strings.Contains(result.Summary, "JSON summary") {
+		t.Fatalf("Summary should contain %q, got %q", "JSON summary", result.Summary)
 	}
 
-	if len(result.Files) != 1 {
-		t.Fatalf("Files count = %d, want 1", len(result.Files))
-	}
+	// Files removed from response; only Summary is validated.
 
-	if result.Files[0].Path != "main.go" {
-		t.Fatalf("File path = %q, want %q", result.Files[0].Path, "main.go")
-	}
-
-	if !strings.Contains(result.Files[0].Content, "package main") {
-		t.Fatalf("File content = %q, want to contain %q", result.Files[0].Content, "package main")
-	}
-
-	mockGH := github.NewMockGHClient()
-	tracker := github.NewCommentTrackerWithClient("owner/repo", 42, "tester", mockGH)
-	tracker.CommentID = 100
-
-	tracker.MarkEnd()
-	tracker.SetCompleted(result.Summary, nil, result.CostUSD)
-
-	if err := tracker.Update("token"); err != nil {
-		t.Fatalf("tracker.Update() error = %v", err)
-	}
-
-	if len(mockGH.UpdateCommentCalls) != 1 {
-		t.Fatalf("expected 1 update call, got %d", len(mockGH.UpdateCommentCalls))
-	}
-
-	if body := mockGH.UpdateCommentCalls[0].Body; !strings.Contains(body, result.Summary) {
-		t.Fatalf("comment body %q should contain summary %q", body, result.Summary)
-	}
+	// Comment tracker integration removed; only validate summary content.
 }
 
 // Helper function

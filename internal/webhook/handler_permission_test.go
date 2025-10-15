@@ -55,12 +55,12 @@ func TestHandlerVerifyPermission(t *testing.T) {
 }
 
 func TestHandlerVerifyPermission_OverrideEnv(t *testing.T) {
-    t.Setenv("PERMISSION_MODE", "open")
-    h := &Handler{appAuth: &stubAuthProvider{owner: "installer"}}
-    // Even though username != installer, override should allow
-    if !h.verifyPermission("owner/repo", "someone-else") {
-        t.Fatal("verifyPermission should allow when PERMISSION_MODE=open")
-    }
+	t.Setenv("PERMISSION_MODE", "open")
+	h := &Handler{appAuth: &stubAuthProvider{owner: "installer"}}
+	// Even though username != installer, override should allow
+	if !h.verifyPermission("owner/repo", "someone-else") {
+		t.Fatal("verifyPermission should allow when PERMISSION_MODE=open")
+	}
 }
 
 func TestHandlerCreateStoreTask(t *testing.T) {

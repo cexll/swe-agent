@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+// Global gh client instance (can be replaced for testing)
+var defaultGHClient GHClient = NewRealGHClient()
+
+// SetGHClient allows replacing the global gh client (useful for testing)
+func SetGHClient(client GHClient) {
+	defaultGHClient = client
+}
+
 func withGitHubTokenEnv(token string, fn func() error) error {
 	// Preserve original env values
 	oldGitHubToken, hadGitHubToken := os.LookupEnv("GITHUB_TOKEN")
@@ -53,7 +61,7 @@ type GHClient interface {
 	ListIssueComments(repo string, number int, token string) ([]IssueComment, error)
 
 	// ListReviewComments retrieves all review comments for the given PR
-	ListReviewComments(repo string, number int, token string) ([]ReviewComment, error)
+	ListReviewComments(repo string, number int, token string) ([]GHReviewComment, error)
 
 	// AddLabel adds a label to an issue/PR
 	AddLabel(repo string, number int, label, token string) error
@@ -72,8 +80,8 @@ type IssueComment struct {
 	CreatedAt time.Time
 }
 
-// ReviewComment represents a GitHub pull request review comment
-type ReviewComment struct {
+// GHReviewComment represents a GitHub pull request review comment (legacy type)
+type GHReviewComment struct {
 	Author    string
 	Body      string
 	Path      string
@@ -223,8 +231,8 @@ func (c *RealGHClient) ListIssueComments(repo string, number int, token string) 
 }
 
 // ListReviewComments retrieves review comments for a given PR
-func (c *RealGHClient) ListReviewComments(repo string, number int, token string) ([]ReviewComment, error) {
-	var comments []ReviewComment
+func (c *RealGHClient) ListReviewComments(repo string, number int, token string) ([]GHReviewComment, error) {
+	var comments []GHReviewComment
 	err := retryWithBackoff(func() error {
 		return withGitHubTokenEnv(token, func() error {
 			args := []string{
@@ -250,13 +258,13 @@ func (c *RealGHClient) ListReviewComments(repo string, number int, token string)
 				return fmt.Errorf("failed to parse review comments: %w", err)
 			}
 
-			comments = make([]ReviewComment, 0, len(raw))
+			comments = make([]GHReviewComment, 0, len(raw))
 			for _, item := range raw {
 				createdAt, err := time.Parse(time.RFC3339, item.CreatedAt)
 				if err != nil {
 					createdAt = time.Time{}
 				}
-				comments = append(comments, ReviewComment{
+				comments = append(comments, GHReviewComment{
 					Author:    item.User.Login,
 					Body:      item.Body,
 					Path:      item.Path,
@@ -333,7 +341,7 @@ type MockGHClient struct {
 	UpdateCommentFunc      func(repo string, commentID int, body, token string) error
 	GetCommentBodyFunc     func(repo string, commentID int, token string) (string, error)
 	ListIssueCommentsFunc  func(repo string, number int, token string) ([]IssueComment, error)
-	ListReviewCommentsFunc func(repo string, number int, token string) ([]ReviewComment, error)
+	ListReviewCommentsFunc func(repo string, number int, token string) ([]GHReviewComment, error)
 	AddLabelFunc           func(repo string, number int, label, token string) error
 	CloneFunc              func(repo, branch, destDir string) error
 	CreatePRFunc           func(workdir, repo, head, base, title, body string) (string, error)
@@ -455,7 +463,7 @@ func (m *MockGHClient) ListIssueComments(repo string, number int, token string) 
 }
 
 // ListReviewComments mock implementation
-func (m *MockGHClient) ListReviewComments(repo string, number int, token string) ([]ReviewComment, error) {
+func (m *MockGHClient) ListReviewComments(repo string, number int, token string) ([]GHReviewComment, error) {
 	m.ListReviewCommentsCalls = append(m.ListReviewCommentsCalls, struct {
 		Repo   string
 		Number int

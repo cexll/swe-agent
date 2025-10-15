@@ -61,3 +61,82 @@ func TestStore_UpdateStatusAndAddLog(t *testing.T) {
 		t.Fatal("Log timestamp should be set")
 	}
 }
+
+func TestStore_SupersedeOlder_NoMatches(t *testing.T) {
+	store := NewStore()
+	// task in other repo/issue should not be touched
+	store.Create(&Task{ID: "t1", RepoOwner: "o1", RepoName: "r1", IssueNumber: 1, Status: StatusPending})
+
+	n := store.SupersedeOlder("o2", "r2", 2, "t1")
+	if n != 0 {
+		t.Fatalf("affected = %d, want 0", n)
+	}
+	got, _ := store.Get("t1")
+	if got.Status != StatusPending {
+		t.Fatalf("status changed unexpectedly: %v", got.Status)
+	}
+}
+
+func TestStore_SupersedeOlder_MarkOlder(t *testing.T) {
+	store := NewStore()
+	// three tasks for same repo/issue, one excluded id
+	a := &Task{ID: "a", RepoOwner: "o", RepoName: "r", IssueNumber: 5, Status: StatusPending}
+	b := &Task{ID: "b", RepoOwner: "o", RepoName: "r", IssueNumber: 5, Status: StatusPending}
+	c := &Task{ID: "c", RepoOwner: "o", RepoName: "r", IssueNumber: 5, Status: StatusRunning}
+	store.Create(a)
+	store.Create(b)
+	store.Create(c)
+
+	// supersede all except b
+	n := store.SupersedeOlder("o", "r", 5, "b")
+	if n != 1 { // only 'a' is pending and not excluded; 'c' is running
+		t.Fatalf("affected = %d, want 1", n)
+	}
+
+	// a should be failed with superseded log
+	gotA, _ := store.Get("a")
+	if gotA.Status != StatusFailed {
+		t.Fatalf("a status = %s, want failed", gotA.Status)
+	}
+	if len(gotA.Logs) == 0 || gotA.Logs[len(gotA.Logs)-1].Message != "Superseded by newer /code comment" {
+		t.Fatalf("a logs missing superseded entry: %+v", gotA.Logs)
+	}
+	if gotA.UpdatedAt.IsZero() {
+		t.Fatal("a UpdatedAt should be set")
+	}
+
+	// b should remain pending (excluded)
+	gotB, _ := store.Get("b")
+	if gotB.Status != StatusPending {
+		t.Fatalf("b status = %s, want pending", gotB.Status)
+	}
+
+	// c was running; should not be force-failed
+	gotC, _ := store.Get("c")
+	if gotC.Status != StatusRunning {
+		t.Fatalf("c status = %s, want running", gotC.Status)
+	}
+}
+
+func TestStore_SupersedeOlder_MultipleOlder(t *testing.T) {
+	store := NewStore()
+	ids := []string{"x1", "x2", "x3", "x4"}
+	for _, id := range ids {
+		store.Create(&Task{ID: id, RepoOwner: "o", RepoName: "r", IssueNumber: 8, Status: StatusPending})
+	}
+	// exclude latest id x4
+	n := store.SupersedeOlder("o", "r", 8, "x4")
+	if n != 3 {
+		t.Fatalf("affected = %d, want 3", n)
+	}
+	for _, id := range ids[:3] {
+		got, _ := store.Get(id)
+		if got.Status != StatusFailed {
+			t.Fatalf("%s status = %s, want failed", id, got.Status)
+		}
+	}
+	gotX4, _ := store.Get("x4")
+	if gotX4.Status != StatusPending {
+		t.Fatalf("x4 status = %s, want pending", gotX4.Status)
+	}
+}
