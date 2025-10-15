@@ -113,6 +113,14 @@ DISPATCHER_RETRY_MAX_SECONDS=300
 DISPATCHER_BACKOFF_MULTIPLIER=2
 # SWE_AGENT_GIT_NAME=swe-agent[bot]
 # SWE_AGENT_GIT_EMAIL=123456+swe-agent[bot]@users.noreply.github.com
+
+# Debugging (optional)
+# DEBUG_CLAUDE_PARSING=true
+# DEBUG_GIT_DETECTION=true
+
+# Permission overrides (optional; use with care)
+# ALLOW_ALL_USERS=false        # when true, bypass installer-only check
+# PERMISSION_MODE=open         # alternative flag to allow all users
 ```
 
 > 🧵 **Queue Configuration Explanation**
@@ -181,6 +189,22 @@ You can also trigger on specific lines in code review:
 /code tighten error handling here
 ```
 
+#### Multi-turn (analysis → implementation)
+
+You can split the workflow into analysis and implementation using separate trigger comments:
+
+```
+/code Please analyze the approach: list steps, risks, and tests.
+```
+
+Then follow up to implement:
+
+```
+/code Proceed to implement now. Return full files using <file path=...><content>...</content></file> blocks and push.
+```
+
+Only the latest comment containing the trigger keyword is treated as the authoritative instruction. Other comments are context only.
+
 ### 3. SWE-Agent Automatically Executes
 
 SWE-Agent will automatically complete the following workflow:
@@ -206,7 +230,7 @@ SWE-Agent will automatically reply under the original comment:
 - `README.md`
 
 **Next Step:**
-[🚀 Click here to create Pull Request](https://github.com/owner/repo/compare/main...swe-agent/123-1234567890?expand=1)
+[🚀 Click here to create Pull Request](https://github.com/owner/repo/compare/main...swe-agent/123-1234567890?expand=1&quick_pull=1&title=Fix%20typo&body=Fix%20typo)
 
 ---
 

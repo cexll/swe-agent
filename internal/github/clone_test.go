@@ -14,6 +14,11 @@ import (
 func TestClone_UsesRunRepoCloneSuccess(t *testing.T) {
 	orig := runRepoClone
 	defer func() { runRepoClone = orig }()
+	origNow := nowFunc
+	defer func() { nowFunc = origNow }()
+
+	fixedNow := time.Unix(12345, 0)
+	nowFunc = func() time.Time { return fixedNow }
 
 	const expectedToken = "token-123"
 
@@ -28,6 +33,10 @@ func TestClone_UsesRunRepoCloneSuccess(t *testing.T) {
 		}
 		if token != expectedToken {
 			return fmt.Errorf("unexpected token %s", token)
+		}
+		expectedDir := filepath.Join(os.TempDir(), fmt.Sprintf("owner-repo-branch-main-%d", fixedNow.UnixNano()))
+		if dest != expectedDir {
+			return fmt.Errorf("unexpected dest %s", dest)
 		}
 		// Simulate gh clone by creating the target directory.
 		if err := os.MkdirAll(filepath.Join(dest, ".git"), 0o755); err != nil {
@@ -76,6 +85,42 @@ func TestClone_ReturnsErrorOnFailure(t *testing.T) {
 	if cleanup != nil {
 		t.Fatal("cleanup should be nil when clone fails")
 	}
+}
+
+func TestClone_IssueBranchWorkdirNaming(t *testing.T) {
+	orig := runRepoClone
+	defer func() { runRepoClone = orig }()
+	origNow := nowFunc
+	defer func() { nowFunc = origNow }()
+
+	fixedNow := time.Unix(24680, 0)
+	nowFunc = func() time.Time { return fixedNow }
+
+	runRepoClone = func(repo, branch, token, dest string) error {
+		if repo != "owner/repo" {
+			return fmt.Errorf("unexpected repo %s", repo)
+		}
+		if branch != "swe/issue-15-1760493147" {
+			return fmt.Errorf("unexpected branch %s", branch)
+		}
+		expectedDir := filepath.Join(os.TempDir(), fmt.Sprintf("owner-repo-issue-15-%d", fixedNow.UnixNano()))
+		if dest != expectedDir {
+			return fmt.Errorf("unexpected dest %s", dest)
+		}
+		return os.MkdirAll(filepath.Join(dest, ".git"), 0o755)
+	}
+
+	workdir, cleanup, err := Clone("owner/repo", "swe/issue-15-1760493147", "")
+	if err != nil {
+		t.Fatalf("Clone() error = %v, want nil", err)
+	}
+	if cleanup == nil {
+		t.Fatal("cleanup function should not be nil")
+	}
+	if filepath.Base(workdir) != fmt.Sprintf("owner-repo-issue-15-%d", fixedNow.UnixNano()) {
+		t.Fatalf("unexpected workdir basename %s", filepath.Base(workdir))
+	}
+	cleanup()
 }
 
 // skipIfNetworkUnavailable skips the test if GitHub CLI is not available or network is unreachable
@@ -209,10 +254,11 @@ func TestClone_WorkdirFormat(t *testing.T) {
 		t.Errorf("Clone() workdir = %s, should be in temp dir %s", workdir, tmpDir)
 	}
 
-	// Verify workdir name contains "pilot-"
+	// Verify workdir name contains owner/repo/branch metadata prefix
 	basename := filepath.Base(workdir)
-	if !strings.HasPrefix(basename, "pilot-") {
-		t.Errorf("Clone() workdir basename = %s, should start with 'pilot-'", basename)
+	expectedPrefix := "octocat-hello-world-branch-master-"
+	if !strings.HasPrefix(basename, expectedPrefix) {
+		t.Errorf("Clone() workdir basename = %s, should start with %q", basename, expectedPrefix)
 	}
 }
 

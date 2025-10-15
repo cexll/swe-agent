@@ -112,6 +112,14 @@ DISPATCHER_RETRY_MAX_SECONDS=300
 DISPATCHER_BACKOFF_MULTIPLIER=2
 # SWE_AGENT_GIT_NAME=swe-agent[bot]
 # SWE_AGENT_GIT_EMAIL=123456+swe-agent[bot]@users.noreply.github.com
+
+# 调试（可选）
+# DEBUG_CLAUDE_PARSING=true
+# DEBUG_GIT_DETECTION=true
+
+# 权限覆盖（可选，谨慎使用）
+# ALLOW_ALL_USERS=false       # 设为 true 时放开安装者校验
+# PERMISSION_MODE=open        # 另一种放开方式
 ```
 
 > 🧵 **队列配置说明**
@@ -178,6 +186,22 @@ go run cmd/main.go
 ```
 /code tighten error handling here
 ```
+
+#### 多轮（先分析 → 后实现）
+
+可以将流程拆分为两条触发评论：
+
+```
+/code 先进行方案分析：请列出实现步骤、风险与测试建议。
+```
+
+随后执行实现：
+
+```
+/code 按方案开始实现。请以 <file path=...><content>...</content></file> 形式返回完整文件并推送。
+```
+
+仅包含触发词的最新评论被视为“唯一指令源”，其他评论只作为上下文参考。
 
 ### 3. SWE-Agent 自动执行
 

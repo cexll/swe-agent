@@ -188,6 +188,14 @@ func TestCreatePRLink_ComprehensiveURLs(t *testing.T) {
 			if !strings.Contains(url, "expand=1") {
 				t.Errorf("URL should contain 'expand=1'")
 			}
+
+			// New behavior: quick_pull and body params should be present
+			if !strings.Contains(url, "quick_pull=1") {
+				t.Errorf("URL should contain 'quick_pull=1'")
+			}
+			if !strings.Contains(url, "body=") {
+				t.Errorf("URL should contain 'body=' parameter")
+			}
 		})
 	}
 }

@@ -1,15 +1,16 @@
 package webhook
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"log"
-	"net/http"
-	"strconv"
-	"strings"
-	"time"
+    "encoding/json"
+    "errors"
+    "fmt"
+    "io"
+    "log"
+    "os"
+    "net/http"
+    "strconv"
+    "strings"
+    "time"
 
 	"github.com/cexll/swe/internal/github"
 	"github.com/cexll/swe/internal/taskstore"
@@ -161,7 +162,7 @@ func (h *Handler) handleIssueComment(w http.ResponseWriter, payload []byte) {
 	// 7. Check if this is a PR or issue
 	isPR := event.Issue.PullRequest != nil
 
-	prompt := buildPrompt(event.Issue.Title, event.Issue.Body, customInstruction)
+    prompt := buildPrompt(event.Issue.Title, event.Issue.Body, customInstruction)
 	promptSummary := buildPromptSummary(event.Issue.Title, customInstruction, isPR)
 
 	// 8. Create task
@@ -180,6 +181,8 @@ func (h *Handler) handleIssueComment(w http.ResponseWriter, payload []byte) {
 	}
 
 	h.createStoreTask(task)
+
+    // No extra execution mode hints: keep KISS and rely on latest trigger comment
 
 	log.Printf("Received task: repo=%s, number=%d, commentID=%d, user=%s", task.Repo, task.Number, event.Comment.ID, task.Username)
 
@@ -241,7 +244,7 @@ func (h *Handler) handleReviewComment(w http.ResponseWriter, payload []byte) {
 		return
 	}
 
-	prompt := buildPrompt(event.PullRequest.Title, event.PullRequest.Body, customInstruction)
+    prompt := buildPrompt(event.PullRequest.Title, event.PullRequest.Body, customInstruction)
 	promptSummary := buildPromptSummary(event.PullRequest.Title, customInstruction, true)
 
 	branch := event.PullRequest.Base.Ref
@@ -267,6 +270,8 @@ func (h *Handler) handleReviewComment(w http.ResponseWriter, payload []byte) {
 
 	h.createStoreTask(task)
 
+    // No execution mode injection to avoid over-design
+
 	log.Printf("Received review task: repo=%s, number=%d, commentID=%d, user=%s", task.Repo, task.Number, event.Comment.ID, task.Username)
 
 	h.enqueueTask(w, task, prompt)
@@ -281,11 +286,18 @@ func (h *Handler) generateTaskID(repo string, number int) string {
 // verifyPermission checks if the user has permission to trigger tasks
 // Returns true if user is the GitHub App installer
 func (h *Handler) verifyPermission(repo, username string) bool {
-	if h.appAuth == nil {
-		// No auth provider, allow all (for testing)
-		log.Printf("Warning: No app auth provider configured, allowing all users")
-		return true
-	}
+    // Allow override via environment for development or lenient deployments
+    if strings.EqualFold(strings.TrimSpace(os.Getenv("ALLOW_ALL_USERS")), "true") ||
+        strings.EqualFold(strings.TrimSpace(os.Getenv("PERMISSION_MODE")), "open") {
+        log.Printf("Permission override enabled via env (ALLOW_ALL_USERS/PERMISSION_MODE), allowing user %s", username)
+        return true
+    }
+
+    if h.appAuth == nil {
+        // No auth provider, allow all (for testing)
+        log.Printf("Warning: No app auth provider configured, allowing all users")
+        return true
+    }
 
 	// Get the installation owner
 	owner, err := h.appAuth.GetInstallationOwner(repo)
@@ -364,6 +376,8 @@ func extractPrompt(body, triggerKeyword string) (string, bool) {
 
 	return remaining, true
 }
+
+// KISS: no execution mode classifier; resolve via prompt design only
 
 // buildPrompt builds the final prompt by treating the trigger instruction as the primary directive
 // and including the issue/PR content as contextual reference.
