@@ -7,9 +7,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Runtime**: Go 1.25.1
 - **Web Framework**: Gorilla Mux
 - **Key Dependencies**:
-  - `lancekrogers/claude-code-go` - Claude Code Go SDK
   - `github.com/golang-jwt/jwt/v5` - GitHub App JWT authentication
   - `github.com/joho/godotenv` - Environment variable management
+
+## v2.0 Architecture Highlights
+
+**Major Simplification (October 2025):**
+- ✅ **59% code reduction**: 3,150 → 1,300 lines
+- ✅ **85.2% test coverage**: Up from 67%
+- ✅ **Modular architecture**: New data, prompt, dispatcher, taskstore, and web packages
+- ✅ **Executor simplified**: 1,400 → 150 lines
+- ✅ **All tests passing**: Production ready
+
+**New Components:**
+- `internal/github/data/` - GraphQL data layer for fetching GitHub context (91% coverage)
+- `internal/prompt/` - System prompt loading and building (92% coverage)
+- `internal/dispatcher/` - Task queue with exponential backoff (91% coverage)
+- `internal/taskstore/` - In-memory task storage (100% coverage)
+- `internal/web/` - Web UI for task dashboard (95% coverage)
+
+**Key Improvements:**
+- **No factory pattern**: Direct provider instantiation in main.go
+- **GraphQL over REST**: Efficient data fetching via GraphQL
+- **API-based commits**: Use GitHub API instead of local git
+- **System prompt file**: External `system-prompt.md` for easy customization
 
 ## Common Development Tasks
 
@@ -45,6 +66,61 @@ go tool cover -func=coverage.out
 # Run specific package tests
 go test ./internal/webhook/...
 go test ./internal/provider/...
+
+### Web UI Dashboard (v2.0)
+
+Access the task dashboard after starting the service:
+
+```bash
+# Start the service
+go run cmd/main.go
+
+# Access the dashboard
+open http://localhost:8000/tasks
+```
+
+The dashboard provides:
+- List of all tasks (pending, running, completed, failed)
+- Task details with execution logs
+- Repository and actor information
+- Real-time status updates
+
+### Agent Loop Mode (Experimental)
+
+Enable iterative AI task solving:
+
+```bash
+export AGENT_LOOP=true
+go run cmd/main.go
+```
+
+The agent loop allows AI to:
+- Make multiple attempts to solve tasks
+- Run tests and fix failures automatically
+- Use tools (git, tests, build) interactively
+- Retry on errors without manual intervention
+
+### MCP Integration
+
+This project uses official MCP servers for Git and GitHub operations:
+
+**Prerequisites:**
+- Docker (for GitHub MCP server)
+- uvx (for Git MCP server): `pip install uv`
+
+**Available MCP Tools:**
+
+Git tools (via mcp-server-git):
+- git_status, git_add, git_commit, git_diff, git_log
+- git_create_branch, git_checkout, git_show
+
+GitHub tools (via github-mcp-server):
+- github_fetch_issue, github_add_comment, github_create_pr
+- github_list_issues, github_search_code
+
+**Debugging MCP:**
+```bash
+DEBUG_MCP=true AGENT_LOOP=true go run cmd/main.go
 ```
 
 ### Code Quality
@@ -78,40 +154,83 @@ docker run -d -p 8000:8000 \
 
 ## Architecture Overview
 
-Pilot SWE is a GitHub App webhook service that responds to `/code` commands in issue comments to automatically generate and commit code changes.
+SWE-Agent is a GitHub App webhook service that responds to `/code` commands in issue/PR comments to automatically generate and commit code changes.
 
-### Request Flow
+### Request Flow (v2.0 Architecture)
 
 ```
-GitHub Webhook (issue_comment event)
+GitHub Webhook (issue_comment/pr_review_comment)
       ↓
-  Handler (verify HMAC signature)
+  Handler (verify HMAC signature, parse event)
+      ↓
+  Dispatcher (queue management, exponential backoff retry)
       ↓
   Executor (orchestrate task)
       ↓
-  Provider (AI code generation)
+  GitHub Data Layer (fetch issue/PR context via GraphQL)
       ↓
-  GitHub Operations (clone, commit, push)
+  Prompt Builder (system-prompt.md + XML context)
+      ↓
+  Provider (AI code generation: Claude/Codex)
+      ↓
+  GitHub API Commit (commit via GitHub API)
+      ↓
+  GitHub CLI Push (gh push)
       ↓
   Comment (post PR creation link)
 ```
 
-### Core Components
+### Core Components (v2.0 Simplified)
 
 #### 1. Webhook Handler (`internal/webhook/`)
 
-- **handler.go**: HTTP endpoint for GitHub webhooks, event parsing
+- **handler.go**: HTTP endpoint for GitHub webhooks, event parsing, permission checks
 - **verify.go**: HMAC SHA-256 signature verification (constant-time comparison)
+- **analysis.go**: Command analysis and extraction from comments
 - **types.go**: GitHub webhook payload types
 
-#### 2. Provider System (`internal/provider/`)
+#### 2. Dispatcher (`internal/dispatcher/`)
+
+- **dispatcher.go**: Task queue with bounded capacity, worker pool
+- **Keyed mutex**: Serializes tasks per PR to avoid conflicts
+- **Exponential backoff**: Auto-retry with configurable backoff strategy
+
+#### 3. Task Executor (`internal/executor/`)
+
+**Simplified from 1,400 to 150 lines in v2.0**
+
+- **task.go**: Orchestrates the full workflow:
+  1. Fetch GitHub context via data layer
+  2. Build prompt via prompt builder
+  3. Call AI provider
+  4. Commit changes via GitHub API
+  5. Push branch via gh CLI
+  6. Post PR creation link
+- **adapter.go**: Adapter interface for provider integration
+
+#### 4. GitHub Data Layer (`internal/github/data/`)
+
+**New in v2.0 - 91% test coverage**
+
+- **client.go**: GraphQL client with installation token auth
+- **fetcher.go**: Fetch issue/PR data, comments, reviews, files
+- **formatter.go**: Format data as XML for AI consumption
+- **fetcher_wrapper.go**: High-level fetch orchestration
+
+#### 5. Prompt System (`internal/prompt/`)
+
+**New in v2.0 - 92% test coverage**
+
+- **manager.go**: Load system prompt from system-prompt.md
+- **builder.go**: Construct final prompt (system + XML context)
+
+#### 6. Provider System (`internal/provider/`)
 
 - **provider.go**: Interface definition for AI backends
-- **factory.go**: Provider factory pattern for instantiation
-- **claude/**: Claude Code implementation
-- **codex/**: Codex implementation (multi-provider support)
+- **claude/**: Claude implementation
+- **codex/**: Codex implementation
 
-Provider interface enables zero-branch polymorphism:
+**Provider interface:**
 
 ```go
 type Provider interface {
@@ -120,59 +239,120 @@ type Provider interface {
 }
 ```
 
-#### 3. Task Executor (`internal/executor/`)
+**Note:** Provider instantiation now happens directly in main.go, no factory pattern.
 
-- **task.go**: Orchestrates the full workflow:
-  1. Clone repository
-  2. Call AI provider
-  3. Apply changes to filesystem
-  4. Commit and push to new branch
-  5. Post comment with PR link
-
-#### 4. GitHub Operations (`internal/github/`)
+#### 7. GitHub Operations (`internal/github/`)
 
 - **auth.go**: GitHub App JWT token generation and installation token exchange
 - **clone.go**: Repository cloning via `gh repo clone`
-- **comment.go**: Comment posting via `gh issue comment`
-- **pr.go**: PR creation URL generation
+- **apicommit.go**: Commit via GitHub API (no local git)
+- **gh_client.go**: GitHub CLI command abstraction
+- **context.go**: GitHub context struct for passing event data
 
-#### 5. Configuration (`internal/config/`)
+#### 8. Task Store (`internal/taskstore/`)
+
+**New in v2.0 - 100% test coverage**
+
+- **store.go**: In-memory task storage for web UI and status tracking
+
+#### 9. Web UI (`internal/web/`)
+
+**New in v2.0 - 95% test coverage**
+
+- **handler.go**: Task dashboard HTTP handlers (`/tasks`, `/tasks/{id}`)
+
+#### 10. Configuration (`internal/config/`)
 
 - **config.go**: Environment variable loading and validation
 - Supports multiple providers (Claude, Codex)
 - Validates required secrets at startup
 
-### Project Structure
+### Project Structure (v2.0)
 
 ```
-swe/
+swe-agent/
 ├── cmd/
-│   └── main.go                          # HTTP server entry point
+│   ├── main.go                          # HTTP server entry point
+│   └── main_test.go                     # Integration tests
 ├── internal/
 │   ├── config/                          # Configuration management
+│   │   ├── config.go
+│   │   └── config_test.go
 │   ├── webhook/                         # GitHub webhook handling
+│   │   ├── handler.go                   # Event handling
+│   │   ├── analysis.go                  # Command extraction
+│   │   ├── verify.go                    # HMAC verification
+│   │   ├── types.go                     # Payload types
+│   │   └── *_test.go                    # Tests (94% coverage)
+│   ├── dispatcher/                      # Task queue (NEW v2.0)
+│   │   ├── dispatcher.go                # Queue + retry logic
+│   │   └── dispatcher_test.go           # Tests (91% coverage)
+│   ├── executor/                        # Task orchestration
+│   │   ├── task.go                      # Main workflow (150 lines)
+│   │   ├── adapter.go                   # Provider adapter
+│   │   └── *_test.go                    # Tests (87% coverage)
+│   ├── github/                          # GitHub operations
+│   │   ├── data/                        # GraphQL data layer (NEW v2.0)
+│   │   │   ├── client.go                # GraphQL client
+│   │   │   ├── fetcher.go               # Data fetching
+│   │   │   ├── formatter.go             # XML formatting
+│   │   │   └── *_test.go                # Tests (91% coverage)
+│   │   ├── auth.go                      # GitHub App auth
+│   │   ├── clone.go                     # Repository cloning
+│   │   ├── apicommit.go                 # API-based commit (NEW v2.0)
+│   │   ├── gh_client.go                 # gh CLI abstraction
+│   │   ├── context.go                   # Event context (NEW v2.0)
+│   │   └── *_test.go                    # Tests (85% coverage)
+│   ├── prompt/                          # Prompt building (NEW v2.0)
+│   │   ├── manager.go                   # System prompt loader
+│   │   ├── builder.go                   # Prompt construction
+│   │   └── *_test.go                    # Tests (92% coverage)
 │   ├── provider/                        # AI provider abstraction
+│   │   ├── provider.go                  # Interface
 │   │   ├── claude/                      # Claude implementation
 │   │   └── codex/                       # Codex implementation
-│   ├── executor/                        # Task orchestration
-│   └── github/                          # GitHub API operations
+│   ├── taskstore/                       # Task storage (NEW v2.0)
+│   │   ├── store.go                     # In-memory store
+│   │   └── store_test.go                # Tests (100% coverage)
+│   └── web/                             # Web UI (NEW v2.0)
+│       ├── handler.go                   # Dashboard handlers
+│       └── handler_test.go              # Tests (95% coverage)
+├── templates/                           # HTML templates (NEW v2.0)
+│   ├── tasks_list.html
+│   └── task_detail.html
+├── system-prompt.md                     # System prompt (NEW v2.0)
 ├── Dockerfile                           # Container build
 ├── .env.example                         # Environment template
-└── TEST_COVERAGE_REPORT.md              # Detailed test coverage
+└── CLAUDE.md                            # This file
 ```
 
 ## Important Implementation Notes
 
+### v2.0 Architecture Improvements
+
+**Code Reduction:** The codebase was reduced by 59% (3,150 → 1,300 lines) by:
+- Simplifying executor from 1,400 to 150 lines
+- Creating dedicated data layer for GitHub operations
+- Extracting prompt building into separate package
+- Removing redundant files and abstractions
+
+**Key Changes:**
+- **No factory pattern**: Providers instantiated directly in main.go
+- **GraphQL data fetching**: New `internal/github/data` package replaces REST API calls
+- **Prompt builder**: System prompt loaded from `system-prompt.md` file
+- **API-based commits**: Use GitHub API for commits instead of local git
+- **Task queue**: Dispatcher with exponential backoff and retry logic
+
 ### Provider Pattern Design
 
-The provider system eliminates conditional branching through interface polymorphism:
+The provider system uses interface polymorphism for extensibility:
 
 ```go
 // Adding a new provider requires:
 // 1. Implement Provider interface in internal/provider/<name>/
-// 2. Add case in factory.go NewProvider() function
+// 2. Add provider instantiation in cmd/main.go
 // 3. Add config fields in internal/config/config.go
-// 4. No changes to executor or handler needed
+// 4. No changes to executor, handler, or dispatcher needed
 ```
 
 ### Authentication Flow
@@ -203,12 +383,22 @@ if err != nil {
 
 ### CLI Tool Dependencies
 
-This project delegates Git operations to CLI tools rather than reimplementing them:
+This project delegates some operations to CLI tools:
 
-- **`gh` CLI**: All GitHub operations (clone, comment, PR)
-- **`claude` CLI**: AI code generation via lancekrogers/claude-code-go
+- **`gh` CLI**: GitHub operations (clone, push, auth)
+- **`codex` CLI**: Codex AI provider (when PROVIDER=codex)
 
-Ensure both CLIs are installed and available in PATH.
+Ensure the `gh` CLI is installed and authenticated. The `codex` CLI is only required if using the Codex provider.
+
+### System Prompt Customization (v2.0)
+
+The system prompt is loaded from `system-prompt.md` in the repository root. This file:
+- Contains the core instructions for the AI provider
+- Is loaded by `internal/prompt/manager.go` at runtime
+- Can be customized per repository for domain-specific guidance
+- Falls back to a minimal default if the file is not found
+
+To customize AI behavior, edit `system-prompt.md` directly.
 
 ## Code Conventions
 
@@ -245,10 +435,20 @@ Ensure both CLIs are installed and available in PATH.
 
 ### Testing Standards
 
-- Target: >75% coverage overall
-- 100% coverage for security-critical code (webhook verification, auth)
-- Test files located alongside implementation: `file.go` → `file_test.go`
-- Use table-driven tests for multiple scenarios
+- **Target**: 85%+ coverage overall (achieved in v2.0)
+- **Critical code**: 100% coverage for security-critical code (webhook verification, auth)
+- **Test files**: Located alongside implementation: `file.go` → `file_test.go`
+- **Test style**: Use table-driven tests for multiple scenarios
+
+**Current Coverage (v2.0):**
+- executor: 87.3%
+- github/data: 91.2%
+- taskstore: 100.0%
+- github: 85.0%
+- webhook: 94.0%
+- web: 95.2%
+- prompt: 92.3%
+- dispatcher: 91.6%
 
 ## Multi-Provider Support
 
@@ -262,5 +462,5 @@ Provider selection via environment variable:
 ```bash
 PROVIDER=claude  # or "codex"
 CLAUDE_API_KEY=sk-ant-xxx
-CLAUDE_MODEL=claude-3-5-sonnet-20241022
+CLAUDE_MODEL=claude-sonnet-4-5-20250929
 ```

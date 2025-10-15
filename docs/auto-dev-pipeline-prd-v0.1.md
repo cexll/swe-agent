@@ -419,24 +419,24 @@ type WorkflowState struct {
     IssueNumber    int
     Repo           string
     Stage          string // "clarify", "prd", "coding", "review", "done"
-    
+
     // 澄清历史
     Clarifications []Clarification
-    
+
     // PRD 内容
     PRD            string
-    
+
     // 代码变更
     BranchName     string
     FilesChanged   []string
-    
+
     // 修复历史
     FixAttempts    int
     MaxFixAttempts int
-    
+
     // 成本追踪
     TotalCost      float64
-    
+
     // 时间追踪
     CreatedAt      time.Time
     UpdatedAt      time.Time
@@ -493,17 +493,17 @@ type WorkflowState struct {
 func (e *Executor) composeFullContext(task *webhook.Task, token string) string {
     // 1. 获取 Issue 所有评论
     issueComments := e.ghClient.ListIssueComments(task.Repo, task.Number, token)
-    
+
     // 2. 获取工作流状态
     workflow := e.workflowStore.GetWorkflow(task.Repo, task.Number)
-    
+
     // 3. 组装完整上下文
     var context strings.Builder
-    
+
     // Issue 正文
     context.WriteString("# Issue: " + task.IssueTitle + "\n\n")
     context.WriteString(task.IssueBody + "\n\n")
-    
+
     // 澄清历史
     if len(workflow.Clarifications) > 0 {
         context.WriteString("## 需求澄清\n\n")
@@ -511,17 +511,17 @@ func (e *Executor) composeFullContext(task *webhook.Task, token string) string {
             context.WriteString(fmt.Sprintf("Q: %s\nA: %s\n\n", c.Question, c.Answer))
         }
     }
-    
+
     // PRD
     if workflow.PRD != "" {
         context.WriteString("## PRD\n\n")
         context.WriteString(workflow.PRD + "\n\n")
     }
-    
+
     // 评论历史
     context.WriteString("## 讨论历史\n\n")
     context.WriteString(formatDiscussion(issueComments, nil))
-    
+
     // （跨仓库）若存在 MultiRepoPlan，则追加子任务与目标仓库清单
     if workflow.MultiRepoPlan != nil {
         context.WriteString("## 跨仓库任务\n\n")
@@ -530,7 +530,7 @@ func (e *Executor) composeFullContext(task *webhook.Task, token string) string {
         }
         context.WriteString("\n")
     }
-    
+
     return context.String()
 }
 ```
@@ -542,7 +542,7 @@ func (e *Executor) composeFullContext(task *webhook.Task, token string) string {
 // parseTriggerCommand 解析触发词和参数
 func (h *Handler) parseTriggerCommand(body string) (action string, content string, found bool) {
     triggers := []string{"/clarify", "/prd", "/code-review", "/code"}
-    
+
     for _, trigger := range triggers {
         if idx := strings.Index(body, trigger); idx != -1 {
             action = strings.TrimPrefix(trigger, "/")
@@ -551,7 +551,7 @@ func (h *Handler) parseTriggerCommand(body string) (action string, content strin
             return
         }
     }
-    
+
     return "", "", false
 }
 
@@ -561,7 +561,7 @@ func (h *Handler) determineWorkflowAction(task *Task, action string) string {
     if action != "" {
         return action
     }
-    
+
     // 未来：智能触发模式（根据当前 Stage 自动判断）
     workflow := h.workflowStore.GetWorkflow(task.Repo, task.Number)
     switch workflow.Stage {
@@ -627,7 +627,7 @@ func GenerateClarifyPrompt(issue Issue, repoContext RepoContext) string {
 ```go
 func (e *Executor) shouldAllowFix(task *webhook.Task) (bool, string) {
     workflow := e.workflowStore.GetWorkflow(task.Repo, task.Number)
-    
+
     if workflow.FixAttempts >= workflow.MaxFixAttempts {
         return false, fmt.Sprintf(
             "已达到最大修复次数（%d/%d），需要人工介入",
@@ -635,7 +635,7 @@ func (e *Executor) shouldAllowFix(task *webhook.Task) (bool, string) {
             workflow.MaxFixAttempts,
         )
     }
-    
+
     return true, ""
 }
 
@@ -697,7 +697,7 @@ COST_ALERT_THRESHOLD=0.5      # 成本告警阈值（美元）
 # Provider 配置（已支持）
 PROVIDER="claude"             # or "codex"
 CLAUDE_API_KEY="sk-ant-xxx"
-CLAUDE_MODEL="claude-3-5-sonnet-20241022"
+CLAUDE_MODEL="claude-sonnet-4-5-20250929"
 
 # 调度配置（已支持）
 MAX_RETRIES=3
@@ -765,16 +765,16 @@ workflow:
     - prd
     - coding
     - review
-  
+
   cost_limit:
     daily: 10.0      # 每日成本上限（美元）
     per_issue: 1.0   # 单 Issue 成本上限
-  
+
   blacklist:
     files:
       - ".github/workflows/*"  # 禁止修改 CI 配置
       - "go.mod"               # 禁止修改依赖
-    
+
   whitelist:
     users:
       - "owner"      # 仅 owner 可触发（示例）
@@ -834,31 +834,31 @@ type WorkflowMetrics struct {
     TotalIssues       int     // 总处理 Issue 数
     CompletedIssues   int     // 完成的 Issue 数（PR 已 Merge）
     SuccessRate       float64 // 完成率 = Completed / Total
-    
+
     // 阶段分布
     ClarifyStageCount int     // 停在澄清阶段的 Issue 数
     PRDStageCount     int     // 停在 PRD 阶段的 Issue 数
     CodingStageCount  int     // 停在开发阶段的 Issue 数
     ReviewStageCount  int     // 停在审查阶段的 Issue 数
-    
+
     // 澄清效率
     AvgClarifyRounds  float64 // 平均澄清轮次
     ClarifyAcceptRate float64 // 澄清后直接进入 PRD 的比例
-    
+
     // PRD 质量
     AvgPRDIterations  float64 // 平均 PRD 修改次数
     PRDAcceptRate     float64 // 一次通过率
-    
+
     // 代码质量
     AvgFixAttempts    float64 // 平均修复次数
     FirstTimePassRate float64 // 代码一次通过率（无需修复）
-    
+
     // 成本
     AvgCostPerIssue   float64 // 单 Issue 平均成本（美元）
     TotalCostToday    float64 // 今日总成本
     CostByStage       map[string]float64 // 各阶段成本分布
     CostByRepo        map[string]float64 // 按仓库统计成本（跨仓库）
-    
+
     // 耗时
     AvgTimePerIssue   string  // 单 Issue 平均耗时（从 /clarify 到 PR Merge）
     AvgTimeByStage    map[string]string // 各阶段平均耗时
