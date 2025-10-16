@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cexll/swe/internal/prompt"
 	prov "github.com/cexll/swe/internal/provider"
 )
 
@@ -40,29 +39,6 @@ func TestNewProvider_APIKey(t *testing.T) {
 	}
 }
 
-func TestListRepoFiles(t *testing.T) {
-	// Test list repo files functionality (no need to test CLI execution)
-	// This is a unit test for the helper function
-	manager := prompt.NewManager()
-	files, err := manager.ListRepoFiles(".")
-	if err != nil {
-		t.Fatalf("listRepoFiles() error = %v", err)
-	}
-
-	// Should find at least the test file itself
-	found := false
-	for _, f := range files {
-		if f == "codex_test.go" {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		t.Errorf("listRepoFiles() should find codex_test.go, got: %v", files)
-	}
-}
-
 // TestInvokeCodex_CommandConstruction tests that the command is constructed correctly
 func TestInvokeCodex_CommandConstruction(t *testing.T) {
 	provider := NewProvider("test-key", "https://api.test.com", "gpt-5-codex")
@@ -80,7 +56,7 @@ func TestInvokeCodex_CommandConstruction(t *testing.T) {
 
 	// Call invokeCodex
 	ctx := context.Background()
-	_, _, _ = provider.invokeCodex(ctx, "test prompt", "/tmp/test")
+	_, _ = provider.invokeCodex(ctx, "test prompt", "/tmp/test")
 
 	// Verify command structure
 	expectedArgs := []string{
@@ -127,7 +103,7 @@ func TestInvokeCodex_Timeout(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	_, _, err := provider.invokeCodex(ctx, "test prompt", "/tmp/test")
+	_, err := provider.invokeCodex(ctx, "test prompt", "/tmp/test")
 	duration := time.Since(start)
 
 	if err == nil {

@@ -11,13 +11,12 @@ import (
 	"github.com/cexll/swe/internal/provider/shared"
 )
 
-func writeExecutable(t *testing.T, dir, name, content string) string {
+func writeExecutable(t *testing.T, dir, name, content string) {
 	t.Helper()
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatalf("failed to write %s: %v", name, err)
 	}
-	return path
 }
 
 func withPatchedPATH(t *testing.T, dir string) func() {

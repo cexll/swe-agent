@@ -10,12 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cexll/swe/internal/prompt"
 	"github.com/cexll/swe/internal/provider"
 	"github.com/cexll/swe/internal/provider/shared"
 )
-
-// Legacy types removed; use provider.CodeRequest/CodeResponse
 
 // CLIResult represents the result from Claude CLI
 type CLIResult struct {
@@ -28,8 +25,6 @@ type CLIResult struct {
 type Provider struct {
 	model string
 }
-
-var promptManager = prompt.NewManager()
 
 // NewProvider creates a new Claude provider
 func NewProvider(apiKey, model string) *Provider {
@@ -55,16 +50,28 @@ func (p *Provider) Name() string {
 }
 
 // callClaudeCLI calls the Claude CLI directly with proper working directory
-func callClaudeCLI(workDir, prompt, model, disallowedTools string) (*CLIResult, error) {
+// Backwards-compatible wrapper retained for tests. Prefer callClaudeCLIWithTools.
+func callClaudeCLI(workDir, prompt, model string) (*CLIResult, error) {
+    return callClaudeCLIWithTools(workDir, prompt, model, nil, nil)
+}
+
+// callClaudeCLIWithTools calls the Claude CLI with explicit allowed/disallowed tools.
+// If lists are empty, flags are omitted to preserve CLI defaults.
+func callClaudeCLIWithTools(workDir, prompt, model string, allowedTools, disallowedTools []string) (*CLIResult, error) {
 	// Build command arguments
 	args := []string{"-p", "--output-format", "json"}
 	if model != "" {
 		args = append(args, "--model", model)
 	}
-	// Add disallowed tools if specified
-	if disallowedTools != "" {
-		args = append(args, "--disallowedTools", disallowedTools)
-		log.Printf("[Claude CLI] Disallowed tools: %s", disallowedTools)
+	if len(allowedTools) > 0 {
+		allowedCSV := strings.Join(allowedTools, ",")
+		args = append(args, "--allowedTools", allowedCSV)
+		log.Printf("[Claude CLI] Allowed tools (%d): %s", len(allowedTools), allowedCSV)
+	}
+	if len(disallowedTools) > 0 {
+		disallowedCSV := strings.Join(disallowedTools, ",")
+		args = append(args, "--disallowedTools", disallowedCSV)
+		log.Printf("[Claude CLI] Disallowed tools (%d): %s", len(disallowedTools), disallowedCSV)
 	}
 
 	// Create command
@@ -121,30 +128,29 @@ func (p *Provider) GenerateCode(ctx context.Context, req *provider.CodeRequest) 
 		return nil, fmt.Errorf("repository path does not exist: %s", req.RepoPath)
 	}
 
-	// 1. List repository files
-	files, err := promptManager.ListRepoFiles(req.RepoPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list repo files: %w", err)
-	}
-
-	// 2. Build system prompt
-	systemPrompt := promptManager.BuildDefaultSystemPrompt(files, req.Context)
-
-	// 3. Build full prompt with system and user content
-	fullPrompt := fmt.Sprintf("System: %s\n\nUser: %s", systemPrompt, promptManager.BuildUserPrompt(req.Prompt))
+	// Executor already constructed the full prompt (system + user + GH XML)
+	fullPrompt := req.Prompt
 
 	log.Printf("[Claude] Calling Claude CLI with model: %s in directory: %s", p.model, req.RepoPath)
 
-	// 4. Get disallowed tools from context
-	disallowedTools := ""
+	// Gather tools configuration
+	var allowed []string
+	var disallowed []string
+	if len(req.AllowedTools) > 0 {
+		allowed = append(allowed, req.AllowedTools...)
+	}
+	if len(req.DisallowedTools) > 0 {
+		disallowed = append(disallowed, req.DisallowedTools...)
+	}
+	// Back-compat: also allow context-based disallowed tools (comma-separated)
 	if req.Context != nil {
-		if tools, ok := req.Context["disallowed_tools"]; ok {
-			disallowedTools = tools
+		if s, ok := req.Context["disallowed_tools"]; ok && strings.TrimSpace(s) != "" {
+			disallowed = append(disallowed, s)
 		}
 	}
 
-	// 5. Call Claude CLI with correct working directory
-	result, err := callClaudeCLI(req.RepoPath, fullPrompt, p.model, disallowedTools)
+	// Call Claude CLI with correct working directory and tool configuration
+	result, err := callClaudeCLIWithTools(req.RepoPath, fullPrompt, p.model, allowed, disallowed)
 	if err != nil {
 		return nil, fmt.Errorf("Claude CLI error: %w", err)
 	}

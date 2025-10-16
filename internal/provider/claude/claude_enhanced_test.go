@@ -30,7 +30,7 @@ func TestCallClaudeCLI_WorkingDirectoryIntegration(t *testing.T) {
 	// Test working directory validation
 	t.Run("validates working directory exists", func(t *testing.T) {
 		// Test with non-existent directory - should fail early
-		_, err := callClaudeCLI("/non/existent/path", "test prompt", "claude-3-sonnet", "")
+		_, err := callClaudeCLI("/non/existent/path", "test prompt", "claude-3-sonnet")
 		if err == nil {
 			t.Error("callClaudeCLI() should return error for non-existent directory")
 		}
@@ -45,7 +45,7 @@ func TestCallClaudeCLI_WorkingDirectoryIntegration(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		// This will likely fail due to invalid API key, but we can check the error message
-		_, err := callClaudeCLI(tmpDir, "test prompt", "claude-3-sonnet", "")
+		_, err := callClaudeCLI(tmpDir, "test prompt", "claude-3-sonnet")
 
 		// We expect some kind of error (API key, network, etc.) but not a "directory not found" error
 		if err != nil {
@@ -203,7 +203,7 @@ func TestCallClaudeCLI_EdgeCases(t *testing.T) {
 	t.Run("handles empty prompt", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		_, err := callClaudeCLI(tmpDir, "", "claude-3-sonnet", "")
+		_, err := callClaudeCLI(tmpDir, "", "claude-3-sonnet")
 		// Should not crash, but may return API error
 		if err != nil {
 			// Verify it's not a crash or directory-related error
@@ -217,7 +217,7 @@ func TestCallClaudeCLI_EdgeCases(t *testing.T) {
 	t.Run("handles empty model parameter", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		_, err := callClaudeCLI(tmpDir, "test", "", "")
+		_, err := callClaudeCLI(tmpDir, "test", "")
 		// Should work (uses default model), but may return API error
 		if err != nil {
 			errorStr := strings.ToLower(err.Error())
@@ -235,7 +235,7 @@ func TestCallClaudeCLI_EdgeCases(t *testing.T) {
 			t.Fatalf("Failed to create special directory: %v", err)
 		}
 
-		_, err := callClaudeCLI(specialDir, "test", "claude-3-sonnet", "")
+		_, err := callClaudeCLI(specialDir, "test", "claude-3-sonnet")
 		if err != nil {
 			errorStr := strings.ToLower(err.Error())
 			// Should not fail due to path parsing issues

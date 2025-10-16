@@ -19,6 +19,11 @@ type CodeRequest struct {
 	RepoPath string
 	// Context for providers/tools (e.g., github_token, repository, issue_number, pr_number, base/head branches)
 	Context map[string]string
+
+	// Tools configuration (passed to CLI). When empty, providers should fall
+	// back to their defaults to preserve backwards compatibility.
+	AllowedTools    []string
+	DisallowedTools []string
 }
 
 // CodeResponse is the minimal response; AI handles changes via MCP

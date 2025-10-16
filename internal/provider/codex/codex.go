@@ -72,7 +72,7 @@ func (p *Provider) GenerateCode(ctx context.Context, req *provider.CodeRequest) 
 	// Executor already constructed the full prompt (system + user + GH XML)
 	fullPrompt := executionPrefix + req.Prompt
 
-	responseText, _, err := p.invokeCodex(ctx, fullPrompt, req.RepoPath)
+    responseText, err := p.invokeCodex(ctx, fullPrompt, req.RepoPath)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +82,7 @@ func (p *Provider) GenerateCode(ctx context.Context, req *provider.CodeRequest) 
 	return &provider.CodeResponse{Summary: truncateLogString(responseText, 2000)}, nil
 }
 
-func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (string, float64, error) {
+func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (string, error) {
 	ctx, cancel := ensureCodexTimeout(ctx)
 	defer cancel()
 
@@ -98,11 +98,11 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 
 		stderrPreview := summarizeCodexError(err, stdout, stderr)
 		if ctx.Err() == context.DeadlineExceeded {
-			return "", 0, fmt.Errorf("codex CLI timeout after %v: %s", duration, stderrPreview)
+            return "", fmt.Errorf("codex CLI timeout after %v: %s", duration, stderrPreview)
 		}
 
 		log.Printf("[Codex] Error: %s", stderrPreview)
-		return "", 0, fmt.Errorf("codex CLI error: %s", stderrPreview)
+        return "", fmt.Errorf("codex CLI error: %s", stderrPreview)
 	}
 
 	duration := time.Since(startTime)
@@ -114,7 +114,7 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 
 	log.Printf("[Codex] Command completed in %v, output length: %d bytes", duration, len(output))
 
-	return parsedOutput, 0, nil
+    return parsedOutput, nil
 }
 
 func truncateLogString(s string, maxLen int) string {
