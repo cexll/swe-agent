@@ -116,7 +116,7 @@ func formatChangedFilesWithSHA(files []GitHubFileWithSHA) string {
 	return strings.Join(out, "\n")
 }
 
-// GenerateXMLParams controls XML prompt generation analogous to Claude Code Action.
+// GenerateXMLParams controls XML prompt generation analogous
 type GenerateXMLParams struct {
 	Repository         string
 	IsPR               bool

@@ -65,7 +65,7 @@ func BuildPrompt(ctx GitHubContext, fetched *ghdata.FetchResult) string {
 	systemPrompt, _ := LoadSystemPrompt()
 
 	// Derive event type and human-readable trigger context.
-    eventType, triggerCtx := eventTypeAndTriggerContext(ctx)
+	eventType, triggerCtx := eventTypeAndTriggerContext(ctx)
 
 	// Infer repository full name (owner/name).
 	repoFull := ctx.GetRepositoryFullName()
@@ -93,7 +93,7 @@ func BuildPrompt(ctx GitHubContext, fetched *ghdata.FetchResult) string {
 	// Trigger comment body, if available.
 	triggerComment := ctx.GetTriggerCommentBody()
 
-	// Build XML using the shared formatter so output matches claude-code-action.
+	// Build XML using the shared formatter.
 	xml := ghdata.GenerateXML(ghdata.GenerateXMLParams{
 		Repository:         repoFull,
 		IsPR:               ctx.IsPRContext(),
@@ -158,20 +158,20 @@ func fetchedImageMap(fr *ghdata.FetchResult) map[string]string {
 	return fr.ImageURLMap
 }
 
-// eventTypeAndTriggerContext mirrors the mapping from claude-code-action's
+// eventTypeAndTriggerContext mirrors the mapping
 // getEventTypeAndContext to keep downstream prompts consistent.
 func eventTypeAndTriggerContext(ctx GitHubContext) (eventType, triggerContext string) {
 	switch ctx.GetEventName() {
-    case "pull_request_review_comment":
-        return "REVIEW_COMMENT", fmt.Sprintf("PR review comment with '%s'", DefaultTriggerPhrase)
-    case "pull_request_review":
-        return "PR_REVIEW", fmt.Sprintf("PR review with '%s'", DefaultTriggerPhrase)
-    case "issue_comment":
-        return "GENERAL_COMMENT", fmt.Sprintf("issue comment with '%s'", DefaultTriggerPhrase)
+	case "pull_request_review_comment":
+		return "REVIEW_COMMENT", fmt.Sprintf("PR review comment with '%s'", DefaultTriggerPhrase)
+	case "pull_request_review":
+		return "PR_REVIEW", fmt.Sprintf("PR review with '%s'", DefaultTriggerPhrase)
+	case "issue_comment":
+		return "GENERAL_COMMENT", fmt.Sprintf("issue comment with '%s'", DefaultTriggerPhrase)
 	case "issues":
 		switch ctx.GetEventAction() {
-        case "opened":
-            return "ISSUE_CREATED", fmt.Sprintf("new issue with '%s' in body", DefaultTriggerPhrase)
+		case "opened":
+			return "ISSUE_CREATED", fmt.Sprintf("new issue with '%s' in body", DefaultTriggerPhrase)
 		case "labeled":
 			// Label value isn't available here; keep a generic context string
 			return "ISSUE_LABELED", "issue labeled event"
@@ -221,7 +221,6 @@ type GitHubContext interface {
 }
 
 // BuildFullPrompt 构建完整 Prompt（基于模板）
-// 参考 claude-code-action 的 generateDefaultPrompt
 func BuildFullPrompt(ctx context.Context, ghCtx *github.Context, commentID int64, branch string) (string, error) {
 	// 1. 下载评论中的图片（非阻塞：失败仅打印警告）
 	imageInfo := ""

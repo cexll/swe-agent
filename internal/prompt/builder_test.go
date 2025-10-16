@@ -461,3 +461,122 @@ func TestBuildFullPrompt_Minimal(t *testing.T) {
 		t.Fatalf("BuildFullPrompt missing fields: %q", body)
 	}
 }
+
+// TestTemplateContainsMCPPrefixedTools verifies that the prompt template uses correct MCP tool names
+func TestTemplateContainsMCPPrefixedTools(t *testing.T) {
+	ctx := &ghctx.Context{
+		Repository:  ghctx.Repository{Owner: "owner", Name: "repo"},
+		IssueNumber: 1,
+	}
+
+	prompt, err := BuildFullPrompt(context.Background(), ctx, 100, "branch")
+	if err != nil {
+		t.Fatalf("BuildFullPrompt failed: %v", err)
+	}
+
+	// Required MCP tool names that MUST be in the template
+	// Note: We only check tools that are actually referenced in the template,
+	// not all tools that might be available at runtime
+	requiredMCPTools := []string{
+		"mcp__github__add_issue_comment",
+		"mcp__github__create_or_update_file",
+		"mcp__github__push_files",
+		"mcp__git__status",
+		"mcp__git__commit",
+		"mcp__git__diff_unstaged",
+		"mcp__git__diff_staged",
+		"mcp__git__log",
+	}
+
+	for _, tool := range requiredMCPTools {
+		if !strings.Contains(prompt, tool) {
+			t.Errorf("Template should contain MCP tool reference '%s' but it's missing", tool)
+		}
+	}
+}
+
+// TestTemplateNoLegacyToolNames ensures the template doesn't reference legacy tool names
+func TestTemplateNoLegacyToolNames(t *testing.T) {
+	ctx := &ghctx.Context{
+		Repository:  ghctx.Repository{Owner: "owner", Name: "repo"},
+		IssueNumber: 1,
+	}
+
+	prompt, err := BuildFullPrompt(context.Background(), ctx, 100, "branch")
+	if err != nil {
+		t.Fatalf("BuildFullPrompt failed: %v", err)
+	}
+
+	// Legacy tool names that should NOT appear (without mcp__ prefix)
+	// Use specific patterns that wouldn't match valid English words
+	legacyPatterns := []struct {
+		pattern string
+		reason  string
+	}{
+		{"github_add_issue_comment", "should use mcp__github__add_issue_comment"},
+		{"github_create_or_update_file", "should use mcp__github__create_or_update_file"},
+		{"github_push_files", "should use mcp__github__push_files"},
+		{"git_status", "should use mcp__git__status"},
+		{"git_commit", "should use mcp__git__commit"},
+		{"git_add", "should use mcp__git__add"},
+		{"git_push", "should use mcp__git__push"},
+	}
+
+	for _, lp := range legacyPatterns {
+		// Check if the exact legacy pattern exists (not as part of the mcp__ version)
+		if containsExactly(prompt, lp.pattern) {
+			t.Errorf("Template contains legacy tool reference '%s' (%s)", lp.pattern, lp.reason)
+		}
+	}
+}
+
+// TestTemplateWarnsAgainstBashUsage verifies the template warns against using Bash for GitHub operations
+func TestTemplateWarnsAgainstBashUsage(t *testing.T) {
+	ctx := &ghctx.Context{
+		Repository:  ghctx.Repository{Owner: "owner", Name: "repo"},
+		IssueNumber: 1,
+	}
+
+	prompt, err := BuildFullPrompt(context.Background(), ctx, 100, "branch")
+	if err != nil {
+		t.Fatalf("BuildFullPrompt failed: %v", err)
+	}
+
+	// Should contain explicit warning about not using Bash/gh CLI
+	warningPatterns := []string{
+		"NEVER use Bash commands like 'gh api'",
+		"always use the MCP tools",
+	}
+
+	for _, pattern := range warningPatterns {
+		if !strings.Contains(prompt, pattern) {
+			t.Errorf("Template should warn against Bash usage (missing: '%s')", pattern)
+		}
+	}
+}
+
+// Helper to check if string contains exact match (not as substring of another word)
+func containsExactly(text, pattern string) bool {
+	// Simple check: pattern exists but NOT as part of "mcp__" + pattern
+	mcpVersion := "mcp__" + pattern
+	if !strings.Contains(text, pattern) {
+		return false
+	}
+	// If it exists, check it's not just the mcp__ version
+	// Count both versions
+	patternCount := countOccurrences(text, pattern)
+	mcpCount := countOccurrences(text, mcpVersion)
+	// If pattern appears more times than mcp__pattern, then we have exact matches
+	return patternCount > mcpCount
+}
+
+func countOccurrences(text, pattern string) int {
+	count := 0
+	for i := 0; i <= len(text)-len(pattern); i++ {
+		if text[i:i+len(pattern)] == pattern {
+			count++
+			i += len(pattern) - 1 // skip past this occurrence
+		}
+	}
+	return count
+}
