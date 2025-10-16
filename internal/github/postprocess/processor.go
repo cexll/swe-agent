@@ -56,8 +56,8 @@ func (p *Processor) Process(ctx context.Context) error {
 	if p.owner == "" || p.repo == "" || p.branch == "" {
 		return fmt.Errorf("missing owner/repo/branch")
 	}
-    // If no coordination comment is provided, we simply skip comment updates;
-    // cleanup and other steps proceed as usual below.
+	// If no coordination comment is provided, we simply skip comment updates;
+	// cleanup and other steps proceed as usual below.
 
 	// 1) 检查分支状态
 	status, err := checkBranchStatus(ctx, p.client, p.owner, p.repo, p.branch, p.baseBranch)
