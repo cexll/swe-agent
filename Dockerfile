@@ -38,6 +38,7 @@ RUN apk add --no-cache \
         github-cli \
         openssh-client \
         wget \
+        py3-pip \
         make \
         g++ \
         python3 \
@@ -47,7 +48,11 @@ RUN apk add --no-cache \
     && npm install -g \
         @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION} \
         @openai/codex@${CODEX_CLI_VERSION} \
-    && npm cache clean --force
+    && npm cache clean --force \
+    && wget -qO- https://astral.sh/uv/install.sh | sh
+
+# Ensure uv/uvx are on PATH
+ENV PATH="/root/.local/bin:${PATH}"
 
 # Copy binary from builder
 COPY --from=builder /build/swe-agent /usr/local/bin/swe-agent
@@ -57,15 +62,6 @@ COPY --from=builder /build/system-prompt.md /tmp/system-prompt.md
 RUN mkdir -p /root/.codex /root/.claude \
     && cp /tmp/system-prompt.md /root/.codex/AGENTS.md \
     && cp /tmp/system-prompt.md /root/.claude/CLAUDE.md \
-    && printf '%s\n' \
-        'model = "gpt-5-codex"' \
-        'model_reasoning_effort = "high"' \
-        'model_reasoning_summary = "detailed"' \
-        'approval_policy = "never"' \
-        'sandbox_mode = "danger-full-access"' \
-        'disable_response_storage = true' \
-        'network_access = true' \
-        > /root/.codex/config.toml \
     && rm /tmp/system-prompt.md
 
 WORKDIR /app
@@ -73,14 +69,8 @@ WORKDIR /app
 # Copy runtime assets
 COPY --from=builder /build/templates ./templates
 
-# Runtime entrypoint writes auth credentials from environment and starts the service
-RUN cat <<'EOF' > /usr/local/bin/docker-entrypoint.sh
-#!/bin/sh
-set -e
-mkdir -p /root/.codex
-jq -n --arg key "${OPENAI_API_KEY:-}" '{OPENAI_API_KEY: $key}' > /root/.codex/auth.json
-exec swe-agent "$@"
-EOF
+# Copy and setup entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Expose port

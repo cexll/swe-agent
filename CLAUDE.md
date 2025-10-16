@@ -25,6 +25,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `internal/dispatcher/` - Task queue with exponential backoff (91% coverage)
 - `internal/taskstore/` - In-memory task storage (100% coverage)
 - `internal/web/` - Web UI for task dashboard (95% coverage)
+- `internal/github/postprocess/` - **NEW**: Post-execution processing (40% coverage)
+  - Branch status detection and cleanup
+  - PR/branch link generation
+  - Coordinating comment updates
 
 **Key Improvements:**
 - **No factory pattern**: Direct provider instantiation in main.go
@@ -85,44 +89,6 @@ The dashboard provides:
 - Repository and actor information
 - Real-time status updates
 
-### Agent Loop Mode (Experimental)
-
-Enable iterative AI task solving:
-
-```bash
-export AGENT_LOOP=true
-go run cmd/main.go
-```
-
-The agent loop allows AI to:
-- Make multiple attempts to solve tasks
-- Run tests and fix failures automatically
-- Use tools (git, tests, build) interactively
-- Retry on errors without manual intervention
-
-### MCP Integration
-
-This project uses official MCP servers for Git and GitHub operations:
-
-**Prerequisites:**
-- Docker (for GitHub MCP server)
-- uvx (for Git MCP server): `pip install uv`
-
-**Available MCP Tools:**
-
-Git tools (via mcp-server-git):
-- git_status, git_add, git_commit, git_diff, git_log
-- git_create_branch, git_checkout, git_show
-
-GitHub tools (via github-mcp-server):
-- github_fetch_issue, github_add_comment, github_create_pr
-- github_list_issues, github_search_code
-
-**Debugging MCP:**
-```bash
-DEBUG_MCP=true AGENT_LOOP=true go run cmd/main.go
-```
-
 ### Code Quality
 
 ```bash
@@ -138,19 +104,39 @@ go mod tidy
 
 ### Docker
 
+**MCP Configuration (v2.0):**
+
+The Docker image uses **HTTP-based MCP servers** configured at runtime via `docker-entrypoint.sh`:
+
+- **GitHub MCP**: Connects to `https://api.githubcopilot.com/mcp` (requires `GITHUB_TOKEN`)
+- **Git MCP**: Uses `uvx mcp-server-git` (requires `REPO_DIR` set by executor)
+
+MCP configs are dynamically generated:
+- `~/.claude.json` - Claude Code MCP configuration
+- `~/.codex/config.toml` - Codex MCP configuration
+
+**Build and run:**
+
 ```bash
 # Build Docker image
 docker build -t swe-agent .
 
-# Run container
+# Run container (requires GITHUB_TOKEN for MCP access)
 docker run -d -p 8000:8000 \
   -e GITHUB_APP_ID=123456 \
   -e GITHUB_PRIVATE_KEY="$(cat private-key.pem)" \
   -e GITHUB_WEBHOOK_SECRET=secret \
+  -e GITHUB_TOKEN=github_pat_xxx \
   -e ANTHROPIC_API_KEY=sk-ant-xxx \
   --name swe-agent \
   swe-agent
 ```
+
+**Required environment variables:**
+- `GITHUB_TOKEN`: GitHub Personal Access Token (scopes: `repo`, `read:org`) for MCP HTTP access
+- `GITHUB_APP_ID`: GitHub App ID for webhook authentication
+- `GITHUB_PRIVATE_KEY`: GitHub App private key
+- `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`: AI provider credentials
 
 ## Architecture Overview
 
@@ -173,11 +159,15 @@ GitHub Webhook (issue_comment/pr_review_comment)
       ↓
   Provider (AI code generation: Claude/Codex)
       ↓
-  GitHub API Commit (commit via GitHub API)
+  Commit (local git OR GitHub API signing)
       ↓
-  GitHub CLI Push (gh push)
+  Push (gh CLI)
       ↓
-  Comment (post PR creation link)
+  Post-Processing (NEW)
+    - Check branch status
+    - Generate branch/PR links
+    - Update coordinating comment
+    - Delete empty branches
 ```
 
 ### Core Components (v2.0 Simplified)
@@ -245,9 +235,37 @@ type Provider interface {
 
 - **auth.go**: GitHub App JWT token generation and installation token exchange
 - **clone.go**: Repository cloning via `gh repo clone`
-- **apicommit.go**: Commit via GitHub API (no local git)
+- **apicommit.go**: Commit via GitHub API with optional signing support
+  - `CommitFiles()`: Multi-file commit via API (supports GitHub-signed commits)
+  - Supports both REST and GraphQL paths
+  - When `USE_COMMIT_SIGNING=true`, commits are automatically signed by GitHub
 - **gh_client.go**: GitHub CLI command abstraction
 - **context.go**: GitHub context struct for passing event data
+
+**Post-Processing (`internal/github/postprocess/`)** - **NEW in v2.0**
+
+- **processor.go**: Main post-execution logic
+  - Runs after AI provider completes
+  - Non-blocking (failures only log warnings)
+- **branch_check.go**: Branch status detection
+  - Check if branch exists remotely
+  - Compare commits with base branch
+  - Detect empty branches (0 commits, 0 files)
+- **link_generator.go**: Generate GitHub links
+  - Branch view links
+  - PR creation links (with pre-filled title/body)
+  - Job run links
+- **comment_updater.go**: Update coordinating comment
+  - Add branch links after execution
+  - Add PR creation links if changes exist
+  - Avoid duplicate links
+
+**Post-Processing Flow:**
+1. Check branch status (exists? has commits?)
+2. Generate branch link (if has commits)
+3. Generate PR link (if has changes)
+4. Delete empty branch (if no commits and no files)
+5. Update coordinating comment with links
 
 #### 8. Task Store (`internal/taskstore/`)
 
@@ -297,6 +315,12 @@ swe-agent/
 │   │   │   ├── fetcher.go               # Data fetching
 │   │   │   ├── formatter.go             # XML formatting
 │   │   │   └── *_test.go                # Tests (91% coverage)
+│   │   ├── postprocess/                 # Post-execution (NEW v2.0)
+│   │   │   ├── processor.go             # Main post-processing logic
+│   │   │   ├── branch_check.go          # Branch status detection
+│   │   │   ├── link_generator.go        # PR/branch link generation
+│   │   │   ├── comment_updater.go       # Comment updates
+│   │   │   └── processor_test.go        # Tests (40% coverage)
 │   │   ├── auth.go                      # GitHub App auth
 │   │   ├── clone.go                     # Repository cloning
 │   │   ├── apicommit.go                 # API-based commit (NEW v2.0)
@@ -342,6 +366,69 @@ swe-agent/
 - **Prompt builder**: System prompt loaded from `system-prompt.md` file
 - **API-based commits**: Use GitHub API for commits instead of local git
 - **Task queue**: Dispatcher with exponential backoff and retry logic
+- **Post-processing**: Automatic branch/PR link generation after execution
+- **Commit signing**: Optional GitHub-signed commits via API
+
+### Commit Signing Support
+
+**Two commit modes available:**
+
+1. **Local Git (default)**
+   - Uses local git commands (`git add`, `git commit`, `git push`)
+   - Fast and familiar workflow
+   - No automatic signing
+   - Requires git tools in PATH
+
+2. **GitHub API Signing** (`USE_COMMIT_SIGNING=true`)
+   - Commits via GitHub API (REST or GraphQL)
+   - Automatic signing by GitHub
+   - No local git commands needed
+   - More secure (no local git execution)
+   
+**Configuration:**
+```bash
+# Enable commit signing
+USE_COMMIT_SIGNING=true
+```
+
+**Tool implications:**
+- When signing enabled: `git_*` tools disabled, `github_push_files` enabled
+- When signing disabled: `git_*` tools enabled, `github_create_or_update_file` enabled
+
+**Implementation:**
+- `internal/github/apicommit.go::CommitFiles()` handles API commits
+- Supports both REST (manual tree creation) and GraphQL (automatic signing)
+- GraphQL path uses `createCommitOnBranch` mutation with `expectedHeadOid`
+
+### Post-Processing System
+
+**Runs automatically after AI provider execution:**
+
+1. **Branch Status Check**
+   - Detect if branch exists remotely
+   - Compare commits with base branch
+   - Count files changed
+
+2. **Link Generation**
+   - Branch view link: `https://github.com/owner/repo/tree/branch`
+   - PR creation link: Pre-filled title/body via `quick_pull=1`
+
+3. **Empty Branch Cleanup**
+   - Delete branch if 0 commits AND 0 files changed
+   - Prevents clutter from failed executions
+
+4. **Comment Update**
+   - Add generated links to coordinating comment
+   - Avoid duplicate links (idempotent)
+
+**Non-blocking design:**
+- Post-processing failures only log warnings
+- Main execution flow not affected
+- User still gets PR/branch links when possible
+
+**Implementation:**
+- `internal/github/postprocess/processor.go::Process()`
+- Called at end of `internal/executor/task.go::Execute()`
 
 ### Provider Pattern Design
 

@@ -3,7 +3,7 @@
 # SWE-Agent - 软件工程智能体
 
 [![Go Version](https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
-[![Test Coverage](https://img.shields.io/badge/coverage-85.2%25-brightgreen)](#-测试)
+[![Test Coverage](https://img.shields.io/badge/coverage-70.5%25-brightgreen)](#-测试)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-cexll%2Fswe-181717?logo=github)](https://github.com/cexll/swe)
 
@@ -40,8 +40,25 @@ GitHub App webhook 服务，通过 `/code` 命令触发 AI 自动完成代码修
 - 🧵 **评论触发** - 支持 Issue 评论与 PR Review 行内评论
 - 🔁 **可靠任务队列** - 有界工作池 + 指数退避自动重试
 - 🔒 **PR 串行执行** - 同一 PR 的指令串行排队，避免分支/评论冲突
+ - 🔗 **后处理** - 执行结束后自动生成分支/PR 链接
+ - ✍️ **提交签名** - 可选的 GitHub API 自动签名提交
+ - 🧹 **空分支清理** - 无提交分支自动删除
 
 ## 🎉 最新更新
+
+### Phase 7 & 8 - 后处理与提交签名（2025 年 10 月）
+
+- ✅ **后处理系统**：执行结束后自动生成分支/PR 链接
+- ✅ **提交签名**：基于 GitHub API 的提交，自动签名
+- ✅ **空分支清理**：0 提交的分支自动删除
+- ✅ **链接生成器**：支持带预填标题/描述的 PR 创建链接
+- ✅ **工具配置**：根据签名模式智能切换工具
+
+**技术要点**：
+- 非阻塞后处理（失败仅记录警告）
+- 双路径提交：REST（手动）+ GraphQL（自动签名）
+- 工具安全：签名模式下禁用本地 git 命令，使用 API 提交
+- 覆盖率：postprocess 40.5%、toolconfig 98%、executor 75.7%
 
 ### v2.0 - 架构重构 & 测试覆盖率提升（2025年10月）
 
@@ -62,7 +79,7 @@ GitHub App webhook 服务，通过 `/code` 命令触发 AI 自动完成代码修
 | 指标                | 数值                                         |
 | ------------------- | -------------------------------------------- |
 | **代码行数**        | ~1,300 核心代码（从 3,150 减少 59%）        |
-| **测试覆盖率**      | 85.2%（executor 87%、data 91%、taskstore 100%） |
+| **测试覆盖率**      | 70.5%（postprocess 40.5%、toolconfig 98%、dispatcher 91.6%） |
 | **测试文件数**      | 32 个测试文件，300+ 个测试函数             |
 | **二进制大小**      | ~12MB 单一二进制文件                        |
 | **依赖**            | 极少 - Go 1.25+、Codex/Claude、gh CLI        |
@@ -128,6 +145,9 @@ DISPATCHER_RETRY_MAX_SECONDS=300
 DISPATCHER_BACKOFF_MULTIPLIER=2
 # SWE_AGENT_GIT_NAME=swe-agent[bot]
 # SWE_AGENT_GIT_EMAIL=123456+swe-agent[bot]@users.noreply.github.com
+
+# 提交签名（可选）
+# USE_COMMIT_SIGNING=false  # 设为 true 时使用 GitHub API 提交（自动签名）
 
 # 调试（可选）
 # DEBUG_CLAUDE_PARSING=true
@@ -456,23 +476,25 @@ runner.Run("git", []string{"add", userInput})  // ✅ Safe
 | Config           | 环境变量管理与校验                            | 2      | 87.5%          |
 | Comment Tracker  | 进度追踪与状态更新                            | 4      | -              |
 | Command Runner   | 安全命令执行                                  | 2      | -              |
+| Post-Processing  | 分支链接生成、PR 链接、空分支清理             | 4      | 40.5%          |
 
 ## 🧪 测试
 
 ### 测试覆盖率
 
-整体：**85.2%** 覆盖率，覆盖所有模块
+整体：**70.5%** 覆盖率
 
 | 模块            | 覆盖率 |
 |-----------------|--------|
-| executor        | 87.3%  |
-| github/data     | 91.2%  |
-| taskstore       | 100.0% |
-| github          | 85.0%  |
-| webhook         | 94.0%  |
+| toolconfig      | 98.0%  |
 | web             | 95.2%  |
-| prompt          | 92.3%  |
+| webhook         | 89.6%  |
+| github/data     | 91.2%  |
 | dispatcher      | 91.6%  |
+| prompt          | 92.3%  |
+| executor        | 75.7%  |
+| github          | 71.7%  |
+| postprocess     | 40.5%  |
 
 ### 运行测试
 
@@ -888,7 +910,13 @@ services:
 - [ ] **限流** - 防止滥用（按仓库/小时限额）
 - [ ] **日志改进** - 结构化日志（JSON）+ 日志等级
 
-### v0.5 - 质量保证与交互（🔴 P0 能力）
+### v0.5 - 质量保证与交互（🔴 P0 能力） - 已完成
+
+**后处理与签名（Phase 7 & 8）**：
+- [x] **后处理系统** - 执行后自动生成分支/PR 链接
+- [x] **提交签名** - 基于 GitHub API 的自动签名提交
+- [x] **空分支清理** - 0 提交分支自动删除
+- [x] **工具配置** - 根据签名模式智能切换工具
 
 **质量保证层**：
 - [ ] **自动测试执行** - 代码生成后运行项目测试
@@ -904,7 +932,7 @@ services:
 - [ ] **进度汇报** - 执行期间实时状态更新
 
 **基础设施**：
-- [ ] **Web UI** - 任务监控与配置管理
+- [x] **Web UI** - `/tasks` 任务看板与日志查看（v0.5.0 已发布）
 - [ ] **指标与监控** - Prometheus 指标 + 告警
 
 ### v0.6 - 上下文理解与规划（🟠 P1 能力）

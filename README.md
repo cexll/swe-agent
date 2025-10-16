@@ -3,7 +3,7 @@
 # SWE-Agent - Software Engineering Agent
 
 [![Go Version](https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
-[![Test Coverage](https://img.shields.io/badge/coverage-85.2%25-brightgreen)](#-testing)
+[![Test Coverage](https://img.shields.io/badge/coverage-70.5%25-brightgreen)](#-testing)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-cexll%2Fswe-181717?logo=github)](https://github.com/cexll/swe)
 
@@ -41,8 +41,25 @@ GitHub App webhook service that triggers AI to automatically complete code modif
 - 🧵 **Review Comment Triggers** - Support for both Issue comments and PR Review inline comments
 - 🔁 **Reliable Task Queue** - Bounded worker pool + exponential backoff auto-retry
 - 🔒 **PR Serial Execution** - Commands for the same PR queued serially to avoid branch/comment conflicts
+- 🔗 **Post-Processing** - Automatic branch/PR link generation after execution
+- ✍️ **Commit Signing** - Optional GitHub-signed commits via API
+- 🧹 **Empty Branch Cleanup** - Auto-delete branches with no commits
 
 ## 🎉 Recent Updates
+
+### Phase 7 & 8 - Post-Processing & Commit Signing (Oct 2025)
+ 
+- ✅ **Post-Processing System**: Automatic branch/PR link generation after execution
+- ✅ **Commit Signing**: Optional GitHub API-based commits with automatic signing
+- ✅ **Empty Branch Cleanup**: Auto-delete branches with 0 commits
+- ✅ **Link Generator**: PR creation links with pre-filled title/body
+- ✅ **Tool Configuration**: Smart tool switching based on signing mode
+ 
+**Technical Highlights**:
+- Non-blocking post-processing (failures only log warnings)
+- Dual-path commits: REST (manual) + GraphQL (auto-signing)
+- Tool security: Git commands disabled when using API signing
+- 40% postprocess coverage, 98% toolconfig coverage
 
 ### v2.0 - Architecture Refactoring & Test Coverage (Oct 2025)
 
@@ -63,7 +80,7 @@ GitHub App webhook service that triggers AI to automatically complete code modif
 | Metric             | Value                                        |
 | ------------------ | -------------------------------------------- |
 | **Lines of Code**  | ~1,300 core lines (59% reduction from 3,150) |
-| **Test Coverage**  | 85.2% (executor 87%, data 91%, taskstore 100%) |
+| **Test Coverage**  | 70.5% (postprocess 40%, toolconfig 98%, dispatcher 91.6%) |
 | **Test Files**     | 32 test files, 300+ test functions           |
 | **Binary Size**    | ~12MB single binary                          |
 | **Dependencies**   | Minimal - Go 1.25+, Codex/Claude, gh CLI     |
@@ -129,6 +146,9 @@ DISPATCHER_RETRY_MAX_SECONDS=300
 DISPATCHER_BACKOFF_MULTIPLIER=2
 # SWE_AGENT_GIT_NAME=swe-agent[bot]
 # SWE_AGENT_GIT_EMAIL=123456+swe-agent[bot]@users.noreply.github.com
+
+# Commit Signing (optional)
+# USE_COMMIT_SIGNING=false  # When true, use GitHub API signing
 
 # Debugging (optional)
 # DEBUG_CLAUDE_PARSING=true
@@ -471,23 +491,25 @@ runner.Run("git", []string{"add", userInput})  // ✅ Safe
 | Config          | Environment variable management and validation  | 2      | 87.5%         |
 | Comment Tracker | Progress tracking and status updates            | 4      | -             |
 | Command Runner  | Safe command execution                          | 2      | -             |
+| Post-Processing | Branch link generation, PR links, empty branch cleanup | 4      | 40.5%         |
 
 ## 🧪 Testing
 
 ### Test Coverage
 
-Overall: **85.2%** coverage across all modules
+Overall: **70.5%** coverage across all modules
 
 | Module            | Coverage |
 |-------------------|----------|
-| executor          | 87.3%    |
-| github/data       | 91.2%    |
-| taskstore         | 100.0%   |
-| github            | 85.0%    |
-| webhook           | 94.0%    |
+| toolconfig        | 98.0%    |
 | web               | 95.2%    |
-| prompt            | 92.3%    |
+| webhook           | 89.6%    |
+| github/data       | 91.2%    |
 | dispatcher        | 91.6%    |
+| prompt            | 92.3%    |
+| executor          | 75.7%    |
+| github            | 71.7%    |
+| postprocess       | 40.5%    |
 
 ### Run Tests
 
@@ -643,6 +665,9 @@ Switch via environment variable `PROVIDER=codex` or `PROVIDER=claude`.
 - ✅ 75%+ test coverage
 - ✅ Bot comment filtering (prevent infinite loops)
 - ✅ Auto label management
+
+- ✅ **Post-processing system** (auto branch/PR links, empty branch cleanup)
+- ✅ **Commit signing support** (GitHub API with automatic signing)
 
 ### ⚠️ Current Limitations
 
@@ -903,7 +928,13 @@ This section maps the high-level requirements to the 8 capability layers describ
 - [ ] **Rate limiting** - Prevent abuse (per-repo/hour limits)
 - [ ] **Logging improvements** - Structured logs (JSON) + log levels
 
-### v0.5 - Quality Assurance & Interaction (🔴 P0 Capabilities)
+### v0.5 - Quality Assurance & Interaction (🔴 P0 Capabilities) - COMPLETED
+
+**Post-Processing & Signing (Phase 7 & 8)**:
+- [x] **Post-processing system** - Auto-generate branch/PR links after execution
+- [x] **Commit signing** - GitHub API-based commits with automatic signing
+- [x] **Empty branch cleanup** - Delete branches with no commits
+- [x] **Tool configuration** - Smart switching based on signing mode
 
 **Quality Assurance Layer**:
 - [ ] **Automatic test execution** - Run project tests after code generation
