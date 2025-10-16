@@ -23,7 +23,6 @@ func (mt mockTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return mt.c.Transport.RoundTrip(r)
 }
 
-
 func TestPermissions_Checks(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/o/r/collaborators/u/permission", func(w http.ResponseWriter, r *http.Request) {

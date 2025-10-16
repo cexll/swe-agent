@@ -10,6 +10,7 @@ import (
 	"github.com/cexll/swe/internal/dispatcher"
 	"github.com/cexll/swe/internal/executor"
 	"github.com/cexll/swe/internal/github"
+	_ "github.com/cexll/swe/internal/modes/command" // Register CommandMode
 	"github.com/cexll/swe/internal/taskstore"
 	"github.com/cexll/swe/internal/web"
 	"github.com/cexll/swe/internal/webhook"

@@ -73,10 +73,10 @@ func Load() (*Config, error) {
 		CodexModel:                  getEnv("CODEX_MODEL", "gpt-5-codex"),
 		TriggerKeyword:              getEnv("TRIGGER_KEYWORD", "/code"),
 		DisallowedTools:             getEnv("DISALLOWED_TOOLS", ""),
-    EnableGitHubCommentMCP:      getEnvBool("ENABLE_GITHUB_MCP_COMMENT"),
-    EnableGitHubFileOpsMCP:      getEnvBool("ENABLE_GITHUB_MCP_FILES"),
-    EnableGitHubCIMCP:           getEnvBool("ENABLE_GITHUB_MCP_CI"),
-    UseCommitSigning:            getEnvBool("USE_COMMIT_SIGNING"),
+		EnableGitHubCommentMCP:      getEnvBool("ENABLE_GITHUB_MCP_COMMENT"),
+		EnableGitHubFileOpsMCP:      getEnvBool("ENABLE_GITHUB_MCP_FILES"),
+		EnableGitHubCIMCP:           getEnvBool("ENABLE_GITHUB_MCP_CI"),
+		UseCommitSigning:            getEnvBool("USE_COMMIT_SIGNING"),
 		DispatcherWorkers:           getEnvInt("DISPATCHER_WORKERS", 4),
 		DispatcherQueueSize:         getEnvInt("DISPATCHER_QUEUE_SIZE", 16),
 		DispatcherMaxAttempts:       getEnvInt("DISPATCHER_MAX_ATTEMPTS", 3),
@@ -232,18 +232,18 @@ func getEnvFloat(key string, defaultValue float64) float64 {
 }
 
 func getEnvBool(key string) bool {
-    v := os.Getenv(key)
-    if v == "" {
-        return false
-    }
-    switch v {
-    case "1", "true", "TRUE", "True", "yes", "Y", "y":
-        return true
-    case "0", "false", "FALSE", "False", "no", "N", "n":
-        return false
-    default:
-        return false
-    }
+	v := os.Getenv(key)
+	if v == "" {
+		return false
+	}
+	switch v {
+	case "1", "true", "TRUE", "True", "yes", "Y", "y":
+		return true
+	case "0", "false", "FALSE", "False", "no", "N", "n":
+		return false
+	default:
+		return false
+	}
 }
 
 // NewProvider creates a provider based on configuration

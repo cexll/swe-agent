@@ -22,7 +22,7 @@ func createGitShim(t *testing.T) (shimDir string) {
 		t.Fatalf("failed to write git shim: %v", err)
 	}
 	_ = os.Chmod(shim, 0o755)
-    return dir
+	return dir
 }
 
 func prependPath(t *testing.T, dir string) func() {
@@ -36,7 +36,7 @@ func prependPath(t *testing.T, dir string) func() {
 }
 
 func TestConfigureGitAndGet(t *testing.T) {
-    shimDir := createGitShim(t)
+	shimDir := createGitShim(t)
 	restore := prependPath(t, shimDir)
 	defer restore()
 
@@ -54,7 +54,7 @@ func TestConfigureGitAndGet(t *testing.T) {
 }
 
 func TestConfigureGitForApp(t *testing.T) {
-    shimDir := createGitShim(t)
+	shimDir := createGitShim(t)
 	restore := prependPath(t, shimDir)
 	defer restore()
 
@@ -72,7 +72,7 @@ func TestConfigureGitForApp(t *testing.T) {
 }
 
 func TestConfigureGitForApp_DefaultName(t *testing.T) {
-    shimDir := createGitShim(t)
+	shimDir := createGitShim(t)
 	restore := prependPath(t, shimDir)
 	defer restore()
 
