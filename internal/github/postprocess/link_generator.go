@@ -36,8 +36,8 @@ func (lg *LinkGenerator) GeneratePRLink(baseBranch, headBranch string, issueNumb
 	}
 
 	// 构建 PR 标题和描述
-	title := fmt.Sprintf("%s #%d: Changes from Claude", entityType, issueNumber)
-	body := fmt.Sprintf("This PR addresses %s #%d\n\nGenerated with [Claude Code](https://claude.ai/code)",
+	title := fmt.Sprintf("%s #%d: Changes from SWE Agent", entityType, issueNumber)
+	body := fmt.Sprintf("This PR addresses %s #%d\n\nGenerated with [SWE Agent](https://github.com/cexll/swe-agent)",
 		entityType, issueNumber)
 
 	// URL 编码
