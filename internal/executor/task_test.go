@@ -98,6 +98,84 @@ func buildTestCtx(isPR bool) *github.Context {
 	return ctx
 }
 
+func runCtxMapTest(t *testing.T, ghCtx *github.Context, assert func(map[string]string)) {
+	t.Helper()
+
+	origClone := cloneRepo
+	origRun := runCmd
+	t.Cleanup(func() {
+		cloneRepo = origClone
+		runCmd = origRun
+	})
+
+	tmpDir := t.TempDir()
+	cloneRepo = func(repo, branch, token string) (string, func(), error) {
+		return tmpDir, func() {}, nil
+	}
+	runCmd = func(name string, args ...string) error { return nil }
+
+	mp := &mockProvider{generateFunc: func(ctx context.Context, req *provider.CodeRequest) (*provider.CodeResponse, error) {
+		if req.Context == nil {
+			t.Fatal("provider request missing context map")
+		}
+		assert(req.Context)
+		return &provider.CodeResponse{Summary: "ok"}, nil
+	}}
+	ma := &mockAuthProvider{}
+	ex := New(mp, ma)
+	ex.fetcher = &mockFetcher{fetchFunc: func(ctx context.Context, gctx *github.Context) (*ghdata.FetchResult, error) {
+		return &ghdata.FetchResult{}, nil
+	}}
+
+	if ghCtx.PreparedPrompt == "" {
+		ghCtx.PreparedPrompt = "stub prompt"
+	}
+
+	if err := ex.Execute(context.Background(), ghCtx); err != nil {
+		t.Fatalf("Execute() err = %v", err)
+	}
+}
+
+func expectField(t *testing.T, m map[string]string, key, want string) {
+	t.Helper()
+	got, ok := m[key]
+	if !ok {
+		t.Fatalf("context missing key %q", key)
+	}
+	if got != want {
+		t.Fatalf("context[%q] = %q, want %q", key, got, want)
+	}
+}
+
+func expectNoField(t *testing.T, m map[string]string, key string) {
+	t.Helper()
+	if _, ok := m[key]; ok {
+		t.Fatalf("context should not contain key %q", key)
+	}
+}
+
+func expectBaseFields(t *testing.T, ghCtx *github.Context, m map[string]string) {
+	t.Helper()
+
+	expectField(t, m, "github_token", "test-token")
+
+	repo := ghCtx.GetRepositoryFullName()
+	if repo == "" {
+		repo = fmt.Sprintf("%s/%s", ghCtx.GetRepositoryOwner(), ghCtx.GetRepositoryName())
+	}
+	expectField(t, m, "repository", repo)
+
+	base := ghCtx.PreparedBaseBranch
+	if base == "" {
+		base = ghCtx.GetBaseBranch()
+		if base == "" {
+			base = "main"
+		}
+	}
+	expectField(t, m, "base_branch", base)
+	expectField(t, m, "head_branch", ghCtx.GetHeadBranch())
+}
+
 func TestNew(t *testing.T) {
 	provider := &mockProvider{}
 	auth := &mockAuthProvider{}
@@ -175,6 +253,69 @@ func TestFeatureBranchName(t *testing.T) {
 }
 
 // --- Execute() tests ---
+
+func TestExecute_CtxMapWithCommentID(t *testing.T) {
+	ctx := buildTestCtx(true)
+	ctx.PreparedCommentID = 42
+
+	runCtxMapTest(t, ctx, func(m map[string]string) {
+		expectBaseFields(t, ctx, m)
+		expectField(t, m, "comment_id", "42")
+		expectField(t, m, "repo_owner", ctx.GetRepositoryOwner())
+		expectField(t, m, "repo_name", ctx.GetRepositoryName())
+		expectField(t, m, "event_name", ctx.GetEventName())
+	})
+}
+
+func TestExecute_CtxMapWithoutCommentID(t *testing.T) {
+	ctx := buildTestCtx(false)
+	ctx.PreparedCommentID = 0
+
+	runCtxMapTest(t, ctx, func(m map[string]string) {
+		expectBaseFields(t, ctx, m)
+		expectNoField(t, m, "comment_id")
+		expectNoField(t, m, "repo_owner")
+		expectNoField(t, m, "repo_name")
+		expectNoField(t, m, "event_name")
+	})
+}
+
+func TestExecute_CtxMapPRContext(t *testing.T) {
+	ctx := buildTestCtx(true)
+	ctx.PRNumber = 88
+
+	runCtxMapTest(t, ctx, func(m map[string]string) {
+		expectBaseFields(t, ctx, m)
+		expectField(t, m, "pr_number", "88")
+		expectNoField(t, m, "issue_number")
+	})
+}
+
+func TestExecute_CtxMapIssueContext(t *testing.T) {
+	ctx := buildTestCtx(false)
+	ctx.IssueNumber = 17
+
+	runCtxMapTest(t, ctx, func(m map[string]string) {
+		expectBaseFields(t, ctx, m)
+		expectField(t, m, "issue_number", "17")
+		expectNoField(t, m, "pr_number")
+	})
+}
+
+func TestExecute_CtxMapAllFields(t *testing.T) {
+	ctx := buildTestCtx(true)
+	ctx.PreparedCommentID = 101
+	ctx.PRNumber = 202
+
+	runCtxMapTest(t, ctx, func(m map[string]string) {
+		expectBaseFields(t, ctx, m)
+		expectField(t, m, "comment_id", "101")
+		expectField(t, m, "repo_owner", ctx.GetRepositoryOwner())
+		expectField(t, m, "repo_name", ctx.GetRepositoryName())
+		expectField(t, m, "event_name", ctx.GetEventName())
+		expectField(t, m, "pr_number", "202")
+	})
+}
 
 func TestExecute_Success(t *testing.T) {
 	// Save and restore globals

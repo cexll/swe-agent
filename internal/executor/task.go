@@ -81,13 +81,18 @@ func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) erro
 	}
 	defer cleanup()
 
-	// 4) Checkout task branch (prefer prepared branch)
+	// 4) Checkout task branch
 	branch := webhookCtx.PreparedBranch
 	if branch == "" {
+		// 生成新分支名
 		branch = featureBranchName(webhookCtx)
 	}
-	if err := runCmd("git", "-C", workdir, "checkout", "-b", branch); err != nil {
-		return fmt.Errorf("create feature branch: %w", err)
+
+	// 如果 branch == base，说明已经在目标分支上（clone 时已 checkout），跳过
+	if branch != base {
+		if err := runCmd("git", "-C", workdir, "checkout", "-b", branch); err != nil {
+			return fmt.Errorf("create feature branch: %w", err)
+		}
 	}
 
 	// 5) Build or use prepared prompt (system + GitHub XML)
@@ -104,11 +109,22 @@ func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) erro
 	os.Setenv("GH_TOKEN", token.Token)
 	os.Setenv("REPO_DIR", workdir)
 
+	// Build context map for provider (including MCP config data)
 	ctxMap := map[string]string{
 		"github_token": token.Token,
 		"repository":   repo,
 		"base_branch":  base,
 		"head_branch":  webhookCtx.GetHeadBranch(),
+	}
+
+	// Add MCP comment server context if available
+	if webhookCtx.PreparedCommentID > 0 {
+		ctxMap["comment_id"] = fmt.Sprintf("%d", webhookCtx.PreparedCommentID)
+		ctxMap["repo_owner"] = webhookCtx.GetRepositoryOwner()
+		ctxMap["repo_name"] = webhookCtx.GetRepositoryName()
+		if webhookCtx.EventName != "" {
+			ctxMap["event_name"] = string(webhookCtx.EventName)
+		}
 	}
 	if webhookCtx.IsPRContext() {
 		if n := webhookCtx.GetPRNumber(); n != 0 {
@@ -118,7 +134,7 @@ func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) erro
 		ctxMap["issue_number"] = fmt.Sprintf("%d", n)
 	}
 
-	// Build tool configuration (reference: claude-code-action buildAllowed/Disallowed)
+	// Build tool configuration
 	toolOpts := toolconfig.Options{
 		UseCommitSigning:       getEnvBool("USE_COMMIT_SIGNING", false),
 		EnableGitHubCommentMCP: true, // default enable comment MCP for coordinator
