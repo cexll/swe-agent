@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cexll/swe/internal/github"
+	"github.com/cexll/swe/internal/modes"
 	"github.com/cexll/swe/internal/taskstore"
 )
 
@@ -22,6 +23,7 @@ type Task struct {
 	Repo          string
 	Number        int
 	Branch        string
+	BaseBranch    string
 	Prompt        string
 	PromptSummary string
 	IssueTitle    string
@@ -32,6 +34,8 @@ type Task struct {
 	Username      string // User who triggered the task
 	Attempt       int    // Current attempt number (managed by dispatcher)
 	PromptContext map[string]string
+	CommentID     int64  // coordination comment id (when prepared by modes)
+	Mode          string // detected mode name
 	// Raw webhook preservation for adapter-based execution
 	RawPayload []byte
 	EventType  string
@@ -92,6 +96,48 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Determine event type
 	eventType := r.Header.Get("X-GitHub-Event")
+
+	// 3.5 Try new mode-based pipeline first (non-breaking: fallback if no mode)
+	if ghCtx, err := github.ParseWebhookEvent(eventType, payload); err == nil {
+		if mode := modes.DetectMode(ghCtx); mode != nil {
+			// Prepare execution context (comment, branch, prompt)
+			prepareResult, err := mode.Prepare(r.Context(), ghCtx)
+			if err != nil {
+				log.Printf("Failed to prepare via mode %q: %v", mode.Name(), err)
+				http.Error(w, "Preparation failed", http.StatusInternalServerError)
+				return
+			}
+
+			// Create task and enqueue
+			t := &Task{
+				ID:         h.generateTaskID(ghCtx.Repository.FullName, ghCtx.IssueNumber),
+				Repo:       ghCtx.Repository.FullName,
+				Number:     ghCtx.IssueNumber,
+				Branch:     prepareResult.Branch,
+				BaseBranch: prepareResult.BaseBranch,
+				Prompt:     prepareResult.Prompt,
+				IsPR:       ghCtx.IsPR,
+				Username:   ghCtx.TriggerUser,
+				CommentID:  prepareResult.CommentID,
+				Mode:       mode.Name(),
+				// Keep raw webhook for adapter/executor context reconstruction
+				RawPayload: payload,
+				EventType:  string(ghCtx.EventName),
+			}
+
+			if err := h.dispatcher.Enqueue(t); err != nil {
+				log.Printf("Failed to enqueue task: %v", err)
+				http.Error(w, "Failed to enqueue", http.StatusInternalServerError)
+				return
+			}
+
+			w.WriteHeader(http.StatusAccepted)
+			w.Write([]byte("Task queued"))
+			return
+		}
+	} else {
+		log.Printf("Failed to parse webhook for mode detection: %v", err)
+	}
 	switch eventType {
 	case "issue_comment":
 		h.handleIssueComment(w, payload)
@@ -191,7 +237,7 @@ func (h *Handler) handleIssueComment(w http.ResponseWriter, payload []byte) {
 
 	log.Printf("Received task: repo=%s, number=%d, commentID=%d, user=%s", task.Repo, task.Number, event.Comment.ID, task.Username)
 
-	h.enqueueTask(w, task, prompt)
+	h.enqueueTask(w, task)
 }
 
 func (h *Handler) handleReviewComment(w http.ResponseWriter, payload []byte) {
@@ -281,7 +327,7 @@ func (h *Handler) handleReviewComment(w http.ResponseWriter, payload []byte) {
 
 	log.Printf("Received review task: repo=%s, number=%d, commentID=%d, user=%s", task.Repo, task.Number, event.Comment.ID, task.Username)
 
-	h.enqueueTask(w, task, prompt)
+	h.enqueueTask(w, task)
 }
 
 func (h *Handler) generateTaskID(repo string, number int) string {
@@ -357,7 +403,7 @@ func splitRepo(full string) (string, string) {
 	return full, ""
 }
 
-func (h *Handler) enqueueTask(w http.ResponseWriter, task *Task, prompt string) {
+func (h *Handler) enqueueTask(w http.ResponseWriter, task *Task) {
 	if err := h.dispatcher.Enqueue(task); err != nil {
 		log.Printf("Failed to enqueue task: %v", err)
 		switch {
