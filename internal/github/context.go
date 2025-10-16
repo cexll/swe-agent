@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -48,6 +49,8 @@ type Context struct {
 	// Branch information
 	BaseBranch string
 	HeadBranch string
+	// PR state when applicable (e.g., "open" or "closed")
+	PRState string
 
 	// Trigger information
 	TriggerUser    string
@@ -72,9 +75,10 @@ type Context struct {
 
 // Repository represents a GitHub repository
 type Repository struct {
-	Owner    string
-	Name     string
-	FullName string
+	Owner         string
+	Name          string
+	FullName      string
+	DefaultBranch string
 }
 
 // Comment represents a GitHub comment
@@ -166,9 +170,23 @@ func ParseWebhookEvent(eventType string, payload []byte) (*Context, error) {
 	// Parse repository
 	if repo, ok := data["repository"].(map[string]interface{}); ok {
 		ctx.Repository = Repository{
-			Owner:    getStringField(repo, "owner", "login"),
-			Name:     getStringField(repo, "name"),
-			FullName: getStringField(repo, "full_name"),
+			Owner:         getStringField(repo, "owner", "login"),
+			Name:          getStringField(repo, "name"),
+			FullName:      getStringField(repo, "full_name"),
+			DefaultBranch: getStringField(repo, "default_branch"),
+		}
+
+		// Fallback: parse Owner and Name from FullName if not present
+		if (ctx.Repository.Owner == "" || ctx.Repository.Name == "") && ctx.Repository.FullName != "" {
+			parts := strings.SplitN(ctx.Repository.FullName, "/", 2)
+			if len(parts) == 2 {
+				if ctx.Repository.Owner == "" {
+					ctx.Repository.Owner = parts[0]
+				}
+				if ctx.Repository.Name == "" {
+					ctx.Repository.Name = parts[1]
+				}
+			}
 		}
 	}
 
@@ -212,6 +230,9 @@ func parseIssueComment(ctx *Context, data map[string]interface{}) (*Context, err
 				ctx.CreatedAt = t
 			}
 		}
+		if ctx.TriggerUser == "" {
+			ctx.TriggerUser = ctx.TriggerComment.User
+		}
 	}
 
 	// Determine if this is an issue or PR
@@ -226,6 +247,11 @@ func parseIssueComment(ctx *Context, data map[string]interface{}) (*Context, err
 		}
 	}
 
+	// Set BaseBranch to repository default branch for issue events
+	if ctx.Repository.DefaultBranch != "" {
+		ctx.BaseBranch = ctx.Repository.DefaultBranch
+	}
+
 	return ctx, nil
 }
 
@@ -235,6 +261,11 @@ func parseIssues(ctx *Context, data map[string]interface{}) (*Context, error) {
 
 	if issue, ok := data["issue"].(map[string]interface{}); ok {
 		ctx.IssueNumber = int(getNumberField(issue, "number"))
+	}
+
+	// Set BaseBranch to repository default branch for issue events
+	if ctx.Repository.DefaultBranch != "" {
+		ctx.BaseBranch = ctx.Repository.DefaultBranch
 	}
 
 	return ctx, nil
@@ -254,6 +285,9 @@ func parsePullRequest(ctx *Context, data map[string]interface{}) (*Context, erro
 		}
 		if head, ok := pr["head"].(map[string]interface{}); ok {
 			ctx.HeadBranch = getStringField(head, "ref")
+		}
+		if state := getStringField(pr, "state"); state != "" {
+			ctx.PRState = state
 		}
 	}
 
@@ -275,6 +309,9 @@ func parsePullRequestReview(ctx *Context, data map[string]interface{}) (*Context
 		if head, ok := pr["head"].(map[string]interface{}); ok {
 			ctx.HeadBranch = getStringField(head, "ref")
 		}
+		if state := getStringField(pr, "state"); state != "" {
+			ctx.PRState = state
+		}
 	}
 
 	// Parse review comment
@@ -289,6 +326,9 @@ func parsePullRequestReview(ctx *Context, data map[string]interface{}) (*Context
 			if t, err := time.Parse(time.RFC3339, ts); err == nil {
 				ctx.CreatedAt = t
 			}
+		}
+		if ctx.TriggerUser == "" {
+			ctx.TriggerUser = ctx.TriggerComment.User
 		}
 	}
 
@@ -310,6 +350,9 @@ func parsePullRequestReviewComment(ctx *Context, data map[string]interface{}) (*
 		if head, ok := pr["head"].(map[string]interface{}); ok {
 			ctx.HeadBranch = getStringField(head, "ref")
 		}
+		if state := getStringField(pr, "state"); state != "" {
+			ctx.PRState = state
+		}
 	}
 
 	// Parse review comment
@@ -326,6 +369,14 @@ func parsePullRequestReviewComment(ctx *Context, data map[string]interface{}) (*
 				ctx.CreatedAt = t
 			}
 		}
+		if ctx.TriggerUser == "" {
+			ctx.TriggerUser = ctx.TriggerComment.User
+		}
+	}
+
+	// Fallback BaseBranch to repository default when missing
+	if ctx.BaseBranch == "" && ctx.Repository.DefaultBranch != "" {
+		ctx.BaseBranch = ctx.Repository.DefaultBranch
 	}
 
 	return ctx, nil
@@ -375,6 +426,9 @@ func (c *Context) GetRepositoryOwner() string { return c.Repository.Owner }
 // GetRepositoryName returns the repository name.
 func (c *Context) GetRepositoryName() string { return c.Repository.Name }
 
+// GetRepositoryDefaultBranch returns the repo default branch.
+func (c *Context) GetRepositoryDefaultBranch() string { return c.Repository.DefaultBranch }
+
 // IsPRContext reports whether the current context is a PR.
 func (c *Context) IsPRContext() bool { return c.IsPR }
 
@@ -389,6 +443,9 @@ func (c *Context) GetBaseBranch() string { return c.BaseBranch }
 
 // GetHeadBranch returns the head branch for PRs.
 func (c *Context) GetHeadBranch() string { return c.HeadBranch }
+
+// GetPRState returns the pull request state when applicable.
+func (c *Context) GetPRState() string { return c.PRState }
 
 // GetTriggerUser returns the login of the user that triggered the event.
 func (c *Context) GetTriggerUser() string { return c.TriggerUser }
@@ -441,8 +498,21 @@ func getNumberField(data map[string]interface{}, keys ...string) float64 {
 	return 0
 }
 
-// NewGitHubClient returns a GitHub API client for higher-level features.
-// For now, unauthenticated client is sufficient for tests; authentication will be added later.
+// NewGitHubClient returns an authenticated GitHub API client using the token stored in the context.
+// If no token is present, returns an unauthenticated client (for tests).
+// Factory for creating go-github clients; override in tests.
+var gitHubClientFactory func(token string) *gh.Client
+
+// SetGitHubClientFactory sets a factory used to construct go-github clients.
+// Intended for tests to inject a mock HTTP-backed client.
+func SetGitHubClientFactory(f func(token string) *gh.Client) { gitHubClientFactory = f }
+
 func (c *Context) NewGitHubClient() *gh.Client {
+	if gitHubClientFactory != nil {
+		return gitHubClientFactory(c.Token)
+	}
+	if c.Token != "" {
+		return gh.NewTokenClient(context.Background(), c.Token)
+	}
 	return gh.NewClient(nil)
 }

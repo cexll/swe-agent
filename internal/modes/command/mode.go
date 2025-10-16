@@ -44,7 +44,11 @@ func (m *CommandMode) Prepare(ctx context.Context, ghCtx *ghpkg.Context) (*modes
 		issueTitle = fmt.Sprintf("issue-%d", ghCtx.IssueNumber)
 	}
 
-	branchName, err := branchMgr.CreateBranch(ctx, ghCtx.GetBaseBranch(), ghCtx.IssueNumber, issueTitle)
+	base := ghCtx.GetBaseBranch()
+	if strings.TrimSpace(base) == "" {
+		base = ghCtx.GetRepositoryDefaultBranch()
+	}
+	branchName, err := branchMgr.CreateBranch(ctx, base, ghCtx.GetIssueNumber(), issueTitle)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create branch: %w", err)
 	}
@@ -58,7 +62,7 @@ func (m *CommandMode) Prepare(ctx context.Context, ghCtx *ghpkg.Context) (*modes
 	return &modes.PrepareResult{
 		CommentID:  commentID,
 		Branch:     branchName,
-		BaseBranch: ghCtx.GetBaseBranch(),
+		BaseBranch: base,
 		Prompt:     fullPrompt,
 	}, nil
 }

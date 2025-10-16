@@ -342,6 +342,8 @@ func TestRepositoryParsing_MissingNestedOwner(t *testing.T) {
 	p := basePayload()
 	// override owner to a non-map so nested access fails
 	p["repository"].(map[string]interface{})["owner"] = "not-a-map"
+	// Also clear full_name to prevent fallback logic from extracting owner
+	p["repository"].(map[string]interface{})["full_name"] = ""
 	p["action"] = "opened"
 	p["issues"] = map[string]interface{}{}
 
@@ -377,5 +379,72 @@ func TestHelperAccessors(t *testing.T) {
 	}
 	if n := getNumberField(m, "s", "k"); n != 0 { // intermediate not a map
 		t.Fatalf("getNumberField non-map intermediate = %v, want 0", n)
+	}
+}
+
+func TestParseIssueCommentSetsBaseBranch(t *testing.T) {
+	// Test that issue_comment events set BaseBranch to repository default_branch
+	p := basePayload()
+	p["repository"].(map[string]interface{})["default_branch"] = "main"
+	p["action"] = "created"
+	p["issue"] = map[string]interface{}{
+		"number": float64(15),
+		"title":  "Fix bug",
+	}
+	p["comment"] = map[string]interface{}{
+		"id":   float64(123456),
+		"body": "/code fix this bug",
+		"user": map[string]interface{}{"login": "testuser"},
+	}
+
+	ctx, err := ParseWebhookEvent("issue_comment", mustJSON(t, p))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify Repository.DefaultBranch is set
+	if ctx.Repository.DefaultBranch != "main" {
+		t.Fatalf("Repository.DefaultBranch = %q, want %q", ctx.Repository.DefaultBranch, "main")
+	}
+
+	// Verify BaseBranch is set to default_branch for issue events
+	if ctx.BaseBranch != "main" {
+		t.Fatalf("BaseBranch = %q, want %q", ctx.BaseBranch, "main")
+	}
+
+	// Verify it's not a PR
+	if ctx.IsPR {
+		t.Fatalf("IsPR should be false for regular issue")
+	}
+}
+
+func TestParseIssuesSetsBaseBranch(t *testing.T) {
+	// Test that issues events set BaseBranch to repository default_branch
+	p := basePayload()
+	p["repository"].(map[string]interface{})["default_branch"] = "develop"
+	p["action"] = "opened"
+	p["issue"] = map[string]interface{}{
+		"number": float64(7),
+		"title":  "New feature request",
+	}
+
+	ctx, err := ParseWebhookEvent("issues", mustJSON(t, p))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify Repository.DefaultBranch is set
+	if ctx.Repository.DefaultBranch != "develop" {
+		t.Fatalf("Repository.DefaultBranch = %q, want %q", ctx.Repository.DefaultBranch, "develop")
+	}
+
+	// Verify BaseBranch is set to default_branch
+	if ctx.BaseBranch != "develop" {
+		t.Fatalf("BaseBranch = %q, want %q", ctx.BaseBranch, "develop")
+	}
+
+	// Verify it's not a PR
+	if ctx.IsPR {
+		t.Fatalf("IsPR should be false for issues event")
 	}
 }
