@@ -6,46 +6,58 @@ import (
 )
 
 // BuildAllowedTools returns the list of tools that should be allowed for the
-// provider CLI. This mirrors the logic of Claude Code Action's
+// provider CLI.
 // buildAllowedToolsString() while keeping the return type as []string to allow
 // callers to format/stringify as needed.
 func BuildAllowedTools(opts Options) []string {
 	// Base essential tools
-	base := []string{"Edit", "MultiEdit", "Glob", "Grep", "LS", "Read", "Write"}
+	base := []string{"Edit", "MultiEdit", "Glob", "Grep", "LS", "Read", "Write", "WebSearch", "WebFetch", "fetch__fetch"}
 
-	// GitHub MCP tools (official tool names, no mcp__ prefix)
+	// GitHub MCP tools (requires mcp__github__ prefix for MCP server tools)
 	base = append(base,
-		// Comment + PR
-		"github_update_issue_comment",
-		"github_create_issue_comment",
-		"github_create_pull_request",
+		// Comment + PR operations
+		"mcp__comment_updater__update_claude_comment",
+		"mcp__github__create_issue_comment",
+		"mcp__github__create_pull_request",
+		"mcp__github__get_issue_comments",
+		"mcp__github__add_comment_to_pending_review",
+		"mcp__github__add_issue_comment",
+		"mcp__github__assign_copilot_to_issue",
+		"mcp__github__create_and_submit_pull_request_review",
+		"mcp__github__create_branch",
+		"mcp__github__create_pending_pull_request_review",
 	)
 	// File ops: choose between git bash vs API push tool
 	if opts.UseCommitSigning || opts.EnableGitHubFileOpsMCP {
-		// Enable API-based push that supports signing on server side
-		base = append(base, "github_push_files")
+		// Enable API-based push that supports signing on server side (requires mcp__ prefix)
+		base = append(base, "mcp__github__push_files")
 	} else {
 		// Allow local file create/update when not using signing
-		base = append(base, "github_create_or_update_file")
+		base = append(base, "mcp__github__create_or_update_file")
 	}
 
-	// Git MCP tools
+	// Git MCP tools (requires mcp__git__ prefix for MCP server tools)
 	if !opts.UseCommitSigning {
 		base = append(base,
-			"git_status",
-			"git_diff_unstaged",
-			"git_diff_staged",
-			"git_commit",
-			"git_log",
+			"mcp__git__status",
+			"mcp__git__diff_unstaged",
+			"mcp__git__diff_staged",
+			"mcp__git__commit",
+			"mcp__git__add",
+			"mcp__git__push",
+			"mcp__git__branch",
+			"mcp__git__log",
+			"mcp__git__show",
+			"mcp__git__create_branch",
 		)
 	}
 
-	// GitHub CI MCP (optional)
+	// GitHub CI MCP (optional, requires mcp__github__ prefix)
 	if opts.EnableGitHubCIMCP {
 		base = append(base,
-			"github_get_workflow_runs",
-			"github_get_workflow_run",
-			"github_get_job_logs",
+			"mcp__github__get_workflow_runs",
+			"mcp__github__get_workflow_run",
+			"mcp__github__get_job_logs",
 		)
 	}
 
@@ -60,16 +72,17 @@ func BuildAllowedTools(opts Options) []string {
 
 // BuildDisallowedTools returns a default-restrictive set and merges any custom
 // entries. It also removes tools from the default blocklist if they are
-// explicitly allowed, mirroring the behavior in claude-code-action.
+// explicitly allowed, mirroring the behavior.
 func BuildDisallowedTools(opts Options) []string {
 	// Default disallowed tools for safety (match reference implementation)
+	// WebSearch and WebFetch are disallowed by default for security
 	disallowed := []string{"WebSearch", "WebFetch"}
 
-	// Remove from defaults if explicitly allowed
-	allowedSet := toSet(BuildAllowedTools(opts))
+	// Remove from defaults if explicitly allowed in CustomAllowedTools
+	customAllowedSet := toSet(opts.CustomAllowedTools)
 	tmp := disallowed[:0]
 	for _, t := range disallowed {
-		if !allowedSet[t] {
+		if !customAllowedSet[t] {
 			tmp = append(tmp, t)
 		}
 	}

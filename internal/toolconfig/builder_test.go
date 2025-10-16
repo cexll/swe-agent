@@ -17,22 +17,22 @@ func TestBuildAllowedTools_Defaults(t *testing.T) {
 		}
 	}
 
-	// Should include official Git MCP tools
-	gitTools := []string{"git_status", "git_diff_unstaged", "git_diff_staged", "git_commit", "git_log"}
+	// Should include official Git MCP tools (with mcp__git__ prefix)
+	gitTools := []string{"mcp__git__status", "mcp__git__diff_unstaged", "mcp__git__diff_staged", "mcp__git__commit", "mcp__git__add", "mcp__git__push", "mcp__git__log"}
 	for _, gt := range gitTools {
 		if !contains(tools, gt) {
 			t.Errorf("Expected git MCP tool %s not found in allowed tools", gt)
 		}
 	}
 
-	// Should include GitHub MCP tools by default (no mcp__ prefix). One of file op tools must be present.
-	for _, ght := range []string{"github_update_issue_comment", "github_create_issue_comment", "github_create_pull_request"} {
+	// Should include GitHub MCP tools by default (with mcp__github__ prefix)
+	for _, ght := range []string{"mcp__github__add_issue_comment", "mcp__github__create_issue_comment", "mcp__github__create_pull_request"} {
 		if !contains(tools, ght) {
 			t.Errorf("Expected GitHub tool %s not found in allowed tools", ght)
 		}
 	}
-	if !(contains(tools, "github_create_or_update_file") || contains(tools, "github_push_files")) {
-		t.Errorf("Expected one of github_create_or_update_file or github_push_files in allowed tools")
+	if !(contains(tools, "mcp__github__create_or_update_file") || contains(tools, "mcp__github__push_files")) {
+		t.Errorf("Expected one of mcp__github__create_or_update_file or mcp__github__push_files in allowed tools")
 	}
 }
 
@@ -40,23 +40,23 @@ func TestBuildAllowedTools_CommitSigning_Toggles(t *testing.T) {
 	opts := Options{UseCommitSigning: true}
 	tools := BuildAllowedTools(opts)
 	// Git MCP tools should be disabled when signing
-	for _, gt := range []string{"git_status", "git_diff_unstaged", "git_diff_staged", "git_commit", "git_log"} {
+	for _, gt := range []string{"mcp__git__status", "mcp__git__diff_unstaged", "mcp__git__diff_staged", "mcp__git__commit", "mcp__git__add", "mcp__git__push", "mcp__git__log"} {
 		if contains(tools, gt) {
 			t.Errorf("Did not expect git tool %s when UseCommitSigning=true", gt)
 		}
 	}
 	// API push tool should be enabled
-	if !contains(tools, "github_push_files") {
-		t.Errorf("Expected github_push_files when UseCommitSigning=true")
+	if !contains(tools, "mcp__github__push_files") {
+		t.Errorf("Expected mcp__github__push_files when UseCommitSigning=true")
 	}
 }
 
 func TestBuildAllowedTools_GitHubCommentAlwaysEnabled(t *testing.T) {
-	// github_update_issue_comment should always be present
+	// mcp__github__add_issue_comment should always be present
 	opts := Options{}
 	tools := BuildAllowedTools(opts)
-	if !contains(tools, "github_update_issue_comment") {
-		t.Error("Expected github_update_issue_comment in allowed tools by default")
+	if !contains(tools, "mcp__github__add_issue_comment") {
+		t.Error("Expected mcp__github__add_issue_comment in allowed tools by default")
 	}
 }
 
@@ -67,9 +67,9 @@ func TestBuildAllowedTools_WithGitHubCIMCP(t *testing.T) {
 	tools := BuildAllowedTools(opts)
 
 	ciTools := []string{
-		"github_get_workflow_runs",
-		"github_get_workflow_run",
-		"github_get_job_logs",
+		"mcp__github__get_workflow_runs",
+		"mcp__github__get_workflow_run",
+		"mcp__github__get_job_logs",
 	}
 	for _, ct := range ciTools {
 		if !contains(tools, ct) {
@@ -185,10 +185,127 @@ func TestBuildAllowedTools_Sorted(t *testing.T) {
 	}
 }
 
-// Helper function
+// TestAllMCPToolsHaveCorrectPrefix verifies that all MCP tools have the mcp__ prefix
+// This test ensures we don't accidentally configure tools without the correct prefix
+func TestAllMCPToolsHaveCorrectPrefix(t *testing.T) {
+	testCases := []struct {
+		name string
+		opts Options
+	}{
+		{"Default configuration", Options{}},
+		{"With commit signing", Options{UseCommitSigning: true}},
+		{"With GitHub file ops", Options{EnableGitHubFileOpsMCP: true}},
+		{"With CI MCP", Options{EnableGitHubCIMCP: true}},
+		{"All options enabled", Options{
+			UseCommitSigning:       true,
+			EnableGitHubCommentMCP: true,
+			EnableGitHubFileOpsMCP: true,
+			EnableGitHubCIMCP:      true,
+		}},
+	}
+
+	// List of tool names that should ALWAYS have mcp__ prefix when present
+	mcpPrefixRequired := []string{
+		"github__update_issue_comment",
+		"github__add_issue_comment",
+		"github__create_issue_comment",
+		"github__create_pull_request",
+		"github__push_files",
+		"github__create_or_update_file",
+		"git__status",
+		"git__commit",
+		"git__add",
+		"git__push",
+		"git__diff_unstaged",
+		"git__diff_staged",
+		"git__log",
+		"git__show",
+		"git__branch",
+		"git__create_branch",
+		"github__get_workflow_runs",
+		"github__get_workflow_run",
+		"github__get_job_logs",
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tools := BuildAllowedTools(tc.opts)
+
+			for _, tool := range tools {
+				// Check if this tool contains a pattern that should have mcp__ prefix
+				for _, pattern := range mcpPrefixRequired {
+					if tool == pattern {
+						t.Errorf("Found tool '%s' without mcp__ prefix (should be 'mcp__%s')", tool, pattern)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestNoLegacyToolNames ensures no legacy non-prefixed tool names are present
+func TestNoLegacyToolNames(t *testing.T) {
+	opts := Options{}
+	tools := BuildAllowedTools(opts)
+
+	// Legacy tool names that should NOT appear (they should have mcp__ prefix)
+	legacyNames := []string{
+		"github_update_issue_comment",
+		"github_add_issue_comment",
+		"github_create_or_update_file",
+		"github_push_files",
+		"git_status",
+		"git_commit",
+		"git_add",
+		"git_push",
+	}
+
+	for _, legacy := range legacyNames {
+		if contains(tools, legacy) {
+			t.Errorf("Found legacy tool name '%s' without mcp__ prefix", legacy)
+		}
+	}
+}
+
+// TestMCPPrefixConsistency verifies all GitHub and Git tools have consistent prefixes
+func TestMCPPrefixConsistency(t *testing.T) {
+	opts := Options{}
+	tools := BuildAllowedTools(opts)
+
+	for _, tool := range tools {
+		// Check GitHub MCP tools
+		if hasSubstring(tool, "github") && hasSubstring(tool, "__") {
+			if !hasPrefix(tool, "mcp__github__") {
+				t.Errorf("GitHub tool '%s' has inconsistent prefix (should start with 'mcp__github__')", tool)
+			}
+		}
+
+		// Check Git MCP tools
+		if hasSubstring(tool, "git") && hasSubstring(tool, "__") && !hasSubstring(tool, "github") {
+			if !hasPrefix(tool, "mcp__git__") {
+				t.Errorf("Git tool '%s' has inconsistent prefix (should start with 'mcp__git__')", tool)
+			}
+		}
+	}
+}
+
+// Helper functions
 func contains(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPrefix(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+
+func hasSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
 			return true
 		}
 	}

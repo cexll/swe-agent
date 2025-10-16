@@ -2,7 +2,6 @@ package toolconfig
 
 // Options controls how allowed/disallowed tool lists are built.
 //
-// The design mirrors claude-code-action/src/create-prompt/index.ts
 // (buildAllowedToolsString / buildDisallowedToolsString) so the
 // swe-agent CLI passes a known tool surface to the provider.
 type Options struct {
