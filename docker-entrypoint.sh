@@ -7,46 +7,11 @@ mkdir -p /root/.codex /root/.claude
 # Write Codex auth.json
 jq -n --arg key "${OPENAI_API_KEY:-}" '{OPENAI_API_KEY: $key}' > /root/.codex/auth.json
 
-# Write Codex MCP config (config.toml)
-cat > /root/.codex/config.toml <<TOML
-model = "gpt-5-codex"
-model_reasoning_effort = "high"
-model_reasoning_summary = "detailed"
-approval_policy = "never"
-sandbox_mode = "danger-full-access"
-disable_response_storage = true
-network_access = true
+# Note: Codex MCP config (config.toml) is now dynamically generated at runtime
+# in internal/provider/codex/codex.go to avoid conflicts and allow per-execution customization
 
-[mcp_servers.github]
-type = "http"
-url = "https://api.githubcopilot.com/mcp"
-
-[mcp_servers.github.headers]
-Authorization = "Bearer ${GITHUB_TOKEN}"
-
-[mcp_servers.git]
-command = "uvx"
-args = ["mcp-server-git"]
-TOML
-
-# Write Claude MCP config (.claude.json)
-cat > /root/.claude.json <<JSON
-{
-  "mcpServers": {
-    "github": {
-      "type": "http",
-      "url": "https://api.githubcopilot.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${GITHUB_TOKEN}"
-      }
-    },
-    "git": {
-      "command": "uvx",
-      "args": ["mcp-server-git"]
-    }
-  }
-}
-JSON
+# Note: Claude MCP config is now dynamically generated via --mcp-config flag
+# in internal/provider/claude/claude.go to avoid conflicts with user's ~/.claude.json
 
 # Start the service
 exec swe-agent "$@"

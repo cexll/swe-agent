@@ -19,6 +19,9 @@ COPY . .
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -o swe-agent ./cmd
 
+# Build MCP comment server
+RUN CGO_ENABLED=0 GOOS=linux go build -o mcp-comment-server ./cmd/mcp-comment-server
+
 # Final stage
 FROM alpine:3.20 AS runtime
 
@@ -56,6 +59,7 @@ ENV PATH="/root/.local/bin:${PATH}"
 
 # Copy binary from builder
 COPY --from=builder /build/swe-agent /usr/local/bin/swe-agent
+COPY --from=builder /build/mcp-comment-server /usr/local/bin/mcp-comment-server
 
 # Copy shared system prompt to agent config locations
 COPY --from=builder /build/system-prompt.md /tmp/system-prompt.md

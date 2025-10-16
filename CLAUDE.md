@@ -104,16 +104,40 @@ go mod tidy
 
 ### Docker
 
-**MCP Configuration (v2.0):**
+**MCP Configuration (v2.0.1 - Dynamic Configuration):**
 
-The Docker image uses **HTTP-based MCP servers** configured at runtime via `docker-entrypoint.sh`:
+The Docker image uses **dynamic MCP configuration** generated at runtime by providers:
 
-- **GitHub MCP**: Connects to `https://api.githubcopilot.com/mcp` (requires `GITHUB_TOKEN`)
-- **Git MCP**: Uses `uvx mcp-server-git` (requires `REPO_DIR` set by executor)
+**Claude Provider (`internal/provider/claude/claude.go`):**
+- Generates MCP config as JSON via `--mcp-config` CLI parameter
+- Configuration is passed dynamically for each execution
+- Merges with user's `~/.claude.json` without conflicts
+- Supports GitHub HTTP MCP, Git MCP, and Comment Updater MCP
 
-MCP configs are dynamically generated:
-- `~/.claude.json` - Claude Code MCP configuration
-- `~/.codex/config.toml` - Codex MCP configuration
+**Codex Provider (`internal/provider/codex/codex.go`):**
+- Generates `~/.codex/config.toml` at runtime before each execution
+- Configuration includes MCP servers with environment variables
+- Supports GitHub HTTP MCP, Git MCP, and Comment Updater MCP
+
+**MCP Servers:**
+- **GitHub MCP**: HTTP endpoint at `https://api.githubcopilot.com/mcp` (no Docker required)
+- **Git MCP**: Uses `uvx mcp-server-git` for git operations
+- **Comment Updater MCP**: Custom server (`mcp-comment-server`) for updating coordinating comments
+
+**Environment Variable Isolation:**
+- Each MCP server has its own environment scope via config's `env` field
+- No global environment variable pollution
+- Follows claude-code-action best practices
+
+**Debug Logging:**
+```bash
+# Enable detailed MCP config logging
+DEBUG_MCP_CONFIG=true go run cmd/main.go
+
+# Logs will show:
+# [Claude] Dynamic MCP config generated: 752 bytes
+# [Codex] Dynamic MCP config written to ~/.codex/config.toml
+```
 
 **Build and run:**
 
