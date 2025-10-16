@@ -11,11 +11,9 @@ import (
 	"github.com/cexll/swe/internal/github"
 	ghdata "github.com/cexll/swe/internal/github/data"
 	operations "github.com/cexll/swe/internal/github/operations/git"
-	ghpost "github.com/cexll/swe/internal/github/postprocess"
 	"github.com/cexll/swe/internal/prompt"
 	"github.com/cexll/swe/internal/provider"
 	"github.com/cexll/swe/internal/toolconfig"
-	ghv66 "github.com/google/go-github/v66/github"
 )
 
 type fetcherIface interface {
@@ -161,19 +159,6 @@ func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) erro
 	})
 	if err != nil {
 		return fmt.Errorf("provider %s: %w", e.provider.Name(), err)
-	}
-
-	// 7) 后处理：添加分支/PR 链接、清理空分支（失败不阻塞）
-	if ghCtx := webhookCtx; ghCtx != nil {
-		commentID := ghCtx.PreparedCommentID
-		if commentID > 0 && branch != "" {
-			// Build authenticated GitHub client
-			ghClient := ghv66.NewTokenClient(ctx, token.Token)
-			proc := ghpost.NewProcessor(ghClient, ghCtx.GetRepositoryOwner(), ghCtx.GetRepositoryName(), commentID, branch, base, ghCtx.GetIssueNumber(), ghCtx.IsPRContext())
-			if err := proc.Process(ctx); err != nil {
-				fmt.Printf("Warning: postprocess failed: %v\n", err)
-			}
-		}
 	}
 
 	return nil

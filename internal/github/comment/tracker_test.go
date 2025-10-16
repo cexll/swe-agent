@@ -9,19 +9,13 @@ import (
 func TestFormatInitialBody(t *testing.T) {
 	body := formatInitialBody()
 
-	// 检查是否包含 spinner
+	// 用户选择保留 spinner image 的版本
 	if !strings.Contains(body, "img src=") {
-		t.Error("Initial body should contain spinner")
+		t.Error("Initial body should contain spinner image")
 	}
 
-	// 检查是否包含 Tasks 标题
-	if !strings.Contains(body, "### Tasks") {
-		t.Error("Initial body should contain Tasks section")
-	}
-
-	// 检查是否包含 checklist
-	if !strings.Contains(body, "- [ ]") {
-		t.Error("Initial body should contain unchecked items")
+	if !strings.Contains(body, "Working on your request...") {
+		t.Error("Initial body should contain 'Working on your request...' text")
 	}
 }
 

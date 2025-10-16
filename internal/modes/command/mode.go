@@ -6,10 +6,8 @@ import (
 	"strings"
 
 	ghpkg "github.com/cexll/swe/internal/github"
-	"github.com/cexll/swe/internal/github/branch"
 	"github.com/cexll/swe/internal/github/comment"
 	"github.com/cexll/swe/internal/modes"
-	"github.com/cexll/swe/internal/prompt"
 )
 
 // CommandMode 实现 Command 模式（/code 命令触发）
@@ -28,42 +26,24 @@ func (m *CommandMode) Prepare(ctx context.Context, ghCtx *ghpkg.Context) (*modes
 	// 1. 创建 GitHub 客户端
 	client := ghCtx.NewGitHubClient()
 
-	// 2. 创建初始协调评论
+	// 2. 创建简单的初始协调评论（即时反馈）
 	tracker := comment.NewTracker(client, ghCtx.Repository.Owner, ghCtx.Repository.Name, ghCtx.IssueNumber)
 	commentID, err := tracker.CreateInitial(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create initial comment: %w", err)
 	}
 
-	// 3. 创建分支（使用智能命名）
-	branchMgr := branch.NewManager(client, ghCtx.Repository.Owner, ghCtx.Repository.Name)
-
-	// 获取 Issue 标题（如果 Context 中没有，使用默认值）
-	issueTitle := ghCtx.IssueTitle
-	if strings.TrimSpace(issueTitle) == "" {
-		issueTitle = fmt.Sprintf("issue-%d", ghCtx.IssueNumber)
-	}
-
+	// 3. 返回结果（不预先创建分支，让 AI 通过 MCP 自主创建）
 	base := ghCtx.GetBaseBranch()
 	if strings.TrimSpace(base) == "" {
 		base = ghCtx.GetRepositoryDefaultBranch()
 	}
-	branchName, err := branchMgr.CreateBranch(ctx, base, ghCtx.GetIssueNumber(), issueTitle)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create branch: %w", err)
-	}
-
-	// 4. 构建完整 Prompt（传递 context 以支持图片下载）
-	fullPrompt, err := prompt.BuildFullPrompt(ctx, ghCtx, commentID, branchName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build prompt: %w", err)
-	}
 
 	return &modes.PrepareResult{
 		CommentID:  commentID,
-		Branch:     branchName,
+		Branch:     "", // 留空，AI 会通过 MCP 自己创建分支
 		BaseBranch: base,
-		Prompt:     fullPrompt,
+		Prompt:     "", // 留空，Executor 会统一构建 Prompt
 	}, nil
 }
 

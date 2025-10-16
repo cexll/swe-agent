@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"testing"
 
 	ghctx "github.com/cexll/swe/internal/github"
@@ -87,8 +86,18 @@ func TestPrepare_EndToEndWithMocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare error: %v", err)
 	}
-	if res.CommentID == 0 || res.Branch == "" || !strings.Contains(res.Prompt, "<repository>o/r</repository>") {
-		t.Fatalf("unexpected result: %+v", res)
+	// 新设计：Branch 和 Prompt 字段留空，让 AI 和 Executor 自主决策
+	if res.CommentID == 0 {
+		t.Fatalf("unexpected result: CommentID should not be 0, got: %+v", res)
+	}
+	if res.Branch != "" {
+		t.Fatalf("unexpected result: Branch should be empty (AI creates it), got: %+v", res)
+	}
+	if res.Prompt != "" {
+		t.Fatalf("unexpected result: Prompt should be empty (Executor builds it), got: %+v", res)
+	}
+	if res.BaseBranch != "main" {
+		t.Fatalf("unexpected result: BaseBranch should be 'main', got: %+v", res)
 	}
 
 	// Ensure Prepare didn't accidentally make network calls beyond our mux
