@@ -27,6 +27,20 @@ func (a *ExecutorAdapter) Execute(ctx context.Context, task *webhook.Task) error
 		return err
 	}
 
+	// Inject prepared values from task when available (mode-based pipeline)
+	if task.Branch != "" {
+		ghCtx.PreparedBranch = task.Branch
+	}
+	if task.BaseBranch != "" {
+		ghCtx.PreparedBaseBranch = task.BaseBranch
+	}
+	if task.Prompt != "" {
+		ghCtx.PreparedPrompt = task.Prompt
+	}
+	if task.CommentID != 0 {
+		ghCtx.PreparedCommentID = task.CommentID
+	}
+
 	// Delegate to the real executor
 	return a.inner.Execute(ctx, ghCtx)
 }

@@ -1,11 +1,13 @@
 package prompt
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	ghctx "github.com/cexll/swe/internal/github"
 	ghdata "github.com/cexll/swe/internal/github/data"
 )
 
@@ -245,7 +247,7 @@ func TestEventTypeAndTriggerContext_ReviewComment(t *testing.T) {
 		eventName: "pull_request_review_comment",
 	}
 
-	eventType, triggerCtx := eventTypeAndTriggerContext(ctx, "@assistant")
+	eventType, triggerCtx := eventTypeAndTriggerContext(ctx)
 
 	if eventType != "REVIEW_COMMENT" {
 		t.Errorf("eventType = %q, want REVIEW_COMMENT", eventType)
@@ -260,7 +262,7 @@ func TestEventTypeAndTriggerContext_PRReview(t *testing.T) {
 		eventName: "pull_request_review",
 	}
 
-	eventType, triggerCtx := eventTypeAndTriggerContext(ctx, "@assistant")
+	eventType, triggerCtx := eventTypeAndTriggerContext(ctx)
 
 	if eventType != "PR_REVIEW" {
 		t.Errorf("eventType = %q, want PR_REVIEW", eventType)
@@ -275,7 +277,7 @@ func TestEventTypeAndTriggerContext_IssueComment(t *testing.T) {
 		eventName: "issue_comment",
 	}
 
-	eventType, triggerCtx := eventTypeAndTriggerContext(ctx, "@assistant")
+	eventType, triggerCtx := eventTypeAndTriggerContext(ctx)
 
 	if eventType != "GENERAL_COMMENT" {
 		t.Errorf("eventType = %q, want GENERAL_COMMENT", eventType)
@@ -291,7 +293,7 @@ func TestEventTypeAndTriggerContext_IssueOpened(t *testing.T) {
 		eventAction: "opened",
 	}
 
-	eventType, triggerCtx := eventTypeAndTriggerContext(ctx, "@assistant")
+	eventType, triggerCtx := eventTypeAndTriggerContext(ctx)
 
 	if eventType != "ISSUE_CREATED" {
 		t.Errorf("eventType = %q, want ISSUE_CREATED", eventType)
@@ -307,7 +309,7 @@ func TestEventTypeAndTriggerContext_IssueLabeled(t *testing.T) {
 		eventAction: "labeled",
 	}
 
-	eventType, _ := eventTypeAndTriggerContext(ctx, "@assistant")
+	eventType, _ := eventTypeAndTriggerContext(ctx)
 
 	if eventType != "ISSUE_LABELED" {
 		t.Errorf("eventType = %q, want ISSUE_LABELED", eventType)
@@ -320,7 +322,7 @@ func TestEventTypeAndTriggerContext_PullRequestOpened(t *testing.T) {
 		eventAction: "opened",
 	}
 
-	eventType, triggerCtx := eventTypeAndTriggerContext(ctx, "@assistant")
+	eventType, triggerCtx := eventTypeAndTriggerContext(ctx)
 
 	if eventType != "PULL_REQUEST" {
 		t.Errorf("eventType = %q, want PULL_REQUEST", eventType)
@@ -403,5 +405,59 @@ func TestBuildPrompt_PRNumberOverridesIssueNumber(t *testing.T) {
 
 	if !strings.Contains(prompt, "<pr_number>123</pr_number>") {
 		t.Error("Prompt should use PR number when both are present")
+	}
+}
+
+func TestEventTypeAndTriggerContext_UnknownEvent(t *testing.T) {
+	ctx := &mockGitHubContext{eventName: "random_event"}
+	et, tc := eventTypeAndTriggerContext(ctx)
+	if et != strings.ToUpper("random_event") || !strings.Contains(tc, "generic") {
+		t.Fatalf("unexpected mapping: %q / %q", et, tc)
+	}
+}
+
+func TestBuildImageInfoAndFormatters(t *testing.T) {
+	// buildImageInfo ordering and formatting
+	m := map[string]string{
+		"http://a/img.png": "/tmp/a.png",
+		"http://b/img.jpg": "/tmp/b.jpg",
+	}
+	s := buildImageInfo(m)
+	if !strings.Contains(s, "<images_info>") || !strings.Contains(s, "Image mappings:") {
+		t.Fatalf("unexpected image info: %q", s)
+	}
+
+	// formatContext and formatComments pull fields from github.Context
+	ctx := &ghctx.Context{
+		Repository:  ghctx.Repository{Owner: "o", Name: "r"},
+		IssueNumber: 7,
+		Actor:       "alice",
+		TriggerUser: "bob",
+	}
+	ctx.TriggerComment = &ghctx.Comment{Body: "hello"}
+	fc := formatContext(ctx)
+	if !strings.Contains(fc, "Repository: o/r") || !strings.Contains(fc, "#7") {
+		t.Fatalf("formatContext missing fields: %q", fc)
+	}
+	cm := formatComments(ctx)
+	if !strings.Contains(cm, "bob") || !strings.Contains(cm, "hello") {
+		t.Fatalf("formatComments unexpected: %q", cm)
+	}
+}
+
+func TestBuildFullPrompt_Minimal(t *testing.T) {
+	// Ensure BuildFullPrompt renders template without images and with basic fields
+	ctx := &ghctx.Context{
+		Repository:  ghctx.Repository{Owner: "o", Name: "r"},
+		IssueNumber: 9,
+		BaseBranch:  "main",
+		Actor:       "carol",
+	}
+	body, err := BuildFullPrompt(context.Background(), ctx, 1234, "feat-x")
+	if err != nil {
+		t.Fatalf("BuildFullPrompt error: %v", err)
+	}
+	if !strings.Contains(body, "<repository>o/r</repository>") || !strings.Contains(body, "<claude_comment_id>1234</claude_comment_id>") {
+		t.Fatalf("BuildFullPrompt missing fields: %q", body)
 	}
 }

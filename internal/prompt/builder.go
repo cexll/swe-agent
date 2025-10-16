@@ -1,12 +1,17 @@
 package prompt
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 
+	"github.com/cexll/swe/internal/github"
 	ghdata "github.com/cexll/swe/internal/github/data"
+	"github.com/cexll/swe/internal/github/image"
 )
 
 // DefaultTriggerPhrase is used when no explicit trigger phrase is available.
@@ -60,7 +65,7 @@ func BuildPrompt(ctx GitHubContext, fetched *ghdata.FetchResult) string {
 	systemPrompt, _ := LoadSystemPrompt()
 
 	// Derive event type and human-readable trigger context.
-	eventType, triggerCtx := eventTypeAndTriggerContext(ctx, DefaultTriggerPhrase)
+    eventType, triggerCtx := eventTypeAndTriggerContext(ctx)
 
 	// Infer repository full name (owner/name).
 	repoFull := ctx.GetRepositoryFullName()
@@ -155,18 +160,18 @@ func fetchedImageMap(fr *ghdata.FetchResult) map[string]string {
 
 // eventTypeAndTriggerContext mirrors the mapping from claude-code-action's
 // getEventTypeAndContext to keep downstream prompts consistent.
-func eventTypeAndTriggerContext(ctx GitHubContext, triggerPhrase string) (eventType, triggerContext string) {
+func eventTypeAndTriggerContext(ctx GitHubContext) (eventType, triggerContext string) {
 	switch ctx.GetEventName() {
-	case "pull_request_review_comment":
-		return "REVIEW_COMMENT", fmt.Sprintf("PR review comment with '%s'", triggerPhrase)
-	case "pull_request_review":
-		return "PR_REVIEW", fmt.Sprintf("PR review with '%s'", triggerPhrase)
-	case "issue_comment":
-		return "GENERAL_COMMENT", fmt.Sprintf("issue comment with '%s'", triggerPhrase)
+    case "pull_request_review_comment":
+        return "REVIEW_COMMENT", fmt.Sprintf("PR review comment with '%s'", DefaultTriggerPhrase)
+    case "pull_request_review":
+        return "PR_REVIEW", fmt.Sprintf("PR review with '%s'", DefaultTriggerPhrase)
+    case "issue_comment":
+        return "GENERAL_COMMENT", fmt.Sprintf("issue comment with '%s'", DefaultTriggerPhrase)
 	case "issues":
 		switch ctx.GetEventAction() {
-		case "opened":
-			return "ISSUE_CREATED", fmt.Sprintf("new issue with '%s' in body", triggerPhrase)
+        case "opened":
+            return "ISSUE_CREATED", fmt.Sprintf("new issue with '%s' in body", DefaultTriggerPhrase)
 		case "labeled":
 			// Label value isn't available here; keep a generic context string
 			return "ISSUE_LABELED", "issue labeled event"
@@ -213,4 +218,123 @@ type GitHubContext interface {
 	GetTriggerUser() string
 	GetActor() string
 	GetTriggerCommentBody() string
+}
+
+// BuildFullPrompt 构建完整 Prompt（基于模板）
+// 参考 claude-code-action 的 generateDefaultPrompt
+func BuildFullPrompt(ctx context.Context, ghCtx *github.Context, commentID int64, branch string) (string, error) {
+	// 1. 下载评论中的图片（非阻塞：失败仅打印警告）
+	imageInfo := ""
+	if body := ghCtx.GetTriggerCommentBody(); strings.TrimSpace(body) != "" {
+		imageURLs := image.ExtractImageURLs(body)
+		if len(imageURLs) > 0 {
+			downloader, err := image.NewDownloader("")
+			if err != nil {
+				fmt.Printf("Warning: Failed to create image downloader: %v\n", err)
+			} else {
+				urlMap, err := downloader.DownloadImages(ctx, imageURLs)
+				if err != nil {
+					fmt.Printf("Warning: Failed to download images: %v\n", err)
+				} else if len(urlMap) > 0 {
+					imageInfo = buildImageInfo(urlMap)
+				}
+			}
+		}
+	}
+
+	// 2. 准备数据
+	data := PromptData{
+		FormattedContext: formatContext(ghCtx),
+		IssueBody:        "", // 无 issue/PR body 字段，保持为空以兼容模板
+		Comments:         formatComments(ghCtx),
+		EventType:        "GENERAL_COMMENT",
+		IsPR:             ghCtx.IsPRContext(),
+		TriggerContext:   "issue comment with '/code'",
+		Repository:       fmt.Sprintf("%s/%s", ghCtx.GetRepositoryOwner(), ghCtx.GetRepositoryName()),
+		IssueNumber:      ghCtx.GetIssueNumber(),
+		CommentID:        commentID,
+		Owner:            ghCtx.GetRepositoryOwner(),
+		Repo:             ghCtx.GetRepositoryName(),
+		Branch:           branch,
+		BaseBranch:       ghCtx.GetBaseBranch(),
+		ImageInfo:        imageInfo,
+	}
+
+	// 解析模板
+	tmpl, err := template.New("prompt").Parse(DefaultPromptTemplate)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse template: %w", err)
+	}
+
+	// 执行模板
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("failed to execute template: %w", err)
+	}
+
+	return buf.String(), nil
+}
+
+// buildImageInfo 构建图片信息文本
+func buildImageInfo(urlMap map[string]string) string {
+	if len(urlMap) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n\n<images_info>\n")
+	sb.WriteString("Images have been downloaded from comments and saved to disk. You can use the Read tool to view these images.\n\n")
+	sb.WriteString("Image mappings:\n")
+
+	for originalURL, localPath := range urlMap {
+		sb.WriteString(fmt.Sprintf("- Original: %s\n", originalURL))
+		sb.WriteString(fmt.Sprintf("  Local: %s\n", localPath))
+	}
+
+	sb.WriteString("</images_info>")
+	return sb.String()
+}
+
+// formatContext 格式化 GitHub 上下文（尽量不引入新字段，保持健壮）
+func formatContext(ctx *github.Context) string {
+	repoOwner := ctx.GetRepositoryOwner()
+	repoName := ctx.GetRepositoryName()
+	number := ctx.GetIssueNumber()
+	if ctx.IsPRContext() && ctx.GetPRNumber() != 0 {
+		number = ctx.GetPRNumber()
+	}
+	title := ""
+	author := ctx.GetActor()
+	created := ""
+	if cbody := ctx.GetTriggerCommentBody(); cbody != "" {
+		// No timestamp field on Context; keep empty string to avoid misleading data
+		_ = cbody
+	}
+
+	return fmt.Sprintf(`Repository: %s/%s
+Issue/PR: #%d
+Title: %s
+Author: %s
+Created: %s`,
+		repoOwner,
+		repoName,
+		number,
+		title,
+		author,
+		created,
+	)
+}
+
+// formatComments 格式化评论列表（当前仅使用触发评论作为上下文）
+func formatComments(ctx *github.Context) string {
+	body := ctx.GetTriggerCommentBody()
+	if strings.TrimSpace(body) == "" {
+		return "No comments"
+	}
+	user := ctx.GetTriggerUser()
+	if user == "" {
+		user = ctx.GetActor()
+	}
+	return fmt.Sprintf(`Comment by %s:
+%s`, user, body)
 }

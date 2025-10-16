@@ -10,8 +10,12 @@ import (
 
 	"github.com/cexll/swe/internal/github"
 	ghdata "github.com/cexll/swe/internal/github/data"
+	operations "github.com/cexll/swe/internal/github/operations/git"
+	ghpost "github.com/cexll/swe/internal/github/postprocess"
 	"github.com/cexll/swe/internal/prompt"
 	"github.com/cexll/swe/internal/provider"
+	"github.com/cexll/swe/internal/toolconfig"
+	ghv66 "github.com/google/go-github/v66/github"
 )
 
 type fetcherIface interface {
@@ -38,6 +42,12 @@ func New(p provider.Provider, auth github.AuthProvider) *Executor {
 }
 
 func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) error {
+	// 0) Configure Git identity (best-effort)
+	if err := operations.ConfigureGitForApp(0, "swe-agent"); err != nil {
+		// non-fatal; downstream git commands may still work
+		fmt.Printf("[Warn] Configure git failed: %v\n", err)
+	}
+
 	// 1) Authenticate (GitHub App → installation token)
 	repo := webhookCtx.GetRepositoryFullName()
 	if repo == "" {
@@ -48,6 +58,8 @@ func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) erro
 	if err != nil {
 		return fmt.Errorf("authenticate GitHub app: %w", err)
 	}
+	// Surface token in context for optional MCP clients
+	webhookCtx.Token = token.Token
 
 	// 2) Fetch GitHub data via data layer
 	fetched, err := e.fetcher.Fetch(ctx, webhookCtx)
@@ -55,8 +67,11 @@ func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) erro
 		return fmt.Errorf("fetch GitHub data: %w", err)
 	}
 
-	// 3) Clone repository (base branch when available)
-	base := webhookCtx.GetBaseBranch()
+	// 3) Clone repository (prefer prepared base branch)
+	base := webhookCtx.PreparedBaseBranch
+	if base == "" {
+		base = webhookCtx.GetBaseBranch()
+	}
 	if base == "" {
 		base = "main"
 	}
@@ -66,19 +81,28 @@ func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) erro
 	}
 	defer cleanup()
 
-	// 4) Create feature branch
-	branch := featureBranchName(webhookCtx)
+	// 4) Checkout task branch (prefer prepared branch)
+	branch := webhookCtx.PreparedBranch
+	if branch == "" {
+		branch = featureBranchName(webhookCtx)
+	}
 	if err := runCmd("git", "-C", workdir, "checkout", "-b", branch); err != nil {
 		return fmt.Errorf("create feature branch: %w", err)
 	}
 
-	// 5) Build prompt (system + GitHub XML)
-	fullPrompt := prompt.BuildPrompt(webhookCtx, fetched)
+	// 5) Build or use prepared prompt (system + GitHub XML)
+	fullPrompt := webhookCtx.PreparedPrompt
+	if fullPrompt == "" {
+		fullPrompt = prompt.BuildPrompt(webhookCtx, fetched)
+	}
 
 	// 6) Call provider.GenerateCode (pass token via context + env for MCP)
+	// 6) Inject MCP-friendly environment variables
 	// Set env for child tools (best-effort; provider also sets from req.Context)
+	os.Setenv("GITHUB_PERSONAL_ACCESS_TOKEN", token.Token)
 	os.Setenv("GITHUB_TOKEN", token.Token)
 	os.Setenv("GH_TOKEN", token.Token)
+	os.Setenv("REPO_DIR", workdir)
 
 	ctxMap := map[string]string{
 		"github_token": token.Token,
@@ -94,16 +118,48 @@ func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) erro
 		ctxMap["issue_number"] = fmt.Sprintf("%d", n)
 	}
 
+	// Build tool configuration (reference: claude-code-action buildAllowed/Disallowed)
+	toolOpts := toolconfig.Options{
+		UseCommitSigning:       getEnvBool("USE_COMMIT_SIGNING", false),
+		EnableGitHubCommentMCP: true, // default enable comment MCP for coordinator
+		EnableGitHubFileOpsMCP: getEnvBool("ENABLE_GITHUB_MCP_FILES", false),
+		EnableGitHubCIMCP:      getEnvBool("ENABLE_GITHUB_MCP_CI", false),
+	}
+	allowedTools := toolconfig.BuildAllowedTools(toolOpts)
+	disallowedTools := toolconfig.BuildDisallowedTools(toolOpts)
+
+	// Log tool configuration for debugging
+	if len(allowedTools) > 0 {
+		fmt.Printf("[Tools] Allowed (%d): %s\n", len(allowedTools), joinCSV(allowedTools))
+	}
+	if len(disallowedTools) > 0 {
+		fmt.Printf("[Tools] Disallowed (%d): %s\n", len(disallowedTools), joinCSV(disallowedTools))
+	}
+
 	_, err = e.provider.GenerateCode(ctx, &provider.CodeRequest{
-		Prompt:   fullPrompt,
-		RepoPath: workdir,
-		Context:  ctxMap,
+		Prompt:          fullPrompt,
+		RepoPath:        workdir,
+		Context:         ctxMap,
+		AllowedTools:    allowedTools,
+		DisallowedTools: disallowedTools,
 	})
 	if err != nil {
 		return fmt.Errorf("provider %s: %w", e.provider.Name(), err)
 	}
 
-	// 7) Done! (AI handles everything via MCP)
+	// 7) 后处理：添加分支/PR 链接、清理空分支（失败不阻塞）
+	if ghCtx := webhookCtx; ghCtx != nil {
+		commentID := ghCtx.PreparedCommentID
+		if commentID > 0 && branch != "" {
+			// Build authenticated GitHub client
+			ghClient := ghv66.NewTokenClient(ctx, token.Token)
+			proc := ghpost.NewProcessor(ghClient, ghCtx.GetRepositoryOwner(), ghCtx.GetRepositoryName(), commentID, branch, base, ghCtx.GetIssueNumber(), ghCtx.IsPRContext())
+			if err := proc.Process(ctx); err != nil {
+				fmt.Printf("Warning: postprocess failed: %v\n", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -125,4 +181,35 @@ func run(name string, args ...string) error {
 		return fmt.Errorf("%s %v failed: %v\n%s", name, args, err, string(out))
 	}
 	return nil
+}
+
+// helpers local to executor to avoid importing config here
+func getEnvBool(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	switch v {
+	case "1", "true", "TRUE", "True", "yes", "Y", "y":
+		return true
+	case "0", "false", "FALSE", "False", "no", "N", "n":
+		return false
+	default:
+		return def
+	}
+}
+
+func joinCSV(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	// Simple join without importing strings to keep import list minimal
+	b := make([]byte, 0, 64)
+	for i, s := range items {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = append(b, s...)
+	}
+	return string(b)
 }

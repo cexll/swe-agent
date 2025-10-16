@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cexll/swe/internal/provider"
 	"github.com/cexll/swe/internal/taskstore"
 	"github.com/cexll/swe/internal/web"
 )
@@ -165,16 +164,4 @@ func TestRun_WebHandlerError(t *testing.T) {
 	if !strings.Contains(err.Error(), "failed to initialize web handler") {
 		t.Fatalf("error = %v, want web handler failure", err)
 	}
-}
-
-type stubProvider struct {
-	name string
-}
-
-func (s *stubProvider) GenerateCode(ctx context.Context, req *provider.CodeRequest) (*provider.CodeResponse, error) {
-	return nil, errors.New("stub")
-}
-
-func (s *stubProvider) Name() string {
-	return s.name
 }
