@@ -11,6 +11,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	_ "github.com/cexll/swe/internal/modes/command" // Import to register CommandMode
 )
 
 // TestHandler_PermissionVerification tests that only the app installer can trigger tasks
@@ -76,7 +78,10 @@ func TestHandler_PermissionVerification(t *testing.T) {
 				Repository: Repository{
 					FullName:      "owner/repo",
 					DefaultBranch: "main",
+					Owner:         User{Login: "owner"},
+					Name:          "repo",
 				},
+				Sender: User{Login: tt.commentUser},
 			}
 
 			payload, _ := json.Marshal(event)
@@ -140,7 +145,10 @@ func TestHandler_PermissionVerification_AuthError(t *testing.T) {
 		Repository: Repository{
 			FullName:      "owner/repo",
 			DefaultBranch: "main",
+			Owner:         User{Login: "owner"},
+			Name:          "repo",
 		},
+		Sender: User{Login: "test-user"},
 	}
 
 	payload, _ := json.Marshal(event)
@@ -224,6 +232,7 @@ func TestHandler_PRBranchInfo(t *testing.T) {
 					FullName:      "owner/repo",
 					DefaultBranch: "main",
 				},
+				Sender: User{Login: "testuser"},
 			}
 
 			payload, _ := json.Marshal(event)

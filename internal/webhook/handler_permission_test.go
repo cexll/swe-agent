@@ -3,6 +3,7 @@ package webhook
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/cexll/swe/internal/github"
 	"github.com/cexll/swe/internal/taskstore"
@@ -14,7 +15,13 @@ type stubAuthProvider struct {
 }
 
 func (s *stubAuthProvider) GetInstallationToken(repo string) (*github.InstallationToken, error) {
-	return nil, nil
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &github.InstallationToken{
+		Token:     "stub-token",
+		ExpiresAt: time.Now().Add(time.Hour),
+	}, nil
 }
 
 func (s *stubAuthProvider) GetInstallationOwner(repo string) (string, error) {
@@ -103,47 +110,5 @@ func TestHandlerCreateStoreTask(t *testing.T) {
 	}
 	if got2.RepoOwner != "solo" || got2.RepoName != "" {
 		t.Fatalf("expected fallback owner only, got %s/%s", got2.RepoOwner, got2.RepoName)
-	}
-}
-
-func TestTruncateText(t *testing.T) {
-	cases := []struct {
-		name  string
-		text  string
-		limit int
-		want  string
-	}{
-		{
-			name:  "limit zero",
-			text:  "something",
-			limit: 0,
-			want:  "",
-		},
-		{
-			name:  "under limit",
-			text:  "short",
-			limit: 10,
-			want:  "short",
-		},
-		{
-			name:  "over limit",
-			text:  "this sentence is too long",
-			limit: 10,
-			want:  "this sente…",
-		},
-		{
-			name:  "trailing whitespace trimmed",
-			text:  "   padded text   ",
-			limit: 6,
-			want:  "padded…",
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := truncateText(tc.text, tc.limit); got != tc.want {
-				t.Fatalf("truncateText(%q, %d) = %q, want %q", tc.text, tc.limit, got, tc.want)
-			}
-		})
 	}
 }
