@@ -93,7 +93,10 @@ func (c *Client) Do(ctx context.Context, repo, query string, variables map[strin
 	}
 	if len(wrapper.Data) == 0 {
 		// Some queries legitimately have null data. We still try to decode.
-		// But if out is not nil, ensure decode into it proceeds with null.
+		// If a "data" field is absent, decode against JSON null to avoid EOF.
+		if out != nil {
+			wrapper.Data = json.RawMessage("null")
+		}
 	}
 	if out != nil {
 		if err := json.Unmarshal(wrapper.Data, out); err != nil {

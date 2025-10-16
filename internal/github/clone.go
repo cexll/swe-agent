@@ -56,8 +56,8 @@ func extractBranchContext(branch string) (string, string) {
 }
 
 func buildCloneWorkdir(repo, branch string, ts time.Time) string {
-	ownerSegment := "unknown"
-	repoSegment := "repo"
+    var ownerSegment string
+    repoSegment := "repo"
 
 	if parts := strings.Split(repo, "/"); len(parts) == 2 {
 		ownerSegment = sanitizeToken(parts[0])

@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
+
+	gh "github.com/google/go-github/v66/github"
 )
 
 // EventType defines supported GitHub webhook events
@@ -40,6 +43,7 @@ type Context struct {
 	IsPR        bool
 	IssueNumber int
 	PRNumber    int
+	IssueTitle  string
 
 	// Branch information
 	BaseBranch string
@@ -49,8 +53,21 @@ type Context struct {
 	TriggerUser    string
 	TriggerComment *Comment
 
+	// Event creation time (best-effort; from trigger comment when available)
+	CreatedAt time.Time
+
 	// Raw payload for additional data
 	Payload interface{}
+
+	// Prepared values from higher-level orchestrators (optional)
+	// When present, downstream components should prefer these over defaults.
+	PreparedPrompt     string
+	PreparedBranch     string
+	PreparedBaseBranch string
+	PreparedCommentID  int64
+
+	// Token (optional): provider/executor may populate for MCP tools
+	Token string
 }
 
 // Repository represents a GitHub repository
@@ -190,11 +207,17 @@ func parseIssueComment(ctx *Context, data map[string]interface{}) (*Context, err
 			CreatedAt: getStringField(comment, "created_at"),
 			UpdatedAt: getStringField(comment, "updated_at"),
 		}
+		if ts := ctx.TriggerComment.CreatedAt; ts != "" {
+			if t, err := time.Parse(time.RFC3339, ts); err == nil {
+				ctx.CreatedAt = t
+			}
+		}
 	}
 
 	// Determine if this is an issue or PR
 	if issue, ok := data["issue"].(map[string]interface{}); ok {
 		ctx.IssueNumber = int(getNumberField(issue, "number"))
+		ctx.IssueTitle = getStringField(issue, "title")
 
 		// Check if issue is actually a PR
 		if pullRequest, hasPR := issue["pull_request"]; hasPR && pullRequest != nil {
@@ -224,6 +247,7 @@ func parsePullRequest(ctx *Context, data map[string]interface{}) (*Context, erro
 	if pr, ok := data["pull_request"].(map[string]interface{}); ok {
 		ctx.PRNumber = int(getNumberField(pr, "number"))
 		ctx.IssueNumber = ctx.PRNumber
+		ctx.IssueTitle = getStringField(pr, "title")
 
 		if base, ok := pr["base"].(map[string]interface{}); ok {
 			ctx.BaseBranch = getStringField(base, "ref")
@@ -243,6 +267,7 @@ func parsePullRequestReview(ctx *Context, data map[string]interface{}) (*Context
 	if pr, ok := data["pull_request"].(map[string]interface{}); ok {
 		ctx.PRNumber = int(getNumberField(pr, "number"))
 		ctx.IssueNumber = ctx.PRNumber
+		ctx.IssueTitle = getStringField(pr, "title")
 
 		if base, ok := pr["base"].(map[string]interface{}); ok {
 			ctx.BaseBranch = getStringField(base, "ref")
@@ -260,6 +285,11 @@ func parsePullRequestReview(ctx *Context, data map[string]interface{}) (*Context
 			User:      getStringField(review, "user", "login"),
 			CreatedAt: getStringField(review, "submitted_at"),
 		}
+		if ts := ctx.TriggerComment.CreatedAt; ts != "" {
+			if t, err := time.Parse(time.RFC3339, ts); err == nil {
+				ctx.CreatedAt = t
+			}
+		}
 	}
 
 	return ctx, nil
@@ -272,6 +302,7 @@ func parsePullRequestReviewComment(ctx *Context, data map[string]interface{}) (*
 	if pr, ok := data["pull_request"].(map[string]interface{}); ok {
 		ctx.PRNumber = int(getNumberField(pr, "number"))
 		ctx.IssueNumber = ctx.PRNumber
+		ctx.IssueTitle = getStringField(pr, "title")
 
 		if base, ok := pr["base"].(map[string]interface{}); ok {
 			ctx.BaseBranch = getStringField(base, "ref")
@@ -289,6 +320,11 @@ func parsePullRequestReviewComment(ctx *Context, data map[string]interface{}) (*
 			User:      getStringField(comment, "user", "login"),
 			CreatedAt: getStringField(comment, "created_at"),
 			UpdatedAt: getStringField(comment, "updated_at"),
+		}
+		if ts := ctx.TriggerComment.CreatedAt; ts != "" {
+			if t, err := time.Parse(time.RFC3339, ts); err == nil {
+				ctx.CreatedAt = t
+			}
 		}
 	}
 
@@ -403,4 +439,10 @@ func getNumberField(data map[string]interface{}, keys ...string) float64 {
 		}
 	}
 	return 0
+}
+
+// NewGitHubClient returns a GitHub API client for higher-level features.
+// For now, unauthenticated client is sufficient for tests; authentication will be added later.
+func (c *Context) NewGitHubClient() *gh.Client {
+	return gh.NewClient(nil)
 }

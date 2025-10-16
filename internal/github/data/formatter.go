@@ -34,10 +34,8 @@ func formatContext(contextData interface{}, isPR bool) string {
 // formatBody sanitizes and optionally rewrites image URLs (if map provided).
 func formatBody(body string, imageURLMap map[string]string) string {
 	processed := body
-	if imageURLMap != nil {
-		for orig, local := range imageURLMap {
-			processed = strings.ReplaceAll(processed, orig, local)
-		}
+	for orig, local := range imageURLMap {
+		processed = strings.ReplaceAll(processed, orig, local)
 	}
 	return gh.SanitizeContent(processed)
 }
@@ -50,10 +48,8 @@ func formatComments(comments []Comment, imageURLMap map[string]string) string {
 			continue
 		}
 		body := c.Body
-		if imageURLMap != nil {
-			for orig, local := range imageURLMap {
-				body = strings.ReplaceAll(body, orig, local)
-			}
+		for orig, local := range imageURLMap {
+			body = strings.ReplaceAll(body, orig, local)
 		}
 		body = gh.SanitizeContent(body)
 		out = append(out, fmt.Sprintf("[%s at %s]: %s", c.Author.Login, c.CreatedAt, body))
@@ -73,10 +69,8 @@ func formatReviewComments(reviews *struct{ Nodes []Review }, imageURLMap map[str
 		b.WriteString(header)
 		if strings.TrimSpace(r.Body) != "" {
 			body := r.Body
-			if imageURLMap != nil {
-				for orig, local := range imageURLMap {
-					body = strings.ReplaceAll(body, orig, local)
-				}
+			for orig, local := range imageURLMap {
+				body = strings.ReplaceAll(body, orig, local)
 			}
 			b.WriteString("\n")
 			b.WriteString(gh.SanitizeContent(body))
@@ -87,10 +81,8 @@ func formatReviewComments(reviews *struct{ Nodes []Review }, imageURLMap map[str
 					continue
 				}
 				body := c.Body
-				if imageURLMap != nil {
-					for orig, local := range imageURLMap {
-						body = strings.ReplaceAll(body, orig, local)
-					}
+				for orig, local := range imageURLMap {
+					body = strings.ReplaceAll(body, orig, local)
 				}
 				body = gh.SanitizeContent(body)
 				line := "?"

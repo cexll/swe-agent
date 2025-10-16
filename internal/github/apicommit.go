@@ -2,9 +2,11 @@ package github
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	gh "github.com/google/go-github/v66/github"
 	"io"
 	"net/http"
 	"os"
@@ -304,6 +306,274 @@ func apiDo(method, url, token string, v any) ([]byte, error) {
 		return nil, fmt.Errorf("%s %s failed with status %d: %s", method, url, resp.StatusCode, string(b))
 	}
 
+	return b, nil
+}
+
+// CommitFilesOptions 提交选项
+type CommitFilesOptions struct {
+	Owner       string
+	Repo        string
+	Branch      string
+	Message     string
+	Files       map[string]string // path -> content (text)
+	Sign        bool              // 是否签名（GraphQL SIGN_WITH_GITHUB）
+	AuthorName  string
+	AuthorEmail string
+}
+
+// CommitFiles 通过 API 提交多个文件（支持签名）
+// 当 Sign=true 时，使用 GraphQL createCommitOnBranch 并启用 SIGN_WITH_GITHUB。
+// 否则，使用 REST v3（trees/commits/refs）路径。
+func CommitFiles(ctx context.Context, client *gh.Client, opts CommitFilesOptions) (string, error) {
+	if client == nil {
+		return "", fmt.Errorf("nil github client")
+	}
+	if opts.Owner == "" || opts.Repo == "" || opts.Branch == "" {
+		return "", fmt.Errorf("missing owner/repo/branch")
+	}
+	if len(opts.Files) == 0 {
+		return "", fmt.Errorf("no files to commit")
+	}
+	if opts.Sign {
+		return commitFilesGraphQL(ctx, client, opts)
+	}
+	return commitFilesREST(ctx, client, opts)
+}
+
+func commitFilesREST(ctx context.Context, client *gh.Client, opts CommitFilesOptions) (string, error) {
+	baseURL := client.BaseURL.String()
+
+	// 1) Get or create branch ref
+	headSHA, err := apiDoWithClient(ctx, client, "GET", fmt.Sprintf("%srepos/%s/%s/git/refs/heads/%s", baseURL, opts.Owner, opts.Repo, opts.Branch), nil)
+	var sha string
+	if err == nil {
+		var r gitRef
+		if uerr := json.Unmarshal(headSHA, &r); uerr != nil {
+			return "", fmt.Errorf("parse ref: %w", uerr)
+		}
+		sha = r.Object.SHA
+	} else {
+		// Try default branch
+		rb, rerr := apiDoWithClient(ctx, client, "GET", fmt.Sprintf("%srepos/%s/%s", baseURL, opts.Owner, opts.Repo), nil)
+		if rerr != nil {
+			return "", fmt.Errorf("get repo: %w", rerr)
+		}
+		var info repoInfo
+		if uerr := json.Unmarshal(rb, &info); uerr != nil {
+			return "", fmt.Errorf("parse repo: %w", uerr)
+		}
+		bb, berr := apiDoWithClient(ctx, client, "GET", fmt.Sprintf("%srepos/%s/%s/git/refs/heads/%s", baseURL, opts.Owner, opts.Repo, info.DefaultBranch), nil)
+		if berr != nil {
+			return "", fmt.Errorf("get default ref: %w", berr)
+		}
+		var br gitRef
+		if uerr := json.Unmarshal(bb, &br); uerr != nil {
+			return "", fmt.Errorf("parse default ref: %w", uerr)
+		}
+		sha = br.Object.SHA
+		// create branch
+		_, cerr := apiDoWithClient(ctx, client, "POST", fmt.Sprintf("%srepos/%s/%s/git/refs", baseURL, opts.Owner, opts.Repo), map[string]string{
+			"ref": fmt.Sprintf("refs/heads/%s", opts.Branch),
+			"sha": sha,
+		})
+		if cerr != nil {
+			return "", fmt.Errorf("create branch: %w", cerr)
+		}
+	}
+
+	// 2) Base commit -> base tree
+	cb, cerr := apiDoWithClient(ctx, client, "GET", fmt.Sprintf("%srepos/%s/%s/git/commits/%s", baseURL, opts.Owner, opts.Repo, sha), nil)
+	if cerr != nil {
+		return "", fmt.Errorf("get base commit: %w", cerr)
+	}
+	var base gitCommit
+	if uerr := json.Unmarshal(cb, &base); uerr != nil {
+		return "", fmt.Errorf("parse base commit: %w", uerr)
+	}
+
+	// 3) Create tree
+	var entries []map[string]any
+	for p, content := range opts.Files {
+		entries = append(entries, map[string]any{
+			"path":    p,
+			"mode":    "100644",
+			"type":    "blob",
+			"content": content,
+		})
+	}
+	tb, terr := apiDoWithClient(ctx, client, "POST", fmt.Sprintf("%srepos/%s/%s/git/trees", baseURL, opts.Owner, opts.Repo), map[string]any{
+		"base_tree": base.Tree.SHA,
+		"tree":      entries,
+	})
+	if terr != nil {
+		return "", fmt.Errorf("create tree: %w", terr)
+	}
+	var tree gitTree
+	if uerr := json.Unmarshal(tb, &tree); uerr != nil {
+		return "", fmt.Errorf("parse tree: %w", uerr)
+	}
+
+	// 4) Create commit (optionally include author)
+	body := map[string]any{
+		"message": opts.Message,
+		"tree":    tree.SHA,
+		"parents": []string{sha},
+	}
+	if opts.AuthorName != "" || opts.AuthorEmail != "" {
+		body["author"] = map[string]string{
+			"name":  opts.AuthorName,
+			"email": opts.AuthorEmail,
+		}
+	}
+	nb, nerr := apiDoWithClient(ctx, client, "POST", fmt.Sprintf("%srepos/%s/%s/git/commits", baseURL, opts.Owner, opts.Repo), body)
+	if nerr != nil {
+		return "", fmt.Errorf("create commit: %w", nerr)
+	}
+	var newC gitNewCommit
+	if uerr := json.Unmarshal(nb, &newC); uerr != nil {
+		return "", fmt.Errorf("parse new commit: %w", uerr)
+	}
+
+	// 5) Update ref
+	if _, uerr := apiDoWithClient(ctx, client, "PATCH", fmt.Sprintf("%srepos/%s/%s/git/refs/heads/%s", baseURL, opts.Owner, opts.Repo, opts.Branch), map[string]any{
+		"sha":   newC.SHA,
+		"force": false,
+	}); uerr != nil {
+		return "", fmt.Errorf("update ref: %w", uerr)
+	}
+
+	return newC.SHA, nil
+}
+
+func commitFilesGraphQL(ctx context.Context, client *gh.Client, opts CommitFilesOptions) (string, error) {
+	baseURL := client.BaseURL
+	if baseURL == nil {
+		return "", fmt.Errorf("nil base url")
+	}
+	// Fetch head oid for expectedHeadOid
+	rb, rerr := apiDoWithClient(ctx, client, "GET", fmt.Sprintf("%srepos/%s/%s/git/refs/heads/%s", baseURL.String(), opts.Owner, opts.Repo, opts.Branch), nil)
+	var headOID string
+	if rerr == nil {
+		var r gitRef
+		if uerr := json.Unmarshal(rb, &r); uerr == nil {
+			headOID = r.Object.SHA
+		}
+	} else {
+		// If not exists, create from default branch
+		infoB, ierr := apiDoWithClient(ctx, client, "GET", fmt.Sprintf("%srepos/%s/%s", baseURL.String(), opts.Owner, opts.Repo), nil)
+		if ierr != nil {
+			return "", fmt.Errorf("get repo: %w", ierr)
+		}
+		var info repoInfo
+		if uerr := json.Unmarshal(infoB, &info); uerr != nil {
+			return "", fmt.Errorf("parse repo: %w", uerr)
+		}
+		defB, derr := apiDoWithClient(ctx, client, "GET", fmt.Sprintf("%srepos/%s/%s/git/refs/heads/%s", baseURL.String(), opts.Owner, opts.Repo, info.DefaultBranch), nil)
+		if derr != nil {
+			return "", fmt.Errorf("get default branch: %w", derr)
+		}
+		var dr gitRef
+		if uerr := json.Unmarshal(defB, &dr); uerr != nil {
+			return "", fmt.Errorf("parse default ref: %w", uerr)
+		}
+		headOID = dr.Object.SHA
+		// create branch ref
+		if _, cerr := apiDoWithClient(ctx, client, "POST", fmt.Sprintf("%srepos/%s/%s/git/refs", baseURL.String(), opts.Owner, opts.Repo), map[string]string{
+			"ref": fmt.Sprintf("refs/heads/%s", opts.Branch),
+			"sha": headOID,
+		}); cerr != nil {
+			return "", fmt.Errorf("create branch: %w", cerr)
+		}
+	}
+
+	// Build GraphQL mutation
+	gqlURL := fmt.Sprintf("%sgraphql", baseURL.Scheme+"://"+baseURL.Host+"/")
+	type addition struct {
+		Path     string `json:"path"`
+		Contents string `json:"contents"`
+	}
+	var adds []addition
+	for p, c := range opts.Files {
+		adds = append(adds, addition{Path: p, Contents: c})
+	}
+	payload := map[string]any{
+		"query": `mutation($input: CreateCommitOnBranchInput!){
+  createCommitOnBranch(input: $input){
+    commit { oid messageHeadline committedDate }
+  }
+}`,
+		"variables": map[string]any{
+			"input": map[string]any{
+				"branch": map[string]any{
+					"repositoryNameWithOwner": fmt.Sprintf("%s/%s", opts.Owner, opts.Repo),
+					"branchName":              fmt.Sprintf("refs/heads/%s", opts.Branch),
+				},
+				"message": map[string]any{
+					"headline": opts.Message,
+				},
+				"fileChanges": map[string]any{
+					"additions": adds,
+				},
+				"expectedHeadOid": headOID,
+				"signing":         "SIGN_WITH_GITHUB",
+			},
+		},
+	}
+
+	respB, err := apiDoWithClient(ctx, client, "POST", gqlURL, payload)
+	if err != nil {
+		return "", fmt.Errorf("graphql commit: %w", err)
+	}
+	var resp struct {
+		Data struct {
+			CreateCommitOnBranch struct {
+				Commit struct {
+					OID string `json:"oid"`
+				} `json:"commit"`
+			} `json:"createCommitOnBranch"`
+		} `json:"data"`
+		Errors any `json:"errors"`
+	}
+	if uerr := json.Unmarshal(respB, &resp); uerr != nil {
+		return "", fmt.Errorf("parse graphql response: %w", uerr)
+	}
+	if resp.Data.CreateCommitOnBranch.Commit.OID == "" {
+		return "", fmt.Errorf("graphql commit returned empty oid")
+	}
+	return resp.Data.CreateCommitOnBranch.Commit.OID, nil
+}
+
+func apiDoWithClient(ctx context.Context, client *gh.Client, method, url string, v any) ([]byte, error) {
+	var body io.Reader
+	if v != nil {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("marshal: %w", err)
+		}
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if v != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	// Use the underlying http.Client from go-github (already has auth transport)
+	httpClient := client.Client()
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read resp: %w", err)
+	}
+	if resp.StatusCode/100 != 2 {
+		return nil, fmt.Errorf("%s %s failed with status %d: %s", method, url, resp.StatusCode, string(b))
+	}
 	return b, nil
 }
 
