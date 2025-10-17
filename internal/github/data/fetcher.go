@@ -11,6 +11,11 @@ import (
 
 // GitHub GraphQL data types (trimmed to what's needed)
 
+type PageInfo struct {
+	HasNextPage bool   `json:"hasNextPage"`
+	EndCursor   string `json:"endCursor"`
+}
+
 type Author struct {
 	Login string `json:"login"`
 	Name  string `json:"name,omitempty"`
@@ -49,57 +54,67 @@ type File struct {
 	ChangeType string `json:"changeType"`
 }
 
+type FilesConnection struct {
+	PageInfo PageInfo `json:"pageInfo"`
+	Nodes    []File   `json:"nodes"`
+}
+
+type CommentsConnection struct {
+	PageInfo PageInfo `json:"pageInfo"`
+	Nodes    []Comment `json:"nodes"`
+}
+
+type ReviewCommentsConnection struct {
+	PageInfo PageInfo        `json:"pageInfo"`
+	Nodes    []ReviewComment `json:"nodes"`
+}
+
+type ReviewsConnection struct {
+	PageInfo PageInfo `json:"pageInfo"`
+	Nodes    []Review `json:"nodes"`
+}
+
 type Review struct {
-	ID           string `json:"id"`
-	DatabaseID   int    `json:"databaseId"`
-	Author       Author `json:"author"`
-	Body         string `json:"body"`
-	State        string `json:"state"`
-	SubmittedAt  string `json:"submittedAt"`
-	UpdatedAt    string `json:"updatedAt,omitempty"`
-	LastEditedAt string `json:"lastEditedAt,omitempty"`
-	Comments     struct {
-		Nodes []ReviewComment `json:"nodes"`
-	} `json:"comments"`
+	ID           string                   `json:"id"`
+	DatabaseID   int                      `json:"databaseId"`
+	Author       Author                   `json:"author"`
+	Body         string                   `json:"body"`
+	State        string                   `json:"state"`
+	SubmittedAt  string                   `json:"submittedAt"`
+	UpdatedAt    string                   `json:"updatedAt,omitempty"`
+	LastEditedAt string                   `json:"lastEditedAt,omitempty"`
+	Comments     ReviewCommentsConnection `json:"comments"`
 }
 
 type PullRequest struct {
-	Title       string `json:"title"`
-	Body        string `json:"body"`
-	Author      Author `json:"author"`
-	BaseRefName string `json:"baseRefName"`
-	HeadRefName string `json:"headRefName"`
-	HeadRefOID  string `json:"headRefOid"`
-	CreatedAt   string `json:"createdAt"`
-	Additions   int    `json:"additions"`
-	Deletions   int    `json:"deletions"`
-	State       string `json:"state"`
+	Title       string   `json:"title"`
+	Body        string   `json:"body"`
+	Author      Author   `json:"author"`
+	BaseRefName string   `json:"baseRefName"`
+	HeadRefName string   `json:"headRefName"`
+	HeadRefOID  string   `json:"headRefOid"`
+	CreatedAt   string   `json:"createdAt"`
+	Additions   int      `json:"additions"`
+	Deletions   int      `json:"deletions"`
+	State       string   `json:"state"`
 	Commits     struct {
 		TotalCount int `json:"totalCount"`
 		Nodes      []struct {
 			Commit Commit `json:"commit"`
 		} `json:"nodes"`
 	} `json:"commits"`
-	Files struct {
-		Nodes []File `json:"nodes"`
-	} `json:"files"`
-	Comments struct {
-		Nodes []Comment `json:"nodes"`
-	} `json:"comments"`
-	Reviews struct {
-		Nodes []Review `json:"nodes"`
-	} `json:"reviews"`
+	Files    FilesConnection    `json:"files"`
+	Comments CommentsConnection `json:"comments"`
+	Reviews  ReviewsConnection  `json:"reviews"`
 }
 
 type Issue struct {
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	Author    Author `json:"author"`
-	CreatedAt string `json:"createdAt"`
-	State     string `json:"state"`
-	Comments  struct {
-		Nodes []Comment `json:"nodes"`
-	} `json:"comments"`
+	Title     string             `json:"title"`
+	Body      string             `json:"body"`
+	Author    Author             `json:"author"`
+	CreatedAt string             `json:"createdAt"`
+	State     string             `json:"state"`
+	Comments  CommentsConnection `json:"comments"`
 }
 
 type pullRequestQueryResponse struct {
@@ -247,9 +262,51 @@ func FetchGitHubData(ctx context.Context, p FetchParams) (*FetchResult, error) {
 		}
 		pr := prResp.Repository.PullRequest
 		ctxData = pr
+		
+		// Fetch files with pagination
 		files = pr.Files.Nodes
-		comments = FilterComments(pr.Comments.Nodes, p.TriggerTime)
-		reviews = &struct{ Nodes []Review }{Nodes: pr.Reviews.Nodes}
+		if pr.Files.PageInfo.HasNextPage {
+			moreFiles, err := fetchAllRemainingFiles(ctx, p.Client, owner, repo, p.Number, pr.Files.PageInfo.EndCursor)
+			if err != nil {
+				return nil, fmt.Errorf("fetch remaining files: %w", err)
+			}
+			files = append(files, moreFiles...)
+		}
+		
+		// Fetch comments with pagination
+		comments = pr.Comments.Nodes
+		if pr.Comments.PageInfo.HasNextPage {
+			moreComments, err := fetchAllRemainingComments(ctx, p.Client, owner, repo, p.Number, pr.Comments.PageInfo.EndCursor, true)
+			if err != nil {
+				return nil, fmt.Errorf("fetch remaining PR comments: %w", err)
+			}
+			comments = append(comments, moreComments...)
+		}
+		comments = FilterComments(comments, p.TriggerTime)
+		
+		// Fetch reviews with pagination
+		reviewNodes := pr.Reviews.Nodes
+		if pr.Reviews.PageInfo.HasNextPage {
+			moreReviews, err := fetchAllRemainingReviews(ctx, p.Client, owner, repo, p.Number, pr.Reviews.PageInfo.EndCursor)
+			if err != nil {
+				return nil, fmt.Errorf("fetch remaining reviews: %w", err)
+			}
+			reviewNodes = append(reviewNodes, moreReviews...)
+		}
+		
+		// Fetch review comments with pagination for each review
+		for i := range reviewNodes {
+			review := &reviewNodes[i]
+			if review.Comments.PageInfo.HasNextPage {
+				moreReviewComments, err := fetchAllReviewComments(ctx, p.Client, p.Repository, review.ID, review.Comments.PageInfo.EndCursor)
+				if err != nil {
+					return nil, fmt.Errorf("fetch remaining review comments for review %s: %w", review.ID, err)
+				}
+				review.Comments.Nodes = append(review.Comments.Nodes, moreReviewComments...)
+			}
+		}
+		
+		reviews = &struct{ Nodes []Review }{Nodes: reviewNodes}
 	} else {
 		var isResp issueQueryResponse
 		err := p.Client.Do(ctx, p.Repository, issueQuery, map[string]interface{}{
@@ -262,7 +319,17 @@ func FetchGitHubData(ctx context.Context, p FetchParams) (*FetchResult, error) {
 		}
 		is := isResp.Repository.Issue
 		ctxData = is
-		comments = FilterComments(is.Comments.Nodes, p.TriggerTime)
+		
+		// Fetch issue comments with pagination
+		comments = is.Comments.Nodes
+		if is.Comments.PageInfo.HasNextPage {
+			moreComments, err := fetchAllRemainingComments(ctx, p.Client, owner, repo, p.Number, is.Comments.PageInfo.EndCursor, false)
+			if err != nil {
+				return nil, fmt.Errorf("fetch remaining issue comments: %w", err)
+			}
+			comments = append(comments, moreComments...)
+		}
+		comments = FilterComments(comments, p.TriggerTime)
 	}
 
 	// Compute SHAs for changed files on PRs
@@ -328,6 +395,181 @@ func FetchUserDisplayName(ctx context.Context, c *Client, repo, login string) (*
 	return resp.User.Name, nil
 }
 
+// Pagination helper functions
+
+const maxPaginationIterations = 50
+
+// fetchAllRemainingFiles fetches all remaining files from a PR using cursor-based pagination.
+func fetchAllRemainingFiles(ctx context.Context, c *Client, owner, repo string, number int, cursor string) ([]File, error) {
+	var allFiles []File
+	currentCursor := cursor
+	iterations := 0
+
+	for currentCursor != "" && iterations < maxPaginationIterations {
+		iterations++
+		
+		type filesResponse struct {
+			Repository struct {
+				PullRequest struct {
+					Files FilesConnection `json:"files"`
+				} `json:"pullRequest"`
+			} `json:"repository"`
+		}
+		
+		var resp filesResponse
+		err := c.Do(ctx, owner+"/"+repo, fetchMoreFilesQuery, map[string]interface{}{
+			"owner":  owner,
+			"repo":   repo,
+			"number": number,
+			"cursor": currentCursor,
+		}, &resp)
+		
+		if err != nil {
+			return nil, fmt.Errorf("fetch more files: %w", err)
+		}
+		
+		allFiles = append(allFiles, resp.Repository.PullRequest.Files.Nodes...)
+		
+		if !resp.Repository.PullRequest.Files.PageInfo.HasNextPage {
+			break
+		}
+		currentCursor = resp.Repository.PullRequest.Files.PageInfo.EndCursor
+	}
+	
+	return allFiles, nil
+}
+
+// fetchAllRemainingComments fetches all remaining comments using cursor-based pagination.
+func fetchAllRemainingComments(ctx context.Context, c *Client, owner, repo string, number int, cursor string, isPR bool) ([]Comment, error) {
+	var allComments []Comment
+	currentCursor := cursor
+	iterations := 0
+	
+	query := fetchMoreIssueCommentsQuery
+	if isPR {
+		query = fetchMorePRCommentsQuery
+	}
+
+	for currentCursor != "" && iterations < maxPaginationIterations {
+		iterations++
+		
+		type commentsResponse struct {
+			Repository struct {
+				PullRequest *struct {
+					Comments CommentsConnection `json:"comments"`
+				} `json:"pullRequest,omitempty"`
+				Issue *struct {
+					Comments CommentsConnection `json:"comments"`
+				} `json:"issue,omitempty"`
+			} `json:"repository"`
+		}
+		
+		var resp commentsResponse
+		err := c.Do(ctx, owner+"/"+repo, query, map[string]interface{}{
+			"owner":  owner,
+			"repo":   repo,
+			"number": number,
+			"cursor": currentCursor,
+		}, &resp)
+		
+		if err != nil {
+			return nil, fmt.Errorf("fetch more comments: %w", err)
+		}
+		
+		var conn CommentsConnection
+		if isPR && resp.Repository.PullRequest != nil {
+			conn = resp.Repository.PullRequest.Comments
+		} else if !isPR && resp.Repository.Issue != nil {
+			conn = resp.Repository.Issue.Comments
+		}
+		
+		allComments = append(allComments, conn.Nodes...)
+		
+		if !conn.PageInfo.HasNextPage {
+			break
+		}
+		currentCursor = conn.PageInfo.EndCursor
+	}
+	
+	return allComments, nil
+}
+
+// fetchAllRemainingReviews fetches all remaining reviews using cursor-based pagination.
+func fetchAllRemainingReviews(ctx context.Context, c *Client, owner, repo string, number int, cursor string) ([]Review, error) {
+	var allReviews []Review
+	currentCursor := cursor
+	iterations := 0
+
+	for currentCursor != "" && iterations < maxPaginationIterations {
+		iterations++
+		
+		type reviewsResponse struct {
+			Repository struct {
+				PullRequest struct {
+					Reviews ReviewsConnection `json:"reviews"`
+				} `json:"pullRequest"`
+			} `json:"repository"`
+		}
+		
+		var resp reviewsResponse
+		err := c.Do(ctx, owner+"/"+repo, fetchMoreReviewsQuery, map[string]interface{}{
+			"owner":  owner,
+			"repo":   repo,
+			"number": number,
+			"cursor": currentCursor,
+		}, &resp)
+		
+		if err != nil {
+			return nil, fmt.Errorf("fetch more reviews: %w", err)
+		}
+		
+		allReviews = append(allReviews, resp.Repository.PullRequest.Reviews.Nodes...)
+		
+		if !resp.Repository.PullRequest.Reviews.PageInfo.HasNextPage {
+			break
+		}
+		currentCursor = resp.Repository.PullRequest.Reviews.PageInfo.EndCursor
+	}
+	
+	return allReviews, nil
+}
+
+// fetchAllReviewComments fetches all comments for a specific review using cursor-based pagination.
+func fetchAllReviewComments(ctx context.Context, c *Client, repo, reviewID, cursor string) ([]ReviewComment, error) {
+	var allComments []ReviewComment
+	currentCursor := cursor
+	iterations := 0
+
+	for currentCursor != "" && iterations < maxPaginationIterations {
+		iterations++
+		
+		type reviewCommentsResponse struct {
+			Node struct {
+				Comments ReviewCommentsConnection `json:"comments"`
+			} `json:"node"`
+		}
+		
+		var resp reviewCommentsResponse
+		err := c.Do(ctx, repo, fetchMoreReviewCommentsQuery, map[string]interface{}{
+			"reviewId": reviewID,
+			"cursor":   currentCursor,
+		}, &resp)
+		
+		if err != nil {
+			return nil, fmt.Errorf("fetch more review comments: %w", err)
+		}
+		
+		allComments = append(allComments, resp.Node.Comments.Nodes...)
+		
+		if !resp.Node.Comments.PageInfo.HasNextPage {
+			break
+		}
+		currentCursor = resp.Node.Comments.PageInfo.EndCursor
+	}
+	
+	return allComments, nil
+}
+
 // GraphQL queries
 
 const issueQuery = `query Issue($owner: String!, $repo: String!, $number: Int!) {
@@ -339,6 +581,7 @@ const issueQuery = `query Issue($owner: String!, $repo: String!, $number: Int!) 
       createdAt
       state
       comments(first: 100) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           id
           databaseId
@@ -371,10 +614,12 @@ const prQuery = `query PullRequest($owner: String!, $repo: String!, $number: Int
         totalCount
         nodes { commit { oid message author { name email } } }
       }
-      files(first: 300) {
+      files(first: 100) {
+        pageInfo { hasNextPage endCursor }
         nodes { path additions deletions changeType }
       }
       comments(first: 100) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           id
           databaseId
@@ -387,6 +632,7 @@ const prQuery = `query PullRequest($owner: String!, $repo: String!, $number: Int
         }
       }
       reviews(first: 100) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           id
           databaseId
@@ -396,7 +642,8 @@ const prQuery = `query PullRequest($owner: String!, $repo: String!, $number: Int
           submittedAt
           updatedAt
           lastEditedAt
-          comments(first: 200) {
+          comments(first: 100) {
+            pageInfo { hasNextPage endCursor }
             nodes {
               id
               databaseId
@@ -417,6 +664,114 @@ const prQuery = `query PullRequest($owner: String!, $repo: String!, $number: Int
 }`
 
 const userQuery = `query User($login: String!) { user(login: $login) { name } }`
+
+const fetchMoreFilesQuery = `query FetchMoreFiles($owner: String!, $repo: String!, $number: Int!, $cursor: String!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      files(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { path additions deletions changeType }
+      }
+    }
+  }
+}`
+
+const fetchMorePRCommentsQuery = `query FetchMorePRComments($owner: String!, $repo: String!, $number: Int!, $cursor: String!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      comments(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          databaseId
+          body
+          author { login }
+          createdAt
+          updatedAt
+          lastEditedAt
+          isMinimized
+        }
+      }
+    }
+  }
+}`
+
+const fetchMoreIssueCommentsQuery = `query FetchMoreIssueComments($owner: String!, $repo: String!, $number: Int!, $cursor: String!) {
+  repository(owner: $owner, name: $repo) {
+    issue(number: $number) {
+      comments(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          databaseId
+          body
+          author { login }
+          createdAt
+          updatedAt
+          lastEditedAt
+          isMinimized
+        }
+      }
+    }
+  }
+}`
+
+const fetchMoreReviewsQuery = `query FetchMoreReviews($owner: String!, $repo: String!, $number: Int!, $cursor: String!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviews(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          databaseId
+          author { login }
+          body
+          state
+          submittedAt
+          updatedAt
+          lastEditedAt
+          comments(first: 100) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              id
+              databaseId
+              body
+              author { login }
+              createdAt
+              updatedAt
+              lastEditedAt
+              isMinimized
+              path
+              line
+            }
+          }
+        }
+      }
+    }
+  }
+}`
+
+const fetchMoreReviewCommentsQuery = `query FetchMoreReviewComments($owner: String!, $repo: String!, $reviewId: ID!, $cursor: String!) {
+  node(id: $reviewId) {
+    ... on PullRequestReview {
+      comments(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          databaseId
+          body
+          author { login }
+          createdAt
+          updatedAt
+          lastEditedAt
+          isMinimized
+          path
+          line
+        }
+      }
+    }
+  }
+}`
 
 // Utility helpers for formatting (kept local to this package)
 
