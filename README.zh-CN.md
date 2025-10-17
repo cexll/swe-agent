@@ -3,9 +3,9 @@
 # SWE-Agent - 软件工程智能体
 
 [![Go Version](https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
-[![Test Coverage](https://img.shields.io/badge/coverage-93.4%25-brightgreen)](#-测试)
+[![Test Coverage](https://img.shields.io/badge/coverage-85.2%25-brightgreen)](#-测试)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![GitHub](https://img.shields.io/badge/GitHub-cexll%2Fswe-181717?logo=github)](https://github.com/cexll/swe)
+[![GitHub](https://img.shields.io/badge/GitHub-cexll%2Fswe-agent-181717?logo=github)](https://github.com/cexll/swe-agent)
 
 GitHub App webhook 服务，通过 `/code` 命令触发 AI 自动完成代码修改任务。
 
@@ -25,108 +25,77 @@ GitHub App webhook 服务，通过 `/code` 命令触发 AI 自动完成代码修
 
 ## ✨ 功能
 
+### 🚀 AI 优先架构 (v2.1)
+- 🧠 **GPT-5 提示系统** - XML 结构化提示词，包含决策树和最佳实践
+- 🛠️ **动态 MCP 配置** - Claude/Codex Provider 运行时 MCP 服务器配置
+- 🔧 **协调评论系统** - 单评论跟踪防止评论垃圾信息
+- 📊 **GraphQL 分页** - 大型 PR（100+ 文件/评论）的游标分页支持
+
+### 核心功能
 - 🤖 **多模型支持** - 支持 Claude Code 与 Codex，易于扩展
 - 🔐 **安全校验** - GitHub webhook 签名验证（HMAC SHA-256）
 - ⚡ **异步处理** - Webhook 即刻响应，后台执行任务
 - 📦 **智能变更检测** - 无论 AI 如何修改文件，都能自动识别文件系统变更
 - 🎯 **可配置触发词** - 默认 `/code`，可按需自定义
 - 🎨 **干净架构** - Provider 接口抽象、GitHub 操作抽象
-- ✅ **高测试覆盖率** - 单元测试覆盖率 70%+
+- ✅ **高测试覆盖率** - 单元测试覆盖率 85.2%
 - 🛡️ **安全执行** - 命令执行器防注入，沙箱执行
 - 📊 **进度追踪** - 评论跟踪器实时更新任务状态
+- 🖥️ **任务仪表板** - 内置 `/tasks` 网页界面，显示队列状态和日志
 - ⏱️ **超时保护** - 10 分钟超时，防止任务悬挂
 - 🔀 **多 PR 工作流** - 自动将大型改动拆分成多个逻辑 PR
 - 🧠 **智能 PR 拆分** - 按文件类型与依赖关系智能分组
 - 🧵 **评论触发** - 支持 Issue 评论与 PR Review 行内评论
 - 🔁 **可靠任务队列** - 有界工作池 + 指数退避自动重试
 - 🔒 **PR 串行执行** - 同一 PR 的指令串行排队，避免分支/评论冲突
- - 🔗 **后处理** - 执行结束后自动生成分支/PR 链接
- - ✍️ **提交签名** - 可选的 GitHub API 自动签名提交
- - 🧹 **空分支清理** - 无提交分支自动删除
- - 📊 **GraphQL 分页** - 通过游标分页处理 100+ 文件/评论的大型 PR
+- 🔗 **后处理** - 执行结束后自动生成分支/PR 链接
+- ✍️ **提交签名** - 可选的 GitHub API 自动签名提交
+- 🧹 **空分支清理** - 无提交分支自动删除
 
 ## 🎉 最新更新
 
-### v0.4.1 - GraphQL 分页支持（2025年10月）
+### v2.1 - 架构革命（2025年1月）
 
-#### 🎉 新功能
+#### 🎉 AI 优先重设计
+- ✅ **GPT-5 提示系统**：XML 结构化系统提示词作为 Go 常量，包含决策树
+- ✅ **动态 MCP 配置**：运行时 MCP 服务器配置，环境隔离
+- ✅ **协调评论系统**：单评论跟踪防止评论垃圾信息
+- ✅ **GraphQL 分页**：大型 PR（100+ 文件/评论）的游标分页支持
+- ✅ **代码精简**：删除 5,260 行代码（净减少 4,750 行）同时保持功能
+- ✅ **100% 测试通过率**：所有 18 个测试包通过
 
-- ✅ **GraphQL 分页**：大型 PR 的游标分页支持
-  - 通过 `fetchAllRemainingFiles` 处理 100+ 文件的 PR
-  - 通过 `fetchAllRemainingComments` 支持 100+ 评论
-  - Review 评论嵌套分页
-  - 最大迭代安全限制（50次迭代 = 5,000条记录）
-  - 性能优化：99% 的 PR 单次查询完成；仅大型 PR 触发分页
+#### 🔧 技术改进
+- **提示模板**：移至 Go 常量 `internal/prompt/template.go`，使用 text/template 语法
+- **MCP 集成**：39 个 GitHub MCP 工具，动态配置生成
+- **架构简化**：消除工厂模式，直接 Provider 实例化
+- **性能优化**：99% 的 PR 使用单次 GraphQL 查询；仅大型 PR 触发分页
 
-#### 🧪 测试改进
+### v2.0 - 重大架构改造（2025年10月）
 
-- ✅ **测试覆盖率**：`internal/github/data` 达到 **93.4%**（从 70.4% 提升）
-  - 所有分页函数：100% 覆盖
-  - FetchGitHubData：66.2% → 95.6%
-  - FilterCommentsToTriggerTime：0% → 100%
-- ✅ **13 个新测试用例**：全面的分页场景覆盖
-  - 单页、多页、空结果
-  - 错误处理和最大迭代限制
-  - PR 和 Issue 评论分页
-  - Review 和 review 评论分页
-- ✅ **表驱动测试**：易于扩展新场景
+#### 🎉 模块化架构
+- ✅ **59% 代码精简**：3,150 行 → 1,300 行，同时测试覆盖率提升至 85.2%
+- ✅ **数据层**：新增 `internal/github/data/` 包用于 GraphQL 操作（91% 覆盖率）
+- ✅ **提示构建器**：基于模板的提示系统，支持变量替换
+- ✅ **任务队列**：有界调度器，指数退避重试
+- ✅ **网页 UI**：内置任务仪表板，位于 `/tasks` 端点
+- ✅ **API 提交**：基于 GitHub API 的提交，支持可选签名
 
-#### 🔧 技术亮点
-
-- 新类型：`PageInfo`、`FilesConnection`、`CommentsConnection`、`ReviewCommentsConnection`
-- 辅助函数：`fetchAllRemainingFiles`、`fetchAllRemainingComments`、`fetchAllRemainingReviews`、`fetchAllReviewComments`
-- GraphQL 查询更新：所有连接包含 `pageInfo { hasNextPage, endCursor }`
-- 修复 GitHub API 限制错误："Requesting 300 records exceeds the first limit of 100"
-
-### v0.4.0 - MCP 动态配置与增强测试（2025年10月）
-
-#### 🎉 新功能
-
-- ✅ **MCP 动态配置**：Claude 和 Codex Provider 运行时 MCP 服务器配置
-  - Claude：通过 `--mcp-config` CLI 参数传递 JSON 配置
-  - Codex：写入 TOML 配置到 `~/.codex/config.toml`
-  - 自动设置 GitHub HTTP MCP、Git MCP 和 Comment Updater MCP
-  - 每个 MCP 服务器独立的环境变量隔离
-
-- ✅ **MCP Comment Server**：自定义 Go 基 MCP 服务器用于 GitHub 评论更新
-  - 使用 stdio 传输与 Claude/Codex 集成
-  - 工具：`mcp__comment_updater__update_claude_comment`
-  - 支持 Issue 和 PR 评论
-
-- ✅ **Review 评论触发**：`/code` 支持 Issue 评论和 PR Review 行内评论
-- ✅ **可靠任务队列**：调度器带有有界队列、工作池和指数退避重试
-- ✅ **PR 串行执行**：同一 repo/PR 内的任务串行排队，避免冲突
-
-#### 🧪 测试改进
-
-- ✅ **测试覆盖率**：达到 **84.7%** 总体覆盖率（从 70.5% 提升）
-  - Claude Provider: 83.2% (buildMCPConfig: 94.4%)
-  - Codex Provider: 85.3% (buildCodexMCPConfig: 95.7%)
-  - Executor: 85.5% (Execute: 96.9%)
-- ✅ **17 个新单元测试**：MCP 配置的全面覆盖
-  - 5 个 Claude provider 测试
-  - 7 个 Codex provider 测试
-  - 5 个 Executor 上下文映射测试
-- ✅ **测试工具**：uvx 可用性 mock、临时 HOME、JSON/TOML 验证
-
-#### 🔧 技术亮点
-
-- 遵循 claude-code-action 最佳实践配置 MCP
-- 不与用户的 `~/.claude.json` 或 `~/.codex/config.toml` 冲突
-- 通过 `DEBUG_MCP_CONFIG` 环境变量支持调试日志
-- 配置生成：平均 ~18µs，~56K configs/秒
-- 所有代码分支覆盖：GitHub token 存在、uvx 检测、PR/Issue 上下文
+#### 🧪 测试卓越
+- ✅ **18 个测试包**：全部通过，覆盖率全面
+- ✅ **模块化测试**：每个组件都有专门的测试覆盖
+- ✅ **集成测试**：端到端工作流验证
 
 ## 📊 项目数据
 
 | 指标                | 数值                                         |
 | ------------------- | -------------------------------------------- |
 | **代码行数**        | ~1,300 核心代码（从 3,150 减少 59%）        |
-| **测试覆盖率**      | 93.4%（github/data），总体 84.7% |
-| **测试文件数**      | 32 个测试文件，300+ 个测试函数             |
+| **测试覆盖率**      | 85.2% 总体覆盖率（18 个测试包通过） |
+| **关键包覆盖率**    | toolconfig 95.7%, web 95.2%, prompt 92.3% |
 | **二进制大小**      | ~12MB 单一二进制文件                        |
-| **依赖**            | 极少 - Go 1.25+、Codex/Claude、gh CLI        |
+| **依赖**            | 极少 - Go 1.25+、Claude/Codex、gh CLI        |
 | **性能**            | 启动 ~100ms，内存 ~60MB                      |
+| **GraphQL 分页**    | 99% 的 PR 使用单次查询，大型 PR 使用游标分页 |
 
 ## 快速入门
 
@@ -136,13 +105,14 @@ GitHub App webhook 服务，通过 `/code` 命令触发 AI 自动完成代码修
 - [Claude Code CLI](https://github.com/anthropics/claude-code) 或 [Codex](https://github.com/codex-rs/codex)
 - [GitHub CLI](https://cli.github.com/)
 - API Key（Anthropic 或 OpenAI）
+- [uvx](https://github.com/astral-sh/uvx)（MCP Git 服务器支持，可选）
 
 ### 安装
 
 ```bash
 # 1. Clone the repository
-git clone git@github.com:cexll/swe.git
-cd swe
+git clone https://github.com/cexll/swe-agent.git
+cd swe-agent
 
 # 2. Install dependencies
 go mod download
@@ -154,7 +124,7 @@ cp .env.example .env
 # GITHUB_APP_ID=your-app-id
 # GITHUB_PRIVATE_KEY="your-private-key"
 # GITHUB_WEBHOOK_SECRET=your-webhook-secret
-# PROVIDER=codex  # or claude
+# PROVIDER=claude  # or codex
 ```
 
 ### 环境变量

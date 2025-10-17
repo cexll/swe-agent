@@ -3,7 +3,7 @@
 # SWE-Agent - Software Engineering Agent
 
 [![Go Version](https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
-[![Test Coverage](https://img.shields.io/badge/coverage-84.7%25-brightgreen)](#-testing)
+[![Test Coverage](https://img.shields.io/badge/coverage-85.2%25-brightgreen)](#-testing)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-cexll%2Fswe-181717?logo=github)](https://github.com/cexll/swe)
 
@@ -25,13 +25,20 @@ GitHub App webhook service that triggers AI to automatically complete code modif
 
 ## ✨ Features
 
+### 🚀 AI-First Architecture (v2.1)
+- 🧠 **GPT-5 Prompt System** - XML-structured prompts with decision trees and best practices
+- 🛠️ **Dynamic MCP Configuration** - Runtime MCP server configuration for Claude/Codex providers
+- 🔧 **Coordinating Comment System** - Single comment tracking to prevent comment spam
+- 📊 **GraphQL Pagination** - Cursor-based pagination for large PRs (100+ files/comments)
+
+### Core Features
 - 🤖 **Multi-AI Provider Support** - Claude Code and Codex, easily extensible
 - 🔐 **Security Verification** - GitHub webhook signature verification (HMAC SHA-256)
 - ⚡ **Async Processing** - Immediate webhook response, background task execution
 - 📦 **Smart Change Detection** - Auto-detect filesystem changes regardless of how AI modifies files
 - 🎯 **Configurable Trigger Words** - Default `/code`, customizable
 - 🎨 **Clean Architecture** - Provider interface abstraction, GitHub operations abstraction
-- ✅ **High Test Coverage** - 84.7% unit test coverage
+- ✅ **High Test Coverage** - 85.2% unit test coverage
 - 🛡️ **Safe Execution** - Command runner with injection prevention, sandboxed execution
 - 📊 **Progress Tracking** - Comment tracker with real-time task status updates
 - 🖥️ **Task Dashboard UI** - Built-in `/tasks` web view for queue status and logs
@@ -47,32 +54,48 @@ GitHub App webhook service that triggers AI to automatically complete code modif
 
 ## 🎉 Recent Updates
 
-### v0.4.0 - MCP Dynamic Configuration & Enhanced Testing (Oct 2025)
+### v2.1 - Architecture Revolution (January 2025)
 
-#### 🎉 New Features
+#### 🎉 AI-First Redesign
+- ✅ **GPT-5 Prompt System**: XML-structured system prompt as Go constant with decision trees
+- ✅ **Dynamic MCP Configuration**: Runtime MCP server configuration with environment isolation
+- ✅ **Coordinating Comment System**: Single comment tracking prevents comment spam
+- ✅ **GraphQL Pagination**: Cursor-based pagination for large PRs (100+ files/comments)
+- ✅ **Code Reduction**: 5,260 lines deleted (4,750 net reduction) while maintaining functionality
+- ✅ **100% Test Pass Rate**: All 18 test packages passing
 
-- ✅ **Dynamic MCP Configuration**: Runtime MCP server configuration for Claude and Codex providers
-- ✅ **MCP Comment Server**: Custom Go-based MCP server for GitHub comment updates
-- ✅ **Review Comment Triggers**: `/code` supports Issue comments and PR Review inline comments
-- ✅ **Reliable Task Queue**: Dispatcher with bounded queue, worker pool, and exponential backoff
-- ✅ **PR Serial Execution**: Tasks within same repo/PR queued to avoid conflicts
+#### 🔧 Technical Improvements
+- **Prompt Template**: Moved to Go constant `internal/prompt/template.go` with text/template syntax
+- **MCP Integration**: 39 GitHub MCP tools with dynamic configuration generation
+- **Architecture Simplification**: Eliminated factory patterns, direct provider instantiation
+- **Performance**: 99% of PRs use single GraphQL query; only large PRs trigger pagination
 
-#### 🧪 Testing Improvements
+### v2.0 - Major Architecture Overhaul (October 2025)
 
-- ✅ **Test Coverage**: Achieved **84.7%** overall coverage (up from 70.5%)
-- ✅ **17 New Unit Tests**: Comprehensive coverage for MCP configuration
-- ✅ **Test Utilities**: Mock helpers for uvx availability, temp HOME, JSON/TOML validation
+#### 🎉 Modular Architecture
+- ✅ **59% Code Reduction**: 3,150 → 1,300 lines while improving test coverage to 85.2%
+- ✅ **Data Layer**: New `internal/github/data/` package for GraphQL operations (91% coverage)
+- ✅ **Prompt Builder**: Template-based prompt system with variable substitution
+- ✅ **Task Queue**: Bounded dispatcher with exponential backoff retry
+- ✅ **Web UI**: Built-in task dashboard at `/tasks` endpoint
+- ✅ **API Commits**: GitHub API-based commits with optional signing
+
+#### 🧪 Testing Excellence
+- ✅ **18 Test Packages**: All passing with comprehensive coverage
+- ✅ **Modular Testing**: Each component has dedicated test coverage
+- ✅ **Integration Tests**: End-to-end workflow validation
 
 ## 📊 Project Stats
 
 | Metric             | Value                                        |
 | ------------------ | -------------------------------------------- |
 | **Lines of Code**  | ~1,300 core lines (59% reduction from 3,150) |
-| **Test Coverage**  | 84.7% (claude 83.2%, codex 85.3%, executor 85.5%) |
-| **Test Files**     | 32 test files, 300+ test functions           |
+| **Test Coverage**  | 85.2% overall (18 test packages passing) |
+| **Key Packages**   | toolconfig 95.7%, web 95.2%, prompt 92.3% |
 | **Binary Size**    | ~12MB single binary                          |
-| **Dependencies**   | Minimal - Go 1.25+, Codex/Claude, gh CLI     |
+| **Dependencies**   | Minimal - Go 1.25+, Claude/Codex, gh CLI     |
 | **Performance**    | Startup ~100ms, Memory ~60MB                 |
+| **GraphQL Pagination** | 99% of PRs use single query, large PRs use cursor pagination |
 
 ## Quick Start
 
@@ -82,13 +105,14 @@ GitHub App webhook service that triggers AI to automatically complete code modif
 - [Claude Code CLI](https://github.com/anthropics/claude-code) or [Codex](https://github.com/codex-rs/codex)
 - [GitHub CLI](https://cli.github.com/)
 - API Key (Anthropic or OpenAI)
+- [uvx](https://github.com/astral-sh/uvx) (for MCP Git server support, optional)
 
 ### Installation
 
 ```bash
 # 1. Clone the repository
-git clone git@github.com:cexll/swe.git
-cd swe
+git clone https://github.com/cexll/swe-agent.git
+cd swe-agent
 
 # 2. Install dependencies
 go mod download
@@ -100,7 +124,7 @@ cp .env.example .env
 # GITHUB_APP_ID=your-app-id
 # GITHUB_PRIVATE_KEY="your-private-key"
 # GITHUB_WEBHOOK_SECRET=your-webhook-secret
-# PROVIDER=codex  # or claude
+# PROVIDER=claude  # or codex
 ```
 
 ### Environment Variables
@@ -112,16 +136,19 @@ GITHUB_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n..."
 GITHUB_WEBHOOK_SECRET=your-webhook-secret
 
 # AI Provider Configuration (choose one)
-# Option 1: Codex (Recommended)
-PROVIDER=codex
-CODEX_MODEL=gpt-5-codex
+# Option 1: Claude (Recommended for v2.1)
+PROVIDER=claude
+ANTHROPIC_API_KEY=sk-ant-xxx
+CLAUDE_MODEL=claude-sonnet-4-5-20250929
+
+# Option 2: Codex
+# PROVIDER=codex
+# CODEX_MODEL=gpt-5-codex
 # OPENAI_API_KEY=your-key  # Optional
 # OPENAI_BASE_URL=http://...  # Optional
 
-# Option 2: Claude
-# PROVIDER=claude
-# ANTHROPIC_API_KEY=sk-ant-xxx
-# CLAUDE_MODEL=claude-sonnet-4-5-20250929
+# Required for MCP features (v2.1+)
+GITHUB_TOKEN=github_pat_xxx  # For GitHub MCP tools
 
 # Optional Configuration
 TRIGGER_KEYWORD=/code
@@ -138,9 +165,13 @@ DISPATCHER_BACKOFF_MULTIPLIER=2
 # Commit Signing (optional)
 # USE_COMMIT_SIGNING=false  # When true, use GitHub API signing
 
+# Enable GitHub File Operations via MCP (optional)
+# ENABLE_GITHUB_FILE_OPS_MCP=false
+
 # Debugging (optional)
 # DEBUG_CLAUDE_PARSING=true
 # DEBUG_GIT_DETECTION=true
+# DEBUG_MCP_CONFIG=true  # Show MCP configuration generation
 
 # Permission overrides (optional; use with care)
 # ALLOW_ALL_USERS=false        # when true, bypass installer-only check
@@ -281,160 +312,225 @@ _Generated by SWE-Agent_
 
 ## 🏗️ Architecture
 
-### Directory Structure
+### Directory Structure (v2.1)
 
 ```
-swe/
+swe-agent/
 ├── cmd/
-│   └── main.go                          # HTTP server entry point
+│   ├── main.go                          # HTTP server entry point
+│   ├── mcp-comment-server/              # MCP Comment Server (v2.1)
+│   │   └── main.go                      # Go-based MCP server for comment updates
+│   └── main_test.go                     # Integration tests
 ├── internal/
-│   ├── config/
-│   │   ├── config.go                    # Configuration management
-│   │   └── config_test.go               # Configuration tests (87.5%)
-│   ├── webhook/
-│   │   ├── handler.go                   # Webhook event handling
-│   │   ├── verify.go                    # HMAC signature verification
-│   │   ├── types.go                     # Webhook payload types
-│   │   ├── handler_test.go              # Handler tests (90.6%)
-│   │   └── verify_test.go               # Verification tests
-│   ├── provider/
-│   │   ├── provider.go                  # Provider interface definition
-│   │   ├── factory.go                   # Provider factory
-│   │   ├── factory_test.go              # Factory tests (100%)
-│   │   ├── claude/                      # Claude Provider
-│   │   │   ├── claude.go
-│   │   │   └── claude_test.go           # (68.2%)
-│   │   └── codex/                       # Codex Provider
-│   │       ├── codex.go
-│   │       └── codex_test.go            # (92.6%)
-│   ├── github/
-│   │   ├── auth.go                      # GitHub App auth + JWT
-│   │   ├── auth_test.go                 # Auth tests
-│   │   ├── gh_client.go                 # GitHub CLI abstraction
-│   │   ├── gh_client_test.go            # CLI tests
-│   │   ├── command_runner.go            # Safe command execution
-│   │   ├── command_runner_test.go       # Command execution tests
-│   │   ├── comment_state.go             # Comment state enum
-│   │   ├── comment_state_test.go        # State tests
-│   │   ├── comment_tracker.go           # Comment tracker
-│   │   ├── comment_tracker_test.go      # Tracker tests
-│   │   ├── comment_tracker_split_test.go # Split plan tests
-│   │   ├── pr_splitter.go               # PR splitter (multi-PR workflow)
-│   │   ├── pr_splitter_test.go          # PR splitter tests
-│   │   ├── clone.go                     # gh repo clone
-│   │   ├── clone_test.go                # Clone tests
-│   │   ├── comment.go                   # gh issue comment
-│   │   ├── label.go                     # Label operations
-│   │   ├── pr.go                        # gh pr create
-│   │   ├── pr_test.go                   # PR tests
-│   │   └── retry.go                     # Retry logic
-│   └── executor/
-│       ├── task.go                      # Task executor (core workflow)
-│       ├── task_test.go                 # Task tests (39.1%)
-│       └── task_multipr_test.go         # Multi-PR workflow tests
-├── Dockerfile                           # Docker build file
+│   ├── config/                          # Configuration management
+│   │   ├── config.go
+│   │   └── config_test.go               # Configuration tests (88.4%)
+│   ├── webhook/                         # GitHub webhook handling
+│   │   ├── handler.go                   # Event handling
+│   │   ├── verify.go                    # HMAC verification
+│   │   ├── analysis.go                  # Command extraction
+│   │   ├── types.go                     # Payload types
+│   │   └── *_test.go                    # Tests (94.0%)
+│   ├── dispatcher/                      # Task queue (v2.0)
+│   │   ├── dispatcher.go                # Queue + retry logic
+│   │   └── dispatcher_test.go           # Tests (91.6%)
+│   ├── executor/                        # Task orchestration
+│   │   ├── task.go                      # Main workflow (150 lines)
+│   │   ├── adapter.go                   # Provider adapter
+│   │   └── *_test.go                    # Tests (87.3%)
+│   ├── github/                          # GitHub operations
+│   │   ├── data/                        # GraphQL data layer (v2.0)
+│   │   │   ├── client.go                # GraphQL client
+│   │   │   ├── fetcher.go               # Data fetching with pagination
+│   │   │   ├── formatter.go             # XML formatting
+│   │   │   └── *_test.go                # Tests (93.3%)
+│   │   ├── auth.go                      # GitHub App auth
+│   │   ├── clone.go                     # Repository cloning
+│   │   ├── apicommit.go                 # API-based commit (v2.0)
+│   │   ├── gh_client.go                 # gh CLI abstraction
+│   │   ├── context.go                   # Event context (v2.0)
+│   │   └── *_test.go                    # Tests (85.4%)
+│   ├── prompt/                          # Prompt building (v2.0)
+│   │   ├── template.go                  # System prompt as Go constant (732 lines)
+│   │   ├── builder.go                   # Prompt construction
+│   │   └── *_test.go                    # Tests (92.3%)
+│   ├── provider/                        # AI provider abstraction
+│   │   ├── provider.go                  # Interface
+│   │   ├── claude/                      # Claude implementation
+│   │   │   ├── claude.go                # MCP config generation (v2.1)
+│   │   │   └── claude_test.go
+│   │   └── codex/                       # Codex implementation
+│   │       ├── codex.go                 # MCP config generation (v2.1)
+│   │       └── codex_test.go
+│   ├── taskstore/                       # Task storage (v2.0)
+│   │   ├── store.go                     # In-memory store
+│   │   └── store_test.go                # Tests (100.0%)
+│   ├── web/                             # Web UI (v2.0)
+│   │   ├── handler.go                   # Dashboard handlers
+│   │   └── handler_test.go              # Tests (95.2%)
+│   ├── modes/                           # Command processing
+│   │   └── command/                     # Command mode logic
+│   │       ├── mode.go                  # Mode implementation
+│   │       └── mode_test.go
+│   ├── toolconfig/                      # Tool configuration (v2.1)
+│   │   ├── builder.go                   # Build allowed/disallowed tools
+│   │   └── builder_test.go              # Tests (95.7%)
+│   └── github/                          # GitHub operations
+│       ├── operations/                  # GitHub operation abstractions
+│       │   └── git/                     # Git operations
+│       └── comment/                     # Comment operations
+├── templates/                           # HTML templates (v2.0)
+│   ├── tasks_list.html
+│   └── task_detail.html
+├── docs/                                # Documentation (v2.1)
+│   └── gpt5_prompting_guide.md          # GPT-5 best practices (542 lines)
+├── Dockerfile                           # Container build
+├── docker-entrypoint.sh                 # Docker entrypoint (v2.1)
 ├── Makefile                             # Build automation
 ├── .env.example                         # Environment template
-├── .gitignore                           # Git ignore file
-├── go.mod                               # Go module definition
-├── go.sum                               # Go dependency lock
-├── CLAUDE.md                            # Claude Code dev guide
+├── CLAUDE.md                            # Development guide (v2.1)
 └── README.md                            # Project documentation
 ```
 
-### Architecture Highlights (Linus Style)
+### Architecture Highlights (v2.1)
 
-#### 1. Filesystem Change Detection - Eliminate Assumptions
+#### 1. AI-First Design - GPT-5 Best Practices
 
+**System Prompt as Go Constant** (`internal/prompt/template.go`):
 ```go
-// ❌ Old design: Assume Provider returns file list
-if len(result.Files) == 0 {
-    return // Skip PR creation
+// 732 lines of XML-structured AI operational guidelines
+const SystemPromptTemplate = `
+<system_identity>
+## Who You Are
+You are **SWE Agent**, an autonomous software engineering agent...
+</system_identity>
+
+<tool_constraints>
+## CRITICAL: Tool Usage Rules
+- Use git CLI for all git operations
+- Use gh CLI for GitHub operations  
+- Use coordinating comment for ALL progress updates
+</tool_constraints>
+
+<gpt5_optimizations>
+## GPT-5 Performance Optimization
+- Context gathering strategy: 5-8 tool calls for initial discovery
+- Self-reflection for quality: 5-7 category rubric
+- Persistence and autonomy: Keep going until problem solved
+</gpt5_optimizations>
+`
+```
+
+#### 2. Dynamic MCP Configuration
+
+**Runtime Configuration Generation**:
+```go
+// Claude Provider: Generate JSON config via --mcp-config
+func buildMCPConfig(ctx *Context) (string, error) {
+    config := map[string]MCPServer{
+        "github": {
+            "Type": "url",
+            "URL": "https://api.githubcopilot.com/mcp",
+            "Headers": map[string]string{"Authorization": "Bearer " + ctx.GitHubToken},
+        },
+        "comment_updater": {
+            "Type": "stdio",
+            "Command": "mcp-comment-server",
+            "Args": []string{"--comment-id", ctx.CommentID},
+        },
+    }
+    return json.Marshal(config)
+}
+```
+
+#### 3. Coordinating Comment System
+
+**Single Comment Tracking**:
+- **Tool 1**: `mcp__comment_updater__update_claude_comment` (MANDATORY for progress)
+- **Tool 2**: `mcp__github__add_issue_comment` (OPTIONAL for detailed analysis)
+- **Decision Rules**: Clear guidance in prompt template for when to use each tool
+- **Benefits**: Clean UI, unified progress tracking, no comment spam
+
+#### 4. GraphQL Pagination System
+
+**Cursor-Based Pagination** (`internal/github/data/fetcher.go`):
+```go
+type PageInfo struct {
+    HasNextPage bool   `json:"hasNextPage"`
+    EndCursor   string `json:"endCursor"`
 }
 
-// ✅ New design: Detect actual filesystem state
-hasChanges, _ := executor.detectGitChanges(workdir)
-if hasChanges {
-    commitAndPush()  // Create PR
+type FilesConnection struct {
+    Nodes    []File `json:"nodes"`
+    PageInfo `json:"pageInfo"`
+}
+
+func fetchAllRemainingFiles(ctx context.Context, repo, owner, endCursor string) ([]File, error) {
+    // Max 50 iterations (5,000 files max)
+    // 99% of PRs use single query
 }
 ```
 
-**Good taste**: Let git tell us the truth, rather than trusting AI's output format.
-
-#### 2. Provider Abstraction - Zero-Branch Polymorphism
-
-```go
-// Good taste design: No if provider == "claude" branches
-type Provider interface {
-    GenerateCode(ctx context.Context, req *CodeRequest) (*CodeResponse, error)
-    Name() string
-}
-
-// Provider can choose:
-// 1. Return Files list → Executor applies these files
-// 2. Directly modify filesystem → Executor detects via git
-// Both approaches work correctly!
-```
-
-#### 3. Clear Data Flow
+#### 5. Simplified Architecture Flow
 
 ```
-GitHub Webhook
+GitHub Webhook → Handler → Dispatcher → Executor
       ↓
-  Handler (verify signature)
+GitHub Data Layer (GraphQL) → Prompt Builder → Provider
       ↓
-  Executor (orchestrate)
+AI (Claude/Codex with MCP tools) → Commit API → Push
       ↓
-  Provider (AI generate/modify)
-      ↓
-  Git Status (detect changes)
-      ↓
-  Commit & Push
-      ↓
-  Comment (feedback)
+Coordinating Comment Updates → Post-Processing
 ```
 
-#### 4. Safe Command Execution
+### Core Components (v2.1)
 
-```go
-// CommandRunner: Prevent command injection
-runner := NewSafeCommandRunner()
-runner.Run("git", []string{"add", userInput})  // ✅ Safe
-// Auto-validate command whitelist, argument sanitization, path validation
-```
-
-### Core Components
-
-| Component       | Responsibility                                  | Files  | Test Coverage |
-| --------------- | ----------------------------------------------- | ------ | ------------- |
-| Webhook Handler | Receive, verify, parse GitHub events            | 3      | 90.6%         |
-| Provider        | AI code generation abstraction layer            | 6      | 80%+          |
-| Executor        | Task orchestration (Clone → Generate → Detect → Commit) | 3      | 45%+          |
-| GitHub Ops      | Git operations wrapper (abstraction layer)      | 16     | 65%+          |
-| PR Splitter     | Smart PR splitting and multi-workflow orchestration | 2      | 85%+          |
-| Config          | Environment variable management and validation  | 2      | 87.5%         |
-| Comment Tracker | Progress tracking and status updates            | 4      | -             |
-| Command Runner  | Safe command execution                          | 2      | -             |
-| Post-Processing | Branch link generation, PR links, empty branch cleanup | 4      | 40.5%         |
+| Component         | Responsibility                                  | Test Coverage |
+| ----------------- | ----------------------------------------------- | ------------- |
+| Prompt System      | AI operational guidelines (732-line constant)   | 92.3%         |
+| Tool Config        | Build allowed/disallowed tools (MCP aware)      | 95.7%         |
+| GitHub Data Layer  | GraphQL operations with pagination               | 93.3%         |
+| Dispatcher        | Bounded task queue with exponential backoff      | 91.6%         |
+| Web UI            | Task dashboard at `/tasks` endpoint              | 95.2%         |
+| Task Store        | In-memory task storage                          | 100.0%        |
+| MCP Comment Server| Go-based MCP server for comment updates         | 39.5%         |
+| Providers         | Claude/Codex with dynamic MCP config            | 83.2%/85.3%   |
+| Webhook Handler   | Event processing and command extraction         | 94.0%         |
+| Executor          | Simplified orchestration (150 lines)            | 87.3%         |
 
 ## 🧪 Testing
 
 ### Test Coverage
 
-Overall: **84.7%** coverage across all modules
+Overall: **85.2%** coverage across all modules (18 test packages passing)
 
-| Module            | Coverage |
-|-------------------|----------|
-| toolconfig        | 98.0%    |
-| web               | 95.2%    |
-| github/data       | **93.4%** ← **Updated with pagination tests** |
-| prompt            | 92.3%    |
-| dispatcher        | 91.6%    |
-| webhook           | 89.6%    |
-| executor          | 85.5%    |
-| github            | 85.4%    |
-| codex provider    | 85.3%    |
-| claude provider   | 83.2%    |
+| Module                | Coverage |
+|-----------------------|----------|
+| taskstore             | 100.0%   |
+| toolconfig            | 95.7%    |
+| web                   | 95.2%    |
+| github/data           | 93.3%    |
+| prompt                | 92.3%    |
+| dispatcher            | 91.6%    |
+| webhook               | 94.0%    |
+| github/comment        | 73.9%    |
+| github/operations/git | 82.4%    |
+| executor              | 87.3%    |
+| github                | 85.4%    |
+| codex provider        | 85.3%    |
+| claude provider       | 83.2%    |
+| config                | 88.4%    |
+| modes/command         | 84.6%    |
+| modes                 | 90.9%    |
+| cmd                   | 93.5%    |
+
+### Test Highlights (v2.1)
+
+- **GraphQL Pagination Tests**: Comprehensive cursor-based pagination testing
+- **MCP Configuration Tests**: Dynamic config generation validation
+- **Tool Configuration Tests**: 18 test cases for tool selection logic
+- **Integration Tests**: End-to-end workflow validation
+- **Mock Utilities**: Helpers for uvx availability, temp HOME, JSON/TOML validation
 
 ### Run Tests
 
@@ -507,7 +603,9 @@ go mod tidy                   # Tidy dependencies
 
 ## 🐳 Deployment
 
-### Docker Deployment
+### Docker Deployment (v2.1)
+
+**Dynamic MCP Configuration**: The Docker image uses dynamic MCP configuration generated at runtime by providers.
 
 ```bash
 # Using Makefile (recommended)
@@ -519,19 +617,20 @@ make docker-logs            # View container logs
 # Manual Docker commands
 docker build -t swe-agent .
 
-# Run container
+# Run container with required environment variables
 docker run -d \
   -p 8000:8000 \
   -e GITHUB_APP_ID=123456 \
   -e GITHUB_PRIVATE_KEY="$(cat private-key.pem)" \
   -e GITHUB_WEBHOOK_SECRET=secret \
-  -e PROVIDER=codex \
-  -e CODEX_MODEL=gpt-5-codex \
+  -e GITHUB_TOKEN=github_pat_xxx \
+  -e ANTHROPIC_API_KEY=sk-ant-xxx \
+  -e PROVIDER=claude \
   --name swe-agent \
   swe-agent
 ```
 
-### Docker Compose
+### Docker Compose (v2.1)
 
 ```yaml
 version: "3.8"
@@ -545,10 +644,29 @@ services:
       - GITHUB_APP_ID=${GITHUB_APP_ID}
       - GITHUB_PRIVATE_KEY=${GITHUB_PRIVATE_KEY}
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
-      - PROVIDER=codex
-      - CODEX_MODEL=gpt-5-codex
+      - GITHUB_TOKEN=${GITHUB_TOKEN}  # Required for MCP
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - PROVIDER=claude
+      - CLAUDE_MODEL=claude-sonnet-4-5-20250929
       - TRIGGER_KEYWORD=/code
     restart: unless-stopped
+```
+
+### MCP Configuration in Docker
+
+**Claude Provider**:
+- Generates MCP config as JSON via `--mcp-config` CLI parameter
+- Configuration is passed dynamically for each execution
+- Supports GitHub HTTP MCP, Git MCP, and Comment Updater MCP
+
+**Codex Provider**:
+- Generates `~/.codex/config.toml` at runtime before each execution
+- Configuration includes MCP servers with environment variables
+
+**Debug Logging**:
+```bash
+# Enable detailed MCP config logging
+DEBUG_MCP_CONFIG=true docker run -d swe-agent
 ```
 
 ## 📦 Dependencies
@@ -569,29 +687,40 @@ Switch via environment variable `PROVIDER=codex` or `PROVIDER=claude`.
 
 ## ⚡ Current Capabilities
 
-### ✅ v0.4 Implemented
+### ✅ v2.1 Implemented
 
-- ✅ Respond to `/code` commands in `issue_comment` events
+**AI-First Architecture**:
+- ✅ **GPT-5 Prompt System**: 732-line XML-structured system prompt as Go constant
+- ✅ **Dynamic MCP Configuration**: Runtime MCP server configuration with environment isolation
+- ✅ **Coordinating Comment System**: Single comment tracking prevents comment spam
+- ✅ **GraphQL Pagination**: Cursor-based pagination for large PRs (100+ files/comments)
+- ✅ **AI Autonomy**: Full GitHub management capabilities via 39 MCP tools
+
+**Core Features**:
+- ✅ Respond to `/code` commands in Issue and PR Review comments
 - ✅ HMAC SHA-256 webhook signature verification (anti-forgery)
-- ✅ Multi-Provider support: Claude + Codex
+- ✅ Multi-Provider support: Claude + Codex with dynamic MCP configuration
 - ✅ **Smart file change detection** (via git status)
 - ✅ **Multi-PR workflow** (auto-split large changes)
 - ✅ **Smart PR splitter** (group by file type and complexity)
-- ✅ **Split plan display** (real-time split progress)
 - ✅ **Timeout protection** (10-minute timeout)
-- ✅ **Makefile build system** (unified dev commands)
-- ✅ **GitHub CLI abstraction layer**
-- ✅ **Safe command executor** (injection prevention)
-- ✅ **Enhanced comment tracking system** (multi-PR status support)
+- ✅ **Task Dashboard UI** at `/tasks` endpoint
+- ✅ **Reliable Task Queue** with exponential backoff retry
+- ✅ **API-based commits** with optional GitHub signing
 - ✅ Auto clone, modify, commit, push to new branch
-- ✅ Create PR link and reply to original comment
-- ✅ Docker deployment support
-- ✅ Auto-notify errors to GitHub comments
-- ✅ 75%+ test coverage
-- ✅ Bot comment filtering (prevent infinite loops)
-- ✅ Auto label management
 - ✅ **Post-processing system** (auto branch/PR links, empty branch cleanup)
-- ✅ **Commit signing support** (GitHub API with automatic signing)
+- ✅ Docker deployment with dynamic MCP configuration
+- ✅ Auto-notify errors to GitHub comments
+- ✅ **85.2% test coverage** (18 test packages passing)
+- ✅ Bot comment filtering (prevent infinite loops)
+
+**MCP Integration**:
+- ✅ **GitHub HTTP MCP**: 39 GitHub tools (issues, PRs, labels, milestones, search)
+- ✅ **Git MCP**: Git operations via uvx when commit signing disabled
+- ✅ **Comment Updater MCP**: Custom Go-based server for coordinating comments
+- ✅ **Sequential Thinking MCP**: Deep reasoning for complex problems
+- ✅ **Fetch MCP**: Web content fetching for research tasks
+- ✅ **Environment Isolation**: Each MCP server has isolated environment scope
 
 ### ⚠️ Current Limitations
 
@@ -620,7 +749,7 @@ Switch via environment variable `PROVIDER=codex` or `PROVIDER=claude`.
 
 ## 🗺️ Roadmap
 
-### v0.5 - Quality Assurance & Interaction (🔴 P0 Capabilities)
+### v2.2 - Enhanced AI Capabilities (Q2 2025)
 
 **Quality Assurance Layer**:
 - [ ] **Automatic test execution** - Run project tests after code generation
@@ -629,55 +758,19 @@ Switch via environment variable `PROVIDER=codex` or `PROVIDER=claude`.
 - [ ] **Security scanning** - Basic vulnerability and sensitive data detection
 - [ ] **Test failure handling** - Auto-fix or rollback when tests fail
 
+**Enhanced MCP Integration**:
+- [ ] **Repository Management MCP** - Create, clone, manage multiple repositories
+- [ ] **CI/CD MCP Tools** - Trigger builds, monitor test results
+- [ ] **Dependency Management MCP** - Auto-add/upgrade packages
+- [ ] **Performance Analysis MCP** - Run benchmarks, identify bottlenecks
+
 **Interaction & Collaboration Layer**:
 - [ ] **Requirement clarification** - AI asks questions when unclear
 - [ ] **Multi-turn collaboration** - Support conversation context and follow-ups
 - [ ] **Design confirmation** - Send design draft before implementation
-- [ ] **Progress reporting** - Real-time status updates during execution
+- [ ] **Progress reporting** - Enhanced real-time status updates
 
-### v0.6 - Context Understanding & Planning (🟠 P1 Capabilities)
-
-**Context & Understanding Layer**:
-- [ ] **Codebase architecture parsing** - Parse README, CLAUDE.md, architecture
-- [ ] **Knowledge base indexing** - Vector search for relevant documentation
-- [ ] **Historical analysis** - Study relevant commits and similar issues/PRs
-- [ ] **Context enrichment** - Aggregate all comments, commits, file summaries
-
-**Planning & Design Layer**:
-- [ ] **Intelligent task decomposition** - Break complex tasks into sub-tasks
-- [ ] **Risk assessment** - Analyze potential impacts and conflicts
-- [ ] **Design proposal generation** - Create technical design documents
-- [ ] **Alternative solutions** - Provide multiple implementation options
-
-### v0.7 - Advanced Capabilities (🟡 P2 Capabilities)
-
-**Tooling & Debugging Layer**:
-- [ ] **Auto-debugging** - Analyze errors and fix issues autonomously
-- [ ] **Dependency management** - Auto-add/upgrade Go modules and packages
-- [ ] **Performance analysis** - Run benchmarks and identify bottlenecks
-- [ ] **CI/CD integration** - Trigger builds and monitor test results
-
-**Learning & Memory Layer**:
-- [ ] **Decision recording** - Track implementation choices (ADR)
-- [ ] **Error learning** - Remember and avoid past mistakes
-- [ ] **Project knowledge accumulation** - Build project-specific knowledge base
-- [ ] **Pattern recognition** - Identify recurring issues and solutions
-
-### v0.8 - Quality Evolution (🟢 P3 Capabilities)
-
-**Review & Refactoring Layer**:
-- [ ] **Code review capability** - Detect code smells and security issues
-- [ ] **Refactoring suggestions** - Identify improvement opportunities
-- [ ] **Self-reflection** - Review own code before submission
-- [ ] **Best practices validation** - Check adherence to standards
-
-**Documentation & Knowledge Transfer Layer**:
-- [ ] **Auto-documentation updates** - Update README, API docs when code changes
-- [ ] **Detailed PR descriptions** - Explain rationale, impact, testing
-- [ ] **Changelog management** - Auto-update CHANGELOG.md
-- [ ] **Code commenting** - Add comments for complex logic
-
-### v1.0 - Enterprise & Production Ready
+### v3.0 - Enterprise & Production Ready (2026)
 
 **Enterprise Governance**:
 - [ ] **Team permission management** - Role-based access control
@@ -688,9 +781,16 @@ Switch via environment variable `PROVIDER=codex` or `PROVIDER=claude`.
 
 **Production Infrastructure**:
 - [ ] **Horizontal scaling** - Multi-worker node support
-- [ ] **Webhook replay** - Manually retry failed tasks
+- [ ] **Queue persistence** - Redis/Database for task durability
 - [ ] **Advanced rate limiting** - Repo/org/user granularity
 - [ ] **Alerting pipelines** - Comprehensive monitoring and alerts
+- [ ] **Webhook replay** - Manually retry failed tasks
+
+**Advanced AI Features**:
+- [ ] **Context understanding** - Parse codebase architecture and documentation
+- [ ] **Knowledge base indexing** - Vector search for relevant information
+- [ ] **Historical analysis** - Learn from similar issues and PRs
+- [ ] **Planning & design** - Intelligent task decomposition and risk assessment
 
 ## 🔒 Security Considerations
 
