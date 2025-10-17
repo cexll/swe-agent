@@ -61,13 +61,6 @@ ENV PATH="/root/.local/bin:${PATH}"
 COPY --from=builder /build/swe-agent /usr/local/bin/swe-agent
 COPY --from=builder /build/mcp-comment-server /usr/local/bin/mcp-comment-server
 
-# Copy shared system prompt to agent config locations
-COPY --from=builder /build/system-prompt.md /tmp/system-prompt.md
-RUN mkdir -p /root/.codex /root/.claude \
-    && cp /tmp/system-prompt.md /root/.codex/AGENTS.md \
-    && cp /tmp/system-prompt.md /root/.claude/CLAUDE.md \
-    && rm /tmp/system-prompt.md
-
 WORKDIR /app
 
 # Copy runtime assets

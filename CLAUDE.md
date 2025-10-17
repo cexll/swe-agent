@@ -10,6 +10,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `github.com/golang-jwt/jwt/v5` - GitHub App JWT authentication
   - `github.com/joho/godotenv` - Environment variable management
 
+## v2.1 Architecture Revolution (January 2025)
+
+**AI-First Redesign - GPT-5 Prompting Best Practices:**
+- ✅ **Prompt template restructured**: 361 → 619 lines with XML-based structure (Go constant in `internal/prompt/template.go`)
+- ✅ **Decision trees**: Clear flow diagrams for different task scenarios
+- ✅ **Full GitHub MCP capability**: 10 → 39 tools (issues, PRs, labels, milestones, search)
+- ✅ **Massive code reduction**: 5,260 lines deleted (4,750 net reduction)
+- ✅ **100% test pass rate**: All 18 test packages passing
+
+**What Changed:**
+1. **Prompt System (GPT-5 Best Practices + Go text/template)**:
+   - Converted system prompt to Go constant in `internal/prompt/template.go`
+   - Applied structured XML tags: `<system_identity>`, `<tool_constraints>`, `<decision_tree>`, etc.
+   - Integrated Go text/template for variable substitution (e.g., `{{.GitHubContext}}`)
+   - Added comprehensive decision flows for task complexity analysis
+   - Included standard output format templates
+   - Emphasized AI autonomy and full GitHub control
+
+2. **GitHub MCP Tools Expansion**:
+   - **Issue Management**: create_issue, update_issue, close_issue, reopen_issue, list_issues, assign_issue
+   - **PR Management**: merge_pull_request, close_pull_request, request_reviewers
+   - **Labels & Milestones**: add_labels, remove_labels, create_label, create_milestone
+   - **Search**: search_code, search_issues, search_repositories
+   - **Repository**: list_repositories, get_repository, create_discussion
+
+3. **Code Cleanup (Deleted ~5,260 Lines)**:
+   - Removed unused packages: `branch/`, `validation/`, `image/`
+   - Removed unused files: `apicommit.go`, `gh_client.go`, `label.go`, `retry.go`, `command_runner.go`, `templates.go`
+   - Removed obsolete tests: 10+ test files
+   - Simplified `clone.go`: Removed retry wrapper (direct execution)
+
+**Key Philosophy Shift:**
+- **Before**: Hardcoded workflows with limited MCP tools
+- **After**: AI-autonomous workflows with full GitHub management capabilities
+- **Linus Principles**: Maintained "Good Taste", "Never Break Userspace", "Pragmatism", "Simplicity"
+
 ## v2.0 Architecture Highlights
 
 **Major Simplification (October 2025):**
@@ -21,20 +57,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **New Components:**
 - `internal/github/data/` - GraphQL data layer for fetching GitHub context (91% coverage)
-- `internal/prompt/` - System prompt loading and building (92% coverage)
+- `internal/prompt/` - Prompt template using Go text/template (`template.go` constant + `builder.go`) (92% coverage)
 - `internal/dispatcher/` - Task queue with exponential backoff (91% coverage)
 - `internal/taskstore/` - In-memory task storage (100% coverage)
 - `internal/web/` - Web UI for task dashboard (95% coverage)
-- `internal/github/postprocess/` - **NEW**: Post-execution processing (40% coverage)
-  - Branch status detection and cleanup
-  - PR/branch link generation
-  - Coordinating comment updates
+- `internal/github/postprocess/` - **DELETED in v2.1**: Post-execution now handled by AI via MCP
 
 **Key Improvements:**
 - **No factory pattern**: Direct provider instantiation in main.go
 - **GraphQL over REST**: Efficient data fetching via GraphQL
 - **API-based commits**: Use GitHub API instead of local git
-- **System prompt file**: External `system-prompt.md` for easy customization
+- **Go text/template system**: Type-safe template with `{{}}` placeholders in `internal/prompt/template.go`
 
 ## Common Development Tasks
 
@@ -179,7 +212,7 @@ GitHub Webhook (issue_comment/pr_review_comment)
       ↓
   GitHub Data Layer (fetch issue/PR context via GraphQL)
       ↓
-  Prompt Builder (system-prompt.md + XML context)
+  Prompt Builder (template.go constant + XML context via text/template)
       ↓
   Provider (AI code generation: Claude/Codex)
       ↓
@@ -187,11 +220,7 @@ GitHub Webhook (issue_comment/pr_review_comment)
       ↓
   Push (gh CLI)
       ↓
-  Post-Processing (NEW)
-    - Check branch status
-    - Generate branch/PR links
-    - Update coordinating comment
-    - Delete empty branches
+  Post-Processing (DELETED in v2.1 - AI handles via MCP)
 ```
 
 ### Core Components (v2.0 Simplified)
@@ -233,10 +262,10 @@ GitHub Webhook (issue_comment/pr_review_comment)
 
 #### 5. Prompt System (`internal/prompt/`)
 
-**New in v2.0 - 92% test coverage**
+**Updated in v2.1+ - Go text/template**
 
-- **manager.go**: Load system prompt from system-prompt.md
-- **builder.go**: Construct final prompt (system + XML context)
+- **template.go**: System prompt template as Go constant with `{{.GitHubContext}}` placeholders
+- **builder.go**: Parse and execute template using Go's text/template package
 
 #### 6. Provider System (`internal/provider/`)
 
@@ -368,11 +397,12 @@ swe-agent/
 ├── templates/                           # HTML templates (NEW v2.0)
 │   ├── tasks_list.html
 │   └── task_detail.html
-├── system-prompt.md                     # System prompt (NEW v2.0)
 ├── Dockerfile                           # Container build
 ├── .env.example                         # Environment template
 └── CLAUDE.md                            # This file
 ```
+
+**Note**: In v2.1, `system-prompt.md` was moved to `internal/prompt/template.md`, then in v2.1+ converted to a Go constant (`template.go`) using Go's text/template syntax.
 
 ## Important Implementation Notes
 
@@ -387,10 +417,10 @@ swe-agent/
 **Key Changes:**
 - **No factory pattern**: Providers instantiated directly in main.go
 - **GraphQL data fetching**: New `internal/github/data` package replaces REST API calls
-- **Prompt builder**: System prompt loaded from `system-prompt.md` file
+- **Go text/template system**: Template defined as Go constant in `internal/prompt/template.go`
 - **API-based commits**: Use GitHub API for commits instead of local git
 - **Task queue**: Dispatcher with exponential backoff and retry logic
-- **Post-processing**: Automatic branch/PR link generation after execution
+- **Post-processing (DELETED in v2.1)**: AI now handles branch/PR link generation via MCP
 - **Commit signing**: Optional GitHub-signed commits via API
 
 ### Commit Signing Support
@@ -501,15 +531,21 @@ This project delegates some operations to CLI tools:
 
 Ensure the `gh` CLI is installed and authenticated. The `codex` CLI is only required if using the Codex provider.
 
-### System Prompt Customization (v2.0)
+### System Prompt Customization (v2.1+)
 
-The system prompt is loaded from `system-prompt.md` in the repository root. This file:
-- Contains the core instructions for the AI provider
-- Is loaded by `internal/prompt/manager.go` at runtime
-- Can be customized per repository for domain-specific guidance
-- Falls back to a minimal default if the file is not found
+The system prompt is defined as a Go constant in `internal/prompt/template.go`. This approach:
+- Uses Go's `text/template` package for variable substitution (e.g., `{{.GitHubContext}}`)
+- Compiled into the binary at build time (no runtime file dependencies)
+- Allows template logic and placeholders for dynamic content
+- Provides type-safe template data structures
+- Contains core AI instructions following GPT-5 best practices
+- Uses structured XML tags for clarity (`<system_identity>`, `<decision_tree>`, etc.)
 
-To customize AI behavior, edit `system-prompt.md` directly.
+**To customize AI behavior:**
+1. Edit `internal/prompt/template.go` - modify the `SystemPromptTemplate` constant
+2. Add new template variables in `builder.go` if needed (e.g., `data["NewField"] = value`)
+3. Rebuild the binary: `go build cmd/main.go`
+4. The new template will be compiled into the binary
 
 ## Code Conventions
 
