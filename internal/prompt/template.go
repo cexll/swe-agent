@@ -22,7 +22,7 @@ All git operations SHOULD use MCP tools for better integration:
 - mcp__git__git_status (check working tree)
 - mcp__git__git_add (stage files)
 - mcp__git__git_commit (create commit)
-- mcp__git__git_push (push to remote) - If not available, use Bash: "git push"
+- Bash: "git push" (REQUIRED for pushing - mcp-server-git does not support push)
 - mcp__git__git_diff_staged, mcp__git__git_diff_unstaged (view changes)
 - mcp__git__git_log, mcp__git__git_show (view history)
 - mcp__git__git_branch, mcp__git__git_create_branch (branch management)
@@ -34,11 +34,10 @@ Bash tool is available for all commands if needed.
 ## Exact Tool Names Reference
 
 **Git MCP Tools** (mcp-server-git uses double underscore prefix):
-✅ CORRECT:
+CORRECT:
 - mcp__git__git_status
 - mcp__git__git_add
 - mcp__git__git_commit
-- mcp__git__git_push
 - mcp__git__git_diff_staged
 - mcp__git__git_diff_unstaged
 - mcp__git__git_diff
@@ -48,26 +47,28 @@ Bash tool is available for all commands if needed.
 - mcp__git__git_create_branch
 - mcp__git__git_reset
 
-❌ WRONG (common mistakes):
+**NOTE**: mcp-server-git does NOT support push. Use Bash command "git push" instead.
+
+WRONG (common mistakes):
 - mcp__git__status (missing second git_)
 - mcp__git__add (missing second git_)
 - mcp__git__commit (missing second git_)
 - mcp_git_status (single underscore)
 
 **Comment Tools**:
-✅ mcp__comment_updater__update_claude_comment (progress tracking)
-✅ mcp__github__add_issue_comment (new content only)
+- mcp__comment_updater__update_claude_comment (progress tracking)
+- mcp__github__add_issue_comment (new content only)
 
 **GitHub MCP Tools**:
-✅ mcp__github__create_pull_request
-✅ mcp__github__create_issue
-✅ mcp__github__add_labels
-✅ mcp__github__search_code
+- mcp__github__create_pull_request
+- mcp__github__create_issue
+- mcp__github__add_labels
+- mcp__github__search_code
 (See builder.go for full list)
 
 **Other MCP Tools**:
-✅ mcp__sequential-thinking__sequentialthinking
-✅ mcp__fetch__fetch
+- mcp__sequential-thinking__sequentialthinking
+- mcp__fetch__fetch
 
 ---
 
@@ -329,7 +330,7 @@ Before implementing code changes:
 - ` + "`mcp__git__git_diff_unstaged`, `mcp__git__git_diff_staged`" + ` - View changes
 - ` + "`mcp__git__git_add`" + ` - Stage files
 - ` + "`mcp__git__git_commit`" + ` - Create commits
-- ` + "`mcp__git__git_push`" + ` - Push to remote (fallback: Bash "git push")
+- ` + "`Bash: git push`" + ` - **REQUIRED** for pushing (mcp-server-git does not support push)
 - ` + "`mcp__git__git_branch`" + ` - List branches
 - ` + "`mcp__git__git_log`, `mcp__git__git_show`" + ` - View history
 - ` + "`mcp__git__git_create_branch`" + ` - Create new branch
@@ -407,26 +408,38 @@ Read the trigger comment carefully and execute the appropriate actions. There is
 
 If the task involves modifying code (fix, implement, add, refactor, update):
 
-1. Update coordinating comment immediately
+1. STEP ZERO (EXECUTE IMMEDIATELY): Update coordinating comment
 
-MANDATORY: Call this tool FIRST before any other actions.
+CRITICAL - DO THIS NOW, BEFORE ANYTHING ELSE
+
+This is NOT optional. This is NOT something you do later. This is the FIRST action you take.
 
 Tool: mcp__comment_updater__update_claude_comment
 Parameters: {"body": "markdown string"}
 
-Example first call:
+DO NOT:
+- Read files first
+- Analyze code first  
+- Plan in your head first
+- Do ANYTHING before calling this tool
+
+Example FIRST call (execute immediately):
 {
-  "body": "[WORKING] Simplifying README.md\n\n### Plan\n1. [IN_PROGRESS] Analyze current README\n2. [PENDING] Remove redundant sections\n3. [PENDING] Test changes\n4. [PENDING] Commit and push\n\n### Status\nStarting analysis..."
+  "body": "[WORKING] Task description\n\n### Plan\n1. [PENDING] Step 1\n2. [PENDING] Step 2\n3. [PENDING] Step 3\n\n### Status\nStarting work..."
 }
 
-Update this comment at EVERY major step:
-- After reading files
-- After making changes
-- After running tests
-- After commit/push
-- Before final completion
+After this FIRST call, update the comment at EVERY major step:
+- After reading files -> Update comment
+- After making changes -> Update comment
+- After running tests -> Update comment
+- After commit/push -> Update comment
+- Before final completion -> Update comment
 
-The user tracks your ENTIRE work through this single comment. If you don't update it, they think you're not working.
+WHY THIS IS CRITICAL:
+- Your console output is NOT visible to users
+- The coordinating comment is your ONLY communication channel
+- If you don't update it, users think you've frozen or crashed
+- Users are waiting and watching this comment for progress
 
 2. Verify environment
    - Branch {{.CurrentBranch}} is already checked out
@@ -449,7 +462,7 @@ Required steps (in order):
 a. mcp__git__git_status - Verify what changed
 b. mcp__git__git_add - Stage files
 c. mcp__git__git_commit - Create commit with message
-d. mcp__git__git_push - Push to remote (or Bash: "git push" as fallback)
+d. Bash: "git push" - Push to remote (CRITICAL - mcp-server-git does not support push)
 
 Bash is available for all commands if MCP tools are not suitable.
 
@@ -478,10 +491,13 @@ Parameters:
   "message": "Fix #123: Brief description\n\n- Detail 1\n- Detail 2\n\nGenerated by swe-agent"
 }
 
-Step d: Push to remote
-Tool name: mcp__git__git_push
-Parameters: (none if tracking remote)
-Fallback: Bash command "git push" if MCP push unavailable
+Step d: Push to remote (CRITICAL)
+Tool: Bash
+Command: git push
+
+IMPORTANT: mcp-server-git does NOT support push operations.
+You MUST use Bash command "git push" to push changes to the remote repository.
+Without this step, changes remain local only and users cannot see your work.
 
 Without successful commit + push:
 - User sees nothing
@@ -690,7 +706,7 @@ You can start working immediately - no need to create a new branch unless explic
 <final_reminders>
 ## Critical Reminders
 
-1. Git Tools: Prefer MCP git tools (mcp__git__git_add, mcp__git__git_commit, mcp__git__git_push) for better integration. Bash is available as fallback.
+1. Git Tools: Use MCP git tools (mcp__git__git_add, mcp__git__git_commit) for staging and commits. MUST use Bash "git push" for pushing (mcp-server-git does not support push).
 
 2. Comment Tool: Use ` + "`mcp__comment_updater__update_claude_comment`" + ` for ALL progress updates. Call it FIRST and after every major step. Not calling it = user sees nothing.
 
