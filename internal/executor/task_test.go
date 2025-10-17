@@ -460,18 +460,16 @@ func TestExecute_BranchCreationFailure(t *testing.T) {
 	ex := New(mp, ma)
 	ex.fetcher = &mockFetcher{fetchFunc: func(ctx context.Context, gctx *github.Context) (*ghdata.FetchResult, error) {
 		return &ghdata.FetchResult{
-			ContextData: ghdata.PullRequest{
-				Title:       "Test PR",
-				Body:        "Test body",
-				Author:      ghdata.Author{Login: "testuser"},
-				BaseRefName: "main",
-				HeadRefName: "feature",
-				State:       "open",
+			ContextData: ghdata.Issue{
+				Title:  "Test Issue",
+				Body:   "Test body",
+				Author: ghdata.Author{Login: "testuser"},
+				State:  "open",
 			},
 		}, nil
 	}}
 
-	err := ex.Execute(context.Background(), buildTestCtx(true))
+	err := ex.Execute(context.Background(), buildTestCtx(false))
 	if err == nil || !containsErr(err, "create feature branch") {
 		t.Fatalf("Execute() err = %v, want contains 'create feature branch'", err)
 	}

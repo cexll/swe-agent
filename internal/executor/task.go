@@ -97,8 +97,24 @@ func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) erro
 
 	// 如果 branch == base，说明已经在目标分支上（clone 时已 checkout），跳过
 	if branch != base {
-		if err := runCmd("git", "-C", workdir, "checkout", "-b", branch); err != nil {
-			return fmt.Errorf("create feature branch: %w", err)
+		// 检查远程分支是否存在（PR 场景会存在）
+		checkCmd := exec.Command("git", "-C", workdir, "ls-remote", "--heads", "origin", branch)
+		output, checkErr := checkCmd.CombinedOutput()
+
+		// 如果 ls-remote 成功且有输出，说明远程分支存在（PR 场景）
+		if checkErr == nil && len(output) > 0 {
+			// 远程分支存在：fetch + checkout（PR 场景）
+			if err := runCmd("git", "-C", workdir, "fetch", "origin", branch); err != nil {
+				return fmt.Errorf("fetch remote branch: %w", err)
+			}
+			if err := runCmd("git", "-C", workdir, "checkout", branch); err != nil {
+				return fmt.Errorf("checkout existing branch: %w", err)
+			}
+		} else {
+			// 远程分支不存在或 ls-remote 失败：创建新分支（Issue 场景）
+			if err := runCmd("git", "-C", workdir, "checkout", "-b", branch); err != nil {
+				return fmt.Errorf("create feature branch: %w", err)
+			}
 		}
 	}
 
