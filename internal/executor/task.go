@@ -79,6 +79,13 @@ func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) erro
 	}
 	defer cleanup()
 
+	// Configure git credential helper to use installation token for push authentication
+	// This allows AI to execute "git push" without manual intervention
+	remoteURL := fmt.Sprintf("https://x-access-token:%s@github.com/%s.git", token.Token, repo)
+	if err := runCmd("git", "-C", workdir, "remote", "set-url", "origin", remoteURL); err != nil {
+		return fmt.Errorf("configure git remote with token: %w", err)
+	}
+
 	// 4) Checkout task branch
 	branch := webhookCtx.PreparedBranch
 	if branch == "" {

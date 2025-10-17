@@ -553,6 +553,102 @@ func TestExecute_EmptyRepoFallback(t *testing.T) {
 	}
 }
 
+func TestExecute_GitRemoteConfiguration(t *testing.T) {
+	origClone := cloneRepo
+	origRun := runCmd
+	defer func() { cloneRepo = origClone; runCmd = origRun }()
+
+	cloneRepo = func(repo, branch, token string) (string, func(), error) {
+		return t.TempDir(), func() {}, nil
+	}
+
+	// Track git commands to verify remote set-url was called
+	var gitRemoteSetURLCalled bool
+	var remoteURLValue string
+
+	runCmd = func(name string, args ...string) error {
+		if name == "git" && len(args) >= 4 {
+			// Check for "git remote set-url origin <url>"
+			if args[2] == "remote" && args[3] == "set-url" {
+				gitRemoteSetURLCalled = true
+				if len(args) >= 6 {
+					remoteURLValue = args[5]
+				}
+			}
+		}
+		return nil
+	}
+
+	mp := &mockProvider{}
+	ma := &mockAuthProvider{}
+	ex := New(mp, ma)
+	ex.fetcher = &mockFetcher{fetchFunc: func(ctx context.Context, gctx *github.Context) (*ghdata.FetchResult, error) {
+		return &ghdata.FetchResult{
+			ContextData: ghdata.Issue{
+				Title:  "Test Issue",
+				Body:   "Test body",
+				Author: ghdata.Author{Login: "testuser"},
+				State:  "open",
+			},
+		}, nil
+	}}
+
+	if err := ex.Execute(context.Background(), buildTestCtx(false)); err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	if !gitRemoteSetURLCalled {
+		t.Fatal("git remote set-url was not called")
+	}
+
+	// Verify the URL contains token and repo
+	if !contains(remoteURLValue, "x-access-token:test-token") {
+		t.Errorf("remote URL = %q, want to contain x-access-token:test-token", remoteURLValue)
+	}
+	if !contains(remoteURLValue, "github.com/owner/repo.git") {
+		t.Errorf("remote URL = %q, want to contain github.com/owner/repo.git", remoteURLValue)
+	}
+}
+
+func TestExecute_GitRemoteConfigurationFailure(t *testing.T) {
+	origClone := cloneRepo
+	origRun := runCmd
+	defer func() { cloneRepo = origClone; runCmd = origRun }()
+
+	cloneRepo = func(repo, branch, token string) (string, func(), error) {
+		return t.TempDir(), func() {}, nil
+	}
+
+	runCmd = func(name string, args ...string) error {
+		// Fail on git remote set-url
+		if name == "git" && len(args) >= 4 {
+			if args[2] == "remote" && args[3] == "set-url" {
+				return errors.New("remote config fail")
+			}
+		}
+		return nil
+	}
+
+	mp := &mockProvider{}
+	ma := &mockAuthProvider{}
+	ex := New(mp, ma)
+	ex.fetcher = &mockFetcher{fetchFunc: func(ctx context.Context, gctx *github.Context) (*ghdata.FetchResult, error) {
+		return &ghdata.FetchResult{
+			ContextData: ghdata.Issue{
+				Title:  "Test Issue",
+				Body:   "Test body",
+				Author: ghdata.Author{Login: "testuser"},
+				State:  "open",
+			},
+		}, nil
+	}}
+
+	err := ex.Execute(context.Background(), buildTestCtx(false))
+	if err == nil || !containsErr(err, "configure git remote with token") {
+		t.Fatalf("Execute() err = %v, want contains 'configure git remote with token'", err)
+	}
+}
+
 // small helpers
 func containsErr(err error, substr string) bool {
 	if err == nil {
