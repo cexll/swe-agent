@@ -1,0 +1,21 @@
+run:
+  timeout: 5m
+  tests: false
+
+issues:
+  exclude-dirs:
+    - vendor
+
+linters:
+  enable:
+    - staticcheck
+    - unused
+    - gosimple
+    - govet
+    - ineffassign
+    - typecheck
+    - errcheck
+    - gofmt
+    - goimports
+    - revive
+    - unparam
