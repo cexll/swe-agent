@@ -48,7 +48,8 @@ RUN apk add --no-cache \
         nodejs \
         npm \
         jq \
-    && npm install -g \
+        ripgrep \
+    && npm install -g --ignore-scripts \
         @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION} \
         @openai/codex@${CODEX_CLI_VERSION} \
     && npm cache clean --force \
