@@ -534,7 +534,7 @@ func TestFetchAllRemainingComments(t *testing.T) {
 			wantBodies: []string{"first", "second", "third"},
 			wantCalls:  3,
 		},
-        {
+  	{
 			name:          "issue-empty",
 			initialCursor: "cursor",
 			isPR:          false,

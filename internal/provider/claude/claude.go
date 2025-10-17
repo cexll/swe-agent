@@ -73,7 +73,9 @@ func buildMCPConfig(ctx map[string]string) (string, error) {
 
 	// Add GitHub HTTP MCP server if token available
 	// Uses GitHub Copilot's HTTP MCP endpoint (no Docker required)
-	if githubToken := ctx["github_token"]; githubToken != "" {
+	githubToken := ctx["github_token"]
+	log.Printf("[MCP Config] Debug: github_token = %q", githubToken)
+	if githubToken != "" {
 		config.MCPServers["github"] = MCPServerConfig{
 			Type: "http",
 			URL:  "https://api.githubcopilot.com/mcp",
@@ -81,26 +83,38 @@ func buildMCPConfig(ctx map[string]string) (string, error) {
 				"Authorization": "Bearer " + githubToken,
 			},
 		}
+		log.Printf("[MCP Config] Added github server with token length %d", len(githubToken))
+	} else {
+		log.Printf("[MCP Config] Debug: github_token is empty, not adding github server")
 	}
 
 	// Add Git MCP server (uvx mcp-server-git)
-	if _, err := exec.LookPath("uvx"); err == nil {
+	if uvxPath, err := exec.LookPath("uvx"); err == nil {
+		log.Printf("[MCP Config] Debug: uvx found at %s", uvxPath)
 		config.MCPServers["git"] = MCPServerConfig{
 			Command: "uvx",
 			Args:    []string{"mcp-server-git"},
 		}
+		log.Printf("[MCP Config] Added git server")
+	} else {
+		log.Printf("[MCP Config] Debug: uvx not found: %v", err)
 	}
 
 	// Add Comment Updater MCP server if comment ID available and binary exists
-	if commentID := ctx["comment_id"]; commentID != "" {
+	commentID := ctx["comment_id"]
+	log.Printf("[MCP Config] Debug: comment_id = %q", commentID)
+	if commentID != "" {
 		owner := ctx["repo_owner"]
 		repo := ctx["repo_name"]
 		githubToken := ctx["github_token"]
 		eventName := ctx["event_name"]
+		
+		log.Printf("[MCP Config] Debug: owner=%q, repo=%q, githubToken=%q, eventName=%q", owner, repo, githubToken, eventName)
 
 		if owner != "" && repo != "" && githubToken != "" {
 			// Check if mcp-comment-server binary exists in PATH (防御性检查)
-			if _, err := exec.LookPath("mcp-comment-server"); err == nil {
+			if commentServerPath, err := exec.LookPath("mcp-comment-server"); err == nil {
+				log.Printf("[MCP Config] Debug: mcp-comment-server found at %s", commentServerPath)
 				config.MCPServers["comment_updater"] = MCPServerConfig{
 					Command: "mcp-comment-server",
 					Env: map[string]string{
@@ -113,8 +127,10 @@ func buildMCPConfig(ctx map[string]string) (string, error) {
 				}
 				log.Printf("[MCP Config] Added comment_updater server (comment ID: %s)", commentID)
 			} else {
-				log.Printf("[MCP Config] Warning: mcp-comment-server not found in PATH, comment updates via MCP will be unavailable")
+				log.Printf("[MCP Config] Warning: mcp-comment-server not found in PATH, comment updates via MCP will be unavailable: %v", err)
 			}
+		} else {
+			log.Printf("[MCP Config] Debug: Comment updater requirements not met: owner=%t, repo=%t, githubToken=%t", owner != "", repo != "", githubToken != "")
 		}
 	}
 
