@@ -60,7 +60,7 @@ type FilesConnection struct {
 }
 
 type CommentsConnection struct {
-	PageInfo PageInfo `json:"pageInfo"`
+	PageInfo PageInfo  `json:"pageInfo"`
 	Nodes    []Comment `json:"nodes"`
 }
 
@@ -87,16 +87,16 @@ type Review struct {
 }
 
 type PullRequest struct {
-	Title       string   `json:"title"`
-	Body        string   `json:"body"`
-	Author      Author   `json:"author"`
-	BaseRefName string   `json:"baseRefName"`
-	HeadRefName string   `json:"headRefName"`
-	HeadRefOID  string   `json:"headRefOid"`
-	CreatedAt   string   `json:"createdAt"`
-	Additions   int      `json:"additions"`
-	Deletions   int      `json:"deletions"`
-	State       string   `json:"state"`
+	Title       string `json:"title"`
+	Body        string `json:"body"`
+	Author      Author `json:"author"`
+	BaseRefName string `json:"baseRefName"`
+	HeadRefName string `json:"headRefName"`
+	HeadRefOID  string `json:"headRefOid"`
+	CreatedAt   string `json:"createdAt"`
+	Additions   int    `json:"additions"`
+	Deletions   int    `json:"deletions"`
+	State       string `json:"state"`
 	Commits     struct {
 		TotalCount int `json:"totalCount"`
 		Nodes      []struct {
@@ -262,7 +262,7 @@ func FetchGitHubData(ctx context.Context, p FetchParams) (*FetchResult, error) {
 		}
 		pr := prResp.Repository.PullRequest
 		ctxData = pr
-		
+
 		// Fetch files with pagination
 		files = pr.Files.Nodes
 		if pr.Files.PageInfo.HasNextPage {
@@ -272,7 +272,7 @@ func FetchGitHubData(ctx context.Context, p FetchParams) (*FetchResult, error) {
 			}
 			files = append(files, moreFiles...)
 		}
-		
+
 		// Fetch comments with pagination
 		comments = pr.Comments.Nodes
 		if pr.Comments.PageInfo.HasNextPage {
@@ -283,7 +283,7 @@ func FetchGitHubData(ctx context.Context, p FetchParams) (*FetchResult, error) {
 			comments = append(comments, moreComments...)
 		}
 		comments = FilterComments(comments, p.TriggerTime)
-		
+
 		// Fetch reviews with pagination
 		reviewNodes := pr.Reviews.Nodes
 		if pr.Reviews.PageInfo.HasNextPage {
@@ -293,7 +293,7 @@ func FetchGitHubData(ctx context.Context, p FetchParams) (*FetchResult, error) {
 			}
 			reviewNodes = append(reviewNodes, moreReviews...)
 		}
-		
+
 		// Fetch review comments with pagination for each review
 		for i := range reviewNodes {
 			review := &reviewNodes[i]
@@ -305,7 +305,7 @@ func FetchGitHubData(ctx context.Context, p FetchParams) (*FetchResult, error) {
 				review.Comments.Nodes = append(review.Comments.Nodes, moreReviewComments...)
 			}
 		}
-		
+
 		reviews = &struct{ Nodes []Review }{Nodes: reviewNodes}
 	} else {
 		var isResp issueQueryResponse
@@ -319,7 +319,7 @@ func FetchGitHubData(ctx context.Context, p FetchParams) (*FetchResult, error) {
 		}
 		is := isResp.Repository.Issue
 		ctxData = is
-		
+
 		// Fetch issue comments with pagination
 		comments = is.Comments.Nodes
 		if is.Comments.PageInfo.HasNextPage {
@@ -407,7 +407,7 @@ func fetchAllRemainingFiles(ctx context.Context, c *Client, owner, repo string, 
 
 	for currentCursor != "" && iterations < maxPaginationIterations {
 		iterations++
-		
+
 		type filesResponse struct {
 			Repository struct {
 				PullRequest struct {
@@ -415,7 +415,7 @@ func fetchAllRemainingFiles(ctx context.Context, c *Client, owner, repo string, 
 				} `json:"pullRequest"`
 			} `json:"repository"`
 		}
-		
+
 		var resp filesResponse
 		err := c.Do(ctx, owner+"/"+repo, fetchMoreFilesQuery, map[string]interface{}{
 			"owner":  owner,
@@ -423,19 +423,19 @@ func fetchAllRemainingFiles(ctx context.Context, c *Client, owner, repo string, 
 			"number": number,
 			"cursor": currentCursor,
 		}, &resp)
-		
+
 		if err != nil {
 			return nil, fmt.Errorf("fetch more files: %w", err)
 		}
-		
+
 		allFiles = append(allFiles, resp.Repository.PullRequest.Files.Nodes...)
-		
+
 		if !resp.Repository.PullRequest.Files.PageInfo.HasNextPage {
 			break
 		}
 		currentCursor = resp.Repository.PullRequest.Files.PageInfo.EndCursor
 	}
-	
+
 	return allFiles, nil
 }
 
@@ -444,7 +444,7 @@ func fetchAllRemainingComments(ctx context.Context, c *Client, owner, repo strin
 	var allComments []Comment
 	currentCursor := cursor
 	iterations := 0
-	
+
 	query := fetchMoreIssueCommentsQuery
 	if isPR {
 		query = fetchMorePRCommentsQuery
@@ -452,7 +452,7 @@ func fetchAllRemainingComments(ctx context.Context, c *Client, owner, repo strin
 
 	for currentCursor != "" && iterations < maxPaginationIterations {
 		iterations++
-		
+
 		type commentsResponse struct {
 			Repository struct {
 				PullRequest *struct {
@@ -463,7 +463,7 @@ func fetchAllRemainingComments(ctx context.Context, c *Client, owner, repo strin
 				} `json:"issue,omitempty"`
 			} `json:"repository"`
 		}
-		
+
 		var resp commentsResponse
 		err := c.Do(ctx, owner+"/"+repo, query, map[string]interface{}{
 			"owner":  owner,
@@ -471,26 +471,26 @@ func fetchAllRemainingComments(ctx context.Context, c *Client, owner, repo strin
 			"number": number,
 			"cursor": currentCursor,
 		}, &resp)
-		
+
 		if err != nil {
 			return nil, fmt.Errorf("fetch more comments: %w", err)
 		}
-		
+
 		var conn CommentsConnection
 		if isPR && resp.Repository.PullRequest != nil {
 			conn = resp.Repository.PullRequest.Comments
 		} else if !isPR && resp.Repository.Issue != nil {
 			conn = resp.Repository.Issue.Comments
 		}
-		
+
 		allComments = append(allComments, conn.Nodes...)
-		
+
 		if !conn.PageInfo.HasNextPage {
 			break
 		}
 		currentCursor = conn.PageInfo.EndCursor
 	}
-	
+
 	return allComments, nil
 }
 
@@ -502,7 +502,7 @@ func fetchAllRemainingReviews(ctx context.Context, c *Client, owner, repo string
 
 	for currentCursor != "" && iterations < maxPaginationIterations {
 		iterations++
-		
+
 		type reviewsResponse struct {
 			Repository struct {
 				PullRequest struct {
@@ -510,7 +510,7 @@ func fetchAllRemainingReviews(ctx context.Context, c *Client, owner, repo string
 				} `json:"pullRequest"`
 			} `json:"repository"`
 		}
-		
+
 		var resp reviewsResponse
 		err := c.Do(ctx, owner+"/"+repo, fetchMoreReviewsQuery, map[string]interface{}{
 			"owner":  owner,
@@ -518,19 +518,19 @@ func fetchAllRemainingReviews(ctx context.Context, c *Client, owner, repo string
 			"number": number,
 			"cursor": currentCursor,
 		}, &resp)
-		
+
 		if err != nil {
 			return nil, fmt.Errorf("fetch more reviews: %w", err)
 		}
-		
+
 		allReviews = append(allReviews, resp.Repository.PullRequest.Reviews.Nodes...)
-		
+
 		if !resp.Repository.PullRequest.Reviews.PageInfo.HasNextPage {
 			break
 		}
 		currentCursor = resp.Repository.PullRequest.Reviews.PageInfo.EndCursor
 	}
-	
+
 	return allReviews, nil
 }
 
@@ -542,31 +542,31 @@ func fetchAllReviewComments(ctx context.Context, c *Client, repo, reviewID, curs
 
 	for currentCursor != "" && iterations < maxPaginationIterations {
 		iterations++
-		
+
 		type reviewCommentsResponse struct {
 			Node struct {
 				Comments ReviewCommentsConnection `json:"comments"`
 			} `json:"node"`
 		}
-		
+
 		var resp reviewCommentsResponse
 		err := c.Do(ctx, repo, fetchMoreReviewCommentsQuery, map[string]interface{}{
 			"reviewId": reviewID,
 			"cursor":   currentCursor,
 		}, &resp)
-		
+
 		if err != nil {
 			return nil, fmt.Errorf("fetch more review comments: %w", err)
 		}
-		
+
 		allComments = append(allComments, resp.Node.Comments.Nodes...)
-		
+
 		if !resp.Node.Comments.PageInfo.HasNextPage {
 			break
 		}
 		currentCursor = resp.Node.Comments.PageInfo.EndCursor
 	}
-	
+
 	return allComments, nil
 }
 

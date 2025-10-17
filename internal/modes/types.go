@@ -2,6 +2,7 @@ package modes
 
 import (
 	"context"
+
 	"github.com/cexll/swe/internal/github"
 )
 

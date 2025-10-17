@@ -2,6 +2,7 @@ package modes
 
 import (
 	"fmt"
+
 	"github.com/cexll/swe/internal/github"
 )
 
