@@ -150,8 +150,8 @@ func TestBuildMCPConfig_FullContext(t *testing.T) {
 
 			cfg := decodeMCPConfig(t, raw)
 
-			if len(cfg.MCPServers) != 3 {
-				t.Fatalf("expected 3 MCP servers, got %d", len(cfg.MCPServers))
+			if len(cfg.MCPServers) != 5 {
+				t.Fatalf("expected 5 MCP servers (github, git, comment_updater, sequential-thinking, fetch), got %d", len(cfg.MCPServers))
 			}
 
 			github, ok := cfg.MCPServers["github"]
@@ -280,8 +280,8 @@ func TestBuildMCPConfig_EmptyContext(t *testing.T) {
 				if _, ok := cfg.MCPServers["git"]; !ok {
 					t.Fatalf("expected git MCP server when uvx available: %+v", cfg.MCPServers)
 				}
-				if len(cfg.MCPServers) != 1 {
-					t.Fatalf("expected only git MCP server, got %d", len(cfg.MCPServers))
+				if len(cfg.MCPServers) != 3 {
+					t.Fatalf("expected 3 MCP servers (git, sequential-thinking, fetch), got %d", len(cfg.MCPServers))
 				}
 			} else {
 				if len(cfg.MCPServers) != 0 {

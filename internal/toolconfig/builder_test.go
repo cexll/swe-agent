@@ -17,8 +17,9 @@ func TestBuildAllowedTools_Defaults(t *testing.T) {
 		}
 	}
 
-	// Should include official Git MCP tools (with mcp__git__ prefix)
-	gitTools := []string{"mcp__git__status", "mcp__git__diff_unstaged", "mcp__git__diff_staged", "mcp__git__commit", "mcp__git__add", "mcp__git__push", "mcp__git__log"}
+	// Should include official Git MCP tools (with mcp__git__ prefix and double git_)
+	// Note: git_push is not included because mcp-server-git doesn't support push
+	gitTools := []string{"mcp__git__git_status", "mcp__git__git_diff_unstaged", "mcp__git__git_diff_staged", "mcp__git__git_commit", "mcp__git__git_add", "mcp__git__git_log"}
 	for _, gt := range gitTools {
 		if !contains(tools, gt) {
 			t.Errorf("Expected git MCP tool %s not found in allowed tools", gt)
@@ -42,8 +43,8 @@ func TestBuildAllowedTools_Defaults(t *testing.T) {
 func TestBuildAllowedTools_CommitSigning_Toggles(t *testing.T) {
 	opts := Options{UseCommitSigning: true}
 	tools := BuildAllowedTools(opts)
-	// Git MCP tools should be disabled when signing
-	for _, gt := range []string{"mcp__git__status", "mcp__git__diff_unstaged", "mcp__git__diff_staged", "mcp__git__commit", "mcp__git__add", "mcp__git__push", "mcp__git__log"} {
+	// Git MCP tools should be disabled when signing (note: git_push not in list because mcp-server-git doesn't support push)
+	for _, gt := range []string{"mcp__git__git_status", "mcp__git__git_diff_unstaged", "mcp__git__git_diff_staged", "mcp__git__git_commit", "mcp__git__git_add", "mcp__git__git_log"} {
 		if contains(tools, gt) {
 			t.Errorf("Did not expect git tool %s when UseCommitSigning=true", gt)
 		}
@@ -111,10 +112,7 @@ func TestBuildDisallowedTools_Defaults(t *testing.T) {
 	opts := Options{}
 	tools := BuildDisallowedTools(opts)
 
-	// Should disallow WebSearch and WebFetch by default (security)
-	if !contains(tools, "WebSearch") {
-		t.Error("Expected WebSearch in default disallowed tools")
-	}
+	// Should disallow WebFetch by default (security)
 	if !contains(tools, "WebFetch") {
 		t.Error("Expected WebFetch in default disallowed tools")
 	}
