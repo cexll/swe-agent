@@ -84,6 +84,8 @@ func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) erro
 	if branch == "" {
 		// 生成新分支名
 		branch = featureBranchName(webhookCtx)
+		// 设置到 context 中，供 prompt builder 使用
+		webhookCtx.PreparedBranch = branch
 	}
 
 	// 如果 branch == base，说明已经在目标分支上（clone 时已 checkout），跳过
@@ -102,10 +104,10 @@ func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) erro
 	// 6) Call provider.GenerateCode (pass token via context + env for MCP)
 	// 6) Inject MCP-friendly environment variables
 	// Set env for child tools (best-effort; provider also sets from req.Context)
-	os.Setenv("GITHUB_PERSONAL_ACCESS_TOKEN", token.Token)
-	os.Setenv("GITHUB_TOKEN", token.Token)
-	os.Setenv("GH_TOKEN", token.Token)
-	os.Setenv("REPO_DIR", workdir)
+	_ = os.Setenv("GITHUB_PERSONAL_ACCESS_TOKEN", token.Token)
+	_ = os.Setenv("GITHUB_TOKEN", token.Token)
+	_ = os.Setenv("GH_TOKEN", token.Token)
+	_ = os.Setenv("REPO_DIR", workdir)
 
 	// Build context map for provider (including MCP config data)
 	ctxMap := map[string]string{
