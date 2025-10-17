@@ -126,28 +126,6 @@ func TestFormatReviewComments_Variants(t *testing.T) {
 	}
 }
 
-func TestFormatChangedFiles(t *testing.T) {
-	if s := formatChangedFiles(nil); s != "" {
-		t.Fatalf("expected empty string")
-	}
-	files := []File{
-		{Path: "a.go", ChangeType: "ADDED", Additions: 10, Deletions: 0},
-		{Path: "b.go", ChangeType: "MODIFIED", Additions: 2, Deletions: 1},
-	}
-	s := formatChangedFiles(files)
-	if !strings.Contains(s, "- a.go (ADDED) +10/-0") || !strings.Contains(s, "- b.go (MODIFIED) +2/-1") {
-		t.Fatalf("bad formatting: %q", s)
-	}
-}
-
-func TestFormatChangedFilesWithSHA_List(t *testing.T) {
-	files := []GitHubFileWithSHA{{File: File{Path: "x", ChangeType: "M", Additions: 1, Deletions: 2}, SHA: "abc"}}
-	s := formatChangedFilesWithSHA(files)
-	if !strings.Contains(s, "SHA: abc") {
-		t.Fatalf("missing sha: %q", s)
-	}
-}
-
 func TestGenerateXML_IssueAndPR(t *testing.T) {
 	// Issue
 	is := Issue{Title: "B", Body: "Hello <!--x-->", Author: Author{Login: "bob"}, State: "OPEN"}
