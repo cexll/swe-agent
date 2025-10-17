@@ -2,68 +2,22 @@ package prompt
 
 import (
 	"bytes"
-	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"text/template"
 
-	"github.com/cexll/swe/internal/github"
 	ghdata "github.com/cexll/swe/internal/github/data"
-	"github.com/cexll/swe/internal/github/image"
 )
 
 // DefaultTriggerPhrase is used when no explicit trigger phrase is available.
 const DefaultTriggerPhrase = "@assistant"
 
-// LoadSystemPrompt reads the repository-level system prompt from system-prompt.md.
-//
-// Search strategy:
-// 1) Try CWD-relative path (service runs from repo root in normal workflows).
-// 2) If not found, try to locate by walking up from CWD until filesystem root.
-//
-// Returns the file contents on success. If the file cannot be found, returns a
-// minimal fallback prompt and a descriptive error so callers may log it.
-func LoadSystemPrompt() (string, error) {
-	const filename = "system-prompt.md"
-
-	// First, try direct read from current working directory.
-	if b, err := os.ReadFile(filename); err == nil {
-		return string(b), nil
-	}
-
-	// If that fails (e.g. service not started from repo root), walk upwards.
-	dir, _ := os.Getwd()
-	for {
-		candidate := filepath.Join(dir, filename)
-		if b, err := os.ReadFile(candidate); err == nil {
-			return string(b), nil
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir { // reached filesystem root
-			break
-		}
-		dir = parent
-	}
-
-	// Fallback content to avoid hard failures during runtime.
-	fallback := "You are an AI assistant. Use the provided GitHub context below to reason and act."
-	return fallback, fmt.Errorf("system prompt file %q not found via CWD or parent directories", filename)
-}
-
-// BuildPrompt constructs the final model prompt by concatenating:
-//   - The system prompt markdown (from system-prompt.md)
-//   - A separator line `---`
-//   - XML-tagged, formatted GitHub context via ghdata.GenerateXML
+// BuildPrompt constructs the final model prompt using Go's text/template system.
+// It populates the SystemPromptTemplate with GitHub context data.
 //
 // It handles both PR and Issue events and includes key metadata tags
 // (repository, issue/pr number, event type, trigger comment, etc.).
 func BuildPrompt(ctx GitHubContext, fetched *ghdata.FetchResult) string {
-	// Load system prompt; don't fail hard if missing.
-	systemPrompt, _ := LoadSystemPrompt()
-
 	// Derive event type and human-readable trigger context.
 	eventType, triggerCtx := eventTypeAndTriggerContext(ctx)
 
@@ -114,11 +68,26 @@ func BuildPrompt(ctx GitHubContext, fetched *ghdata.FetchResult) string {
 		ImageURLMap:         fetchedImageMap(fetched),
 	})
 
-	var b strings.Builder
-	b.WriteString(systemPrompt)
-	b.WriteString("\n\n---\n\n")
-	b.WriteString(xml)
-	return b.String()
+	// Parse and execute template
+	tmpl, err := template.New("system-prompt").Parse(SystemPromptTemplate)
+	if err != nil {
+		// Fallback to basic prompt if template parsing fails
+		return fmt.Sprintf("Error parsing template: %v\n\n%s", err, xml)
+	}
+
+	// Prepare template data
+	data := map[string]interface{}{
+		"GitHubContext": xml,
+	}
+
+	// Execute template
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		// Fallback to basic prompt if template execution fails
+		return fmt.Sprintf("Error executing template: %v\n\n%s", err, xml)
+	}
+
+	return buf.String()
 }
 
 // fetchedContextData safely returns the ContextData or a zero value to satisfy
@@ -218,122 +187,4 @@ type GitHubContext interface {
 	GetTriggerUser() string
 	GetActor() string
 	GetTriggerCommentBody() string
-}
-
-// BuildFullPrompt 构建完整 Prompt（基于模板）
-func BuildFullPrompt(ctx context.Context, ghCtx *github.Context, commentID int64, branch string) (string, error) {
-	// 1. 下载评论中的图片（非阻塞：失败仅打印警告）
-	imageInfo := ""
-	if body := ghCtx.GetTriggerCommentBody(); strings.TrimSpace(body) != "" {
-		imageURLs := image.ExtractImageURLs(body)
-		if len(imageURLs) > 0 {
-			downloader, err := image.NewDownloader("")
-			if err != nil {
-				fmt.Printf("Warning: Failed to create image downloader: %v\n", err)
-			} else {
-				urlMap, err := downloader.DownloadImages(ctx, imageURLs)
-				if err != nil {
-					fmt.Printf("Warning: Failed to download images: %v\n", err)
-				} else if len(urlMap) > 0 {
-					imageInfo = buildImageInfo(urlMap)
-				}
-			}
-		}
-	}
-
-	// 2. 准备数据
-	data := PromptData{
-		FormattedContext: formatContext(ghCtx),
-		IssueBody:        "", // 无 issue/PR body 字段，保持为空以兼容模板
-		Comments:         formatComments(ghCtx),
-		EventType:        "GENERAL_COMMENT",
-		IsPR:             ghCtx.IsPRContext(),
-		TriggerContext:   "issue comment with '/code'",
-		Repository:       fmt.Sprintf("%s/%s", ghCtx.GetRepositoryOwner(), ghCtx.GetRepositoryName()),
-		IssueNumber:      ghCtx.GetIssueNumber(),
-		CommentID:        commentID,
-		Owner:            ghCtx.GetRepositoryOwner(),
-		Repo:             ghCtx.GetRepositoryName(),
-		Branch:           branch,
-		BaseBranch:       ghCtx.GetBaseBranch(),
-		ImageInfo:        imageInfo,
-	}
-
-	// 解析模板
-	tmpl, err := template.New("prompt").Parse(DefaultPromptTemplate)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse template: %w", err)
-	}
-
-	// 执行模板
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("failed to execute template: %w", err)
-	}
-
-	return buf.String(), nil
-}
-
-// buildImageInfo 构建图片信息文本
-func buildImageInfo(urlMap map[string]string) string {
-	if len(urlMap) == 0 {
-		return ""
-	}
-
-	var sb strings.Builder
-	sb.WriteString("\n\n<images_info>\n")
-	sb.WriteString("Images have been downloaded from comments and saved to disk. You can use the Read tool to view these images.\n\n")
-	sb.WriteString("Image mappings:\n")
-
-	for originalURL, localPath := range urlMap {
-		sb.WriteString(fmt.Sprintf("- Original: %s\n", originalURL))
-		sb.WriteString(fmt.Sprintf("  Local: %s\n", localPath))
-	}
-
-	sb.WriteString("</images_info>")
-	return sb.String()
-}
-
-// formatContext 格式化 GitHub 上下文（尽量不引入新字段，保持健壮）
-func formatContext(ctx *github.Context) string {
-	repoOwner := ctx.GetRepositoryOwner()
-	repoName := ctx.GetRepositoryName()
-	number := ctx.GetIssueNumber()
-	if ctx.IsPRContext() && ctx.GetPRNumber() != 0 {
-		number = ctx.GetPRNumber()
-	}
-	title := ""
-	author := ctx.GetActor()
-	created := ""
-	if cbody := ctx.GetTriggerCommentBody(); cbody != "" {
-		// No timestamp field on Context; keep empty string to avoid misleading data
-		_ = cbody
-	}
-
-	return fmt.Sprintf(`Repository: %s/%s
-Issue/PR: #%d
-Title: %s
-Author: %s
-Created: %s`,
-		repoOwner,
-		repoName,
-		number,
-		title,
-		author,
-		created,
-	)
-}
-
-// formatComments 格式化评论列表（当前仅使用触发评论作为上下文）
-func formatComments(ctx *github.Context) string {
-	body := ctx.GetTriggerCommentBody()
-	if strings.TrimSpace(body) == "" {
-		return "No comments"
-	}
-	user := ctx.GetTriggerUser()
-	if user == "" {
-		user = ctx.GetActor()
-	}
-	return fmt.Sprintf(`Comment by %s:
-%s`, user, body)
 }
