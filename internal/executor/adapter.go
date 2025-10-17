@@ -7,20 +7,20 @@ import (
 	"github.com/cexll/swe/internal/webhook"
 )
 
-// ExecutorAdapter adapts the simplified Executor to the dispatcher.TaskExecutor interface.
+// Adapter adapts the simplified Executor to the dispatcher.TaskExecutor interface.
 // It converts webhook.Task into github.Context and forwards execution.
-type ExecutorAdapter struct {
+type Adapter struct {
 	inner *Executor
 }
 
 // NewAdapter creates a new adapter for the given Executor.
-func NewAdapter(inner *Executor) *ExecutorAdapter {
-	return &ExecutorAdapter{inner: inner}
+func NewAdapter(inner *Executor) *Adapter {
+	return &Adapter{inner: inner}
 }
 
 // Execute implements dispatcher.TaskExecutor by translating a webhook.Task into
 // a github.Context using the raw webhook payload and event type.
-func (a *ExecutorAdapter) Execute(ctx context.Context, task *webhook.Task) error {
+func (a *Adapter) Execute(ctx context.Context, task *webhook.Task) error {
 	// Parse original webhook into the normalized github.Context
 	ghCtx, err := github.ParseWebhookEvent(task.EventType, task.RawPayload)
 	if err != nil {
