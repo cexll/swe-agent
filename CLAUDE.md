@@ -17,6 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - ✅ **Decision trees**: Clear flow diagrams for different task scenarios
 - ✅ **Full GitHub MCP capability**: 10 → 39 tools (issues, PRs, labels, milestones, search)
 - ✅ **Coordinating comment enforcement**: AI MUST use single comment for progress tracking (no duplicate comments)
+- ✅ **PR context workflow**: AI automatically appends commits to existing PR branch (no new branch/PR creation)
 - ✅ **Massive code reduction**: 5,260 lines deleted (4,750 net reduction)
 - ✅ **100% test pass rate**: All 18 test packages passing
 - ✅ **GraphQL pagination support**: Handles PRs with 100+ files/comments via cursor-based pagination (October 2025)
@@ -79,7 +80,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
      6. Updates coordinating comment with all PR links and dependencies
      ```
 
-6. **Code Cleanup (Deleted ~5,260 Lines)**:
+6. **PR Context Workflow Support (January 2025)**:
+   - **Philosophy**: AI understands execution context (Issue vs PR) and adapts behavior accordingly
+   - **Implementation**: `internal/modes/command/mode.go` detects PR context and returns existing head branch
+   - **Prompt guidance**: Added `<pr_context_rules>` section to guide AI behavior in PR contexts
+   - **Behavior**:
+     - **Issue context**: AI creates new branch `swe-agent/<issue-number>-<timestamp>`
+     - **PR context**: AI uses PR's existing head branch, appends commits to update PR
+     - **Explicit override**: User can request "create a new PR" in PR context
+   - **Benefits**: Clean PR workflow, no branch/PR spam, intuitive behavior
+   - **Code impact**: 2 lines in mode.go + 48 lines in template.go
+
+7. **Code Cleanup (Deleted ~5,260 Lines)**:
    - Removed unused packages: `branch/`, `validation/`, `image/`
    - Removed unused files: `apicommit.go`, `gh_client.go`, `label.go`, `retry.go`, `command_runner.go`, `templates.go`
    - Removed obsolete tests: 10+ test files
@@ -449,6 +461,58 @@ swe-agent/
 **Note**: In v2.1, `system-prompt.md` was moved to `internal/prompt/template.md`, then in v2.1+ converted to a Go constant (`template.go`) using Go's text/template syntax.
 
 ## Important Implementation Notes
+
+### PR Context Workflow (v2.1+)
+
+**Problem**: When `/code` triggered in a PR comment, the system would create a new branch and new PR instead of updating the existing PR.
+
+**Solution**: Context-aware branch selection in `internal/modes/command/mode.go`:
+
+```go
+// Determine branch: PR uses head branch, Issue generates new branch
+branch := ""
+if ghCtx.IsPRContext() {
+    branch = ghCtx.GetHeadBranch() // PR: use existing branch
+}
+// If not PR (Issue context), leave empty for executor to generate
+```
+
+**Behavior**:
+- **Issue context** (`/code` in issue comment):
+  - mode.Prepare() returns empty `Branch`
+  - executor generates new branch: `swe-agent/<issue-number>-<timestamp>`
+  - AI creates PR via link or `gh pr create`
+  
+- **PR context** (`/code` in PR comment):
+  - mode.Prepare() returns PR's head branch (e.g., `feature/auth-fix`)
+  - executor checks out existing branch
+  - AI commits and pushes → automatically updates existing PR
+  - AI does NOT create new branch/PR unless explicitly requested
+
+**Prompt guidance** (`internal/prompt/template.go`):
+- Added `<pr_context_rules>` section (48 lines)
+- Instructs AI: "In PR context, your commits update the existing PR"
+- Provides clear examples of when to create new branch/PR vs when to update existing
+
+**Example workflow**:
+```
+PR #123 exists with branch feature/auth-fix
+User comments: /code fix the null pointer in auth.go
+
+AI behavior:
+1. Checks out feature/auth-fix (existing branch)
+2. Fixes auth.go
+3. Commits: "Address review feedback: fix null pointer"
+4. Pushes to feature/auth-fix
+5. Updates coordinating comment: "PR updated with new commit"
+→ PR #123 automatically shows new commit
+```
+
+**Override mechanism**:
+If user explicitly says "create a new PR" in PR comment, AI will:
+1. Create new branch (e.g., `swe-agent/refactor-123-<timestamp>`)
+2. Implement changes
+3. Create new PR via `gh pr create`
 
 ### v2.0 Architecture Improvements
 

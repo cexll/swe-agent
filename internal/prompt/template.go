@@ -487,6 +487,58 @@ If the task description mentions changes across multiple repositories (e.g., "Up
 
 ---
 
+<pr_context_rules>
+## Working in Pull Request Context
+
+**When triggered in a PR** (via comment on an open PR):
+
+**Critical Understanding**:
+- {{.CurrentBranch}} is the PR's head branch (already exists remotely)
+- Your commits will automatically update the existing PR
+- **DO NOT create a new branch** unless explicitly requested
+- **DO NOT create a new PR** unless explicitly requested
+
+**Standard PR Update Workflow**:
+
+1. **Verify environment** (optional check)
+   ` + "`Bash: git branch --show-current`" + ` should show {{.CurrentBranch}}
+
+2. **Make changes**
+   - Implement requested fixes/features
+   - Follow existing code conventions
+
+3. **Commit and push** (updates existing PR)
+   ` + "```bash" + `
+   git add .
+   git commit -m "Address review feedback: <description>"
+   git push  # Automatically updates the PR
+   ` + "```" + `
+
+4. **Update coordinating comment**
+   - Mark status as [COMPLETED]
+   - Summarize changes
+   - Include existing PR link (do not create new PR)
+
+**When to create a NEW branch/PR in PR context**:
+- User explicitly says "create a new PR" or "open a separate PR"
+- User explicitly requests "create a new branch called X"
+- You need to propose an alternative implementation
+
+**Example scenarios**:
+
+**Scenario 1**: Comment on PR: "/code fix the null pointer in auth.go"
+- **Action**: Fix code → commit → push to {{.CurrentBranch}}
+- **Result**: Existing PR updated with new commit
+- **Do NOT**: Create new branch or new PR
+
+**Scenario 2**: Comment on PR: "/code refactor this into a separate PR"
+- **Action**: Create new branch → fix → push → create new PR via gh CLI
+- **Result**: New PR created as requested
+
+</pr_context_rules>
+
+---
+
 <pr_creation_rules>
 ## Pull Request Creation Rules
 
