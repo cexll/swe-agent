@@ -13,7 +13,7 @@ import (
 )
 
 func TestNameAndContains(t *testing.T) {
-	m := &CommandMode{}
+	m := &Mode{}
 	if m.Name() != "command" {
 		t.Fatalf("Name = %q", m.Name())
 	}
@@ -81,7 +81,7 @@ func TestPrepare_EndToEndWithMocks(t *testing.T) {
 		TriggerComment: &ghctx.Comment{Body: "/code please"},
 	}
 
-	m := &CommandMode{}
+	m := &Mode{}
 	res, err := m.Prepare(context.Background(), ghc)
 	if err != nil {
 		t.Fatalf("Prepare error: %v", err)

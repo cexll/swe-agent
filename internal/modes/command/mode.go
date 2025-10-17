@@ -10,19 +10,19 @@ import (
 	"github.com/cexll/swe/internal/modes"
 )
 
-// CommandMode 实现 Command 模式（/code 命令触发）
-type CommandMode struct{}
+// Mode 实现 Command 模式（/code 命令触发）
+type Mode struct{}
 
 // Name 返回模式名称
-func (m *CommandMode) Name() string { return "command" }
+func (m *Mode) Name() string { return "command" }
 
 // ShouldTrigger 检测是否包含 /code 命令
-func (m *CommandMode) ShouldTrigger(ctx *ghpkg.Context) bool {
+func (m *Mode) ShouldTrigger(ctx *ghpkg.Context) bool {
 	return containsCommand(ctx.GetTriggerCommentBody(), "/code")
 }
 
 // Prepare 准备执行上下文
-func (m *CommandMode) Prepare(ctx context.Context, ghCtx *ghpkg.Context) (*modes.PrepareResult, error) {
+func (m *Mode) Prepare(ctx context.Context, ghCtx *ghpkg.Context) (*modes.PrepareResult, error) {
 	// 1. 创建 GitHub 客户端
 	client := ghCtx.NewGitHubClient()
 
@@ -54,5 +54,5 @@ func containsCommand(text, command string) bool {
 
 // init 自动注册 Command 模式
 func init() {
-	modes.Register(&CommandMode{})
+	modes.Register(&Mode{})
 }
