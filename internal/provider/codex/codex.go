@@ -6,15 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
-	"github.com/cexll/swe/internal/prompt"
-	"github.com/cexll/swe/internal/provider/claude"
-	"github.com/cexll/swe/internal/provider/shared"
+	"github.com/cexll/swe/internal/provider"
 )
 
 const (
@@ -23,7 +22,8 @@ const (
 )
 
 var execCommandContext = exec.CommandContext
-var promptManager = prompt.NewManager()
+
+// No prompt manager here; executor builds the full prompt already
 
 // Provider implements the AI provider interface for Codex MCP
 type Provider struct {
@@ -57,44 +57,55 @@ func (p *Provider) Name() string {
 }
 
 // GenerateCode generates code changes using Codex MCP CLI
-func (p *Provider) GenerateCode(ctx context.Context, req *claude.CodeRequest) (*claude.CodeResponse, error) {
+func (p *Provider) GenerateCode(ctx context.Context, req *provider.CodeRequest) (*provider.CodeResponse, error) {
 	log.Printf("[Codex] Starting code generation (prompt length: %d chars)", len(req.Prompt))
 
-	files, err := promptManager.ListRepoFiles(req.RepoPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list repo files: %w", err)
+	// Build dynamic MCP configuration (writes to ~/.codex/config.toml)
+	if err := buildCodexMCPConfig(req.Context); err != nil {
+		log.Printf("[Codex] Warning: failed to build MCP config: %v", err)
+		// Continue without dynamic MCP config
+	} else {
+		log.Printf("[Codex] Dynamic MCP config written to ~/.codex/config.toml")
+		if os.Getenv("DEBUG_MCP_CONFIG") == "true" {
+			if home, err := os.UserHomeDir(); err == nil {
+				configPath := home + string(os.PathSeparator) + ".codex" + string(os.PathSeparator) + "config.toml"
+				if content, err := os.ReadFile(configPath); err == nil {
+					log.Printf("[Codex] MCP config content:\n%s", string(content))
+				}
+			}
+		}
 	}
 
-	systemPrompt := promptManager.BuildDefaultSystemPrompt(files, req.Context)
-	userPrompt := promptManager.BuildUserPrompt(req.Prompt)
+	// Provide GitHub token to MCP tools via env (backup method)
+	if req.Context != nil {
+		if tok, ok := req.Context["github_token"]; ok && tok != "" {
+			os.Setenv("GITHUB_TOKEN", tok)
+			os.Setenv("GH_TOKEN", tok)
+		}
+	}
+	// Ensure sandbox runs with full access per instruction
+	os.Setenv("SANDBOX_MODE", "danger-full-access")
 
-	fullPrompt := executionPrefix + systemPrompt + "\n\n" + userPrompt
+	// Executor already constructed the full prompt (system + user + GH XML)
+	fullPrompt := executionPrefix + req.Prompt
 
-	responseText, cost, err := p.invokeCodex(ctx, fullPrompt, req.RepoPath)
+	responseText, err := p.invokeCodex(ctx, fullPrompt, req.RepoPath)
 	if err != nil {
 		return nil, err
 	}
 
-	response, err := parseCodeResponse(responseText)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	response.CostUSD = cost
-
-	log.Printf("[Codex] Response length: %d characters, cost: $%.4f", len(responseText), response.CostUSD)
-	log.Printf("[Codex] Extracted %d file changes", len(response.Files))
-
-	return response, nil
+	// We only need to return a summary for bookkeeping.
+	log.Printf("[Codex] Response length: %d characters", len(responseText))
+	return &provider.CodeResponse{Summary: truncateLogString(responseText, 2000)}, nil
 }
 
-func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (string, float64, error) {
+func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (string, error) {
 	ctx, cancel := ensureCodexTimeout(ctx)
 	defer cancel()
 
 	cmd, stdout, stderr := p.buildCodexCommand(ctx, repoPath, prompt)
 
-	log.Printf("[Codex] Executing: codex exec -m %s -c model_reasoning_effort=\"high\" --dangerously-bypass-approvals-and-sandbox -C %s", p.model, repoPath)
+	log.Printf("[Codex] Executing: codex exec -m %s -c model_reasoning_effort=\"high\" --dangerously-bypass-approvals-and-sandbox -C %s (streaming output...)", p.model, repoPath)
 	log.Printf("[Codex] Prompt length: %d characters", len(prompt))
 
 	startTime := time.Now()
@@ -104,11 +115,11 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 
 		stderrPreview := summarizeCodexError(err, stdout, stderr)
 		if ctx.Err() == context.DeadlineExceeded {
-			return "", 0, fmt.Errorf("codex CLI timeout after %v: %s", duration, stderrPreview)
+			return "", fmt.Errorf("codex CLI timeout after %v: %s", duration, stderrPreview)
 		}
 
 		log.Printf("[Codex] Error: %s", stderrPreview)
-		return "", 0, fmt.Errorf("codex CLI error: %s", stderrPreview)
+		return "", fmt.Errorf("codex CLI error: %s", stderrPreview)
 	}
 
 	duration := time.Since(startTime)
@@ -120,29 +131,7 @@ func (p *Provider) invokeCodex(ctx context.Context, prompt, repoPath string) (st
 
 	log.Printf("[Codex] Command completed in %v, output length: %d bytes", duration, len(output))
 
-	return parsedOutput, 0, nil
-}
-
-// parseCodeResponse extracts file changes and summary from Codex response
-func parseCodeResponse(response string) (*claude.CodeResponse, error) {
-	parsed, err := shared.ParseResponse("Codex", response)
-	if err != nil {
-		return nil, err
-	}
-
-	result := &claude.CodeResponse{
-		Summary: parsed.Summary,
-		Files:   make([]claude.FileChange, 0, len(parsed.Files)),
-	}
-
-	for _, file := range parsed.Files {
-		result.Files = append(result.Files, claude.FileChange{
-			Path:    file.Path,
-			Content: file.Content,
-		})
-	}
-
-	return result, nil
+	return parsedOutput, nil
 }
 
 func truncateLogString(s string, maxLen int) string {
@@ -307,12 +296,23 @@ func (p *Provider) buildCodexCommand(ctx context.Context, repoPath, prompt strin
 	if p.baseURL != "" {
 		env = append(env, "OPENAI_BASE_URL="+p.baseURL)
 	}
+	// Pass through GitHub token for MCP tools
+	if gh := os.Getenv("GITHUB_TOKEN"); gh != "" {
+		env = append(env, "GITHUB_TOKEN="+gh, "GH_TOKEN="+gh)
+	}
+	// Prefer request-scoped token if provided in context
+	// Note: executor should set this env before invoking provider, but we also
+	// propagate if present in req.Context to be explicit.
+	// (We cannot read req here, so ensure executor sets process env.)
+	env = append(env, "SANDBOX_MODE=danger-full-access")
 	cmd.Env = env
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+
+	// Enable real-time streaming for stdout and stderr
+	cmd.Stdout = io.MultiWriter(os.Stdout, &stdout)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
 
 	return cmd, &stdout, &stderr
 }
@@ -334,4 +334,78 @@ func summarizeCodexError(runErr error, stdout, stderr *bytes.Buffer) string {
 	}
 
 	return truncateLogString(stderrText, 1000)
+}
+
+// buildCodexMCPConfig dynamically generates Codex MCP configuration TOML file.
+// This writes to ~/.codex/config.toml to configure MCP servers with runtime context.
+func buildCodexMCPConfig(ctx map[string]string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("get home dir: %w", err)
+	}
+
+	configDir := home + string(os.PathSeparator) + ".codex"
+	configPath := configDir + string(os.PathSeparator) + "config.toml"
+
+	// Ensure config directory exists
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		return fmt.Errorf("create codex config dir: %w", err)
+	}
+
+	// Build TOML configuration
+	var sb strings.Builder
+	sb.WriteString("# Dynamically generated Codex configuration\n")
+	sb.WriteString("model = \"gpt-5-codex\"\n")
+	sb.WriteString("model_reasoning_effort = \"high\"\n")
+	sb.WriteString("model_reasoning_summary = \"detailed\"\n")
+	sb.WriteString("approval_policy = \"never\"\n")
+	sb.WriteString("sandbox_mode = \"danger-full-access\"\n")
+	sb.WriteString("disable_response_storage = true\n")
+	sb.WriteString("network_access = true\n\n")
+
+	// Add GitHub HTTP MCP server if token available
+	if githubToken := ctx["github_token"]; githubToken != "" {
+		sb.WriteString("[mcp_servers.github]\n")
+		sb.WriteString("type = \"http\"\n")
+		sb.WriteString("url = \"https://api.githubcopilot.com/mcp\"\n\n")
+		sb.WriteString("[mcp_servers.github.headers]\n")
+		sb.WriteString(fmt.Sprintf("Authorization = \"Bearer %s\"\n\n", githubToken))
+	}
+
+	// Add Git MCP server (uvx mcp-server-git)
+	if _, err := exec.LookPath("uvx"); err == nil {
+		sb.WriteString("[mcp_servers.git]\n")
+		sb.WriteString("command = \"uvx\"\n")
+		sb.WriteString("args = [\"mcp-server-git\"]\n\n")
+	}
+
+	// Add Comment Updater MCP server if comment ID available
+	if commentID := ctx["comment_id"]; commentID != "" {
+		owner := ctx["repo_owner"]
+		repo := ctx["repo_name"]
+		githubToken := ctx["github_token"]
+		eventName := ctx["event_name"]
+
+		if owner != "" && repo != "" && githubToken != "" {
+			sb.WriteString("[mcp_servers.comment_updater]\n")
+			sb.WriteString("command = \"mcp-comment-server\"\n\n")
+			sb.WriteString("[mcp_servers.comment_updater.env]\n")
+			sb.WriteString(fmt.Sprintf("GITHUB_TOKEN = \"%s\"\n", githubToken))
+			sb.WriteString(fmt.Sprintf("REPO_OWNER = \"%s\"\n", owner))
+			sb.WriteString(fmt.Sprintf("REPO_NAME = \"%s\"\n", repo))
+			sb.WriteString(fmt.Sprintf("CLAUDE_COMMENT_ID = \"%s\"\n", commentID))
+			if eventName != "" {
+				sb.WriteString(fmt.Sprintf("GITHUB_EVENT_NAME = \"%s\"\n", eventName))
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	// Write configuration file
+	if err := os.WriteFile(configPath, []byte(sb.String()), 0o600); err != nil {
+		return fmt.Errorf("write codex config: %w", err)
+	}
+
+	log.Printf("[Codex] MCP config written to: %s", configPath)
+	return nil
 }

@@ -1,30 +1,57 @@
 package github
 
-// Global gh client instance (can be replaced for testing)
-var defaultGHClient GHClient = NewRealGHClient()
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+)
 
-// SetGHClient allows replacing the global gh client (useful for testing)
-func SetGHClient(client GHClient) {
-	defaultGHClient = client
+// UpdateCommentRequest represents the request body for updating a comment
+type UpdateCommentRequest struct {
+	Body string `json:"body"`
 }
 
-// CreateComment creates a comment on a GitHub issue or PR using GitHub App authentication with retry logic
-func CreateComment(repo string, number int, body string, token string) error {
-	_, err := CreateCommentWithID(repo, number, body, token)
-	return err
-}
+// UpdateComment updates an existing issue or PR comment using GitHub REST API
+// PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}
+func UpdateComment(owner, repo string, commentID int64, body, token string) error {
+	if token == "" {
+		return fmt.Errorf("github token is required")
+	}
+	if commentID <= 0 {
+		return fmt.Errorf("invalid comment ID: %d", commentID)
+	}
 
-// CreateCommentWithID creates a comment and returns its ID
-func CreateCommentWithID(repo string, number int, body string, token string) (int, error) {
-	return defaultGHClient.CreateComment(repo, number, body, token)
-}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/comments/%d", owner, repo, commentID)
 
-// UpdateComment updates an existing comment
-func UpdateComment(repo string, commentID int, body string, token string) error {
-	return defaultGHClient.UpdateComment(repo, commentID, body, token)
-}
+	reqBody := UpdateCommentRequest{Body: body}
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshal request body: %w", err)
+	}
 
-// GetCommentBody retrieves the current body of a comment
-func GetCommentBody(repo string, commentID int, token string) (string, error) {
-	return defaultGHClient.GetCommentBody(repo, commentID, token)
+	req, err := http.NewRequest("PATCH", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("github API error (status %d): %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
 }

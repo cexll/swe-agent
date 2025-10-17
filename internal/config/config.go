@@ -7,6 +7,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cexll/swe/internal/provider"
+	"github.com/cexll/swe/internal/provider/claude"
+	"github.com/cexll/swe/internal/provider/codex"
 )
 
 // Config holds all configuration for the swe-agent service
@@ -37,6 +41,12 @@ type Config struct {
 	// Security settings
 	DisallowedTools string
 
+	// Tooling/MCP toggles
+	EnableGitHubCommentMCP bool
+	EnableGitHubFileOpsMCP bool
+	EnableGitHubCIMCP      bool
+	UseCommitSigning       bool
+
 	// Dispatcher settings
 	DispatcherWorkers           int
 	DispatcherQueueSize         int
@@ -57,12 +67,16 @@ func Load() (*Config, error) {
 		GitHubWebhookSecret:         os.Getenv("GITHUB_WEBHOOK_SECRET"),
 		Provider:                    getEnv("PROVIDER", "claude"),
 		ClaudeAPIKey:                os.Getenv("ANTHROPIC_API_KEY"),
-		ClaudeModel:                 getEnv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022"),
+		ClaudeModel:                 getEnv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929"),
 		OpenAIAPIKey:                os.Getenv("OPENAI_API_KEY"),
 		OpenAIBaseURL:               os.Getenv("OPENAI_BASE_URL"),
 		CodexModel:                  getEnv("CODEX_MODEL", "gpt-5-codex"),
 		TriggerKeyword:              getEnv("TRIGGER_KEYWORD", "/code"),
 		DisallowedTools:             getEnv("DISALLOWED_TOOLS", ""),
+		EnableGitHubCommentMCP:      getEnvBool("ENABLE_GITHUB_MCP_COMMENT"),
+		EnableGitHubFileOpsMCP:      getEnvBool("ENABLE_GITHUB_MCP_FILES"),
+		EnableGitHubCIMCP:           getEnvBool("ENABLE_GITHUB_MCP_CI"),
+		UseCommitSigning:            getEnvBool("USE_COMMIT_SIGNING"),
 		DispatcherWorkers:           getEnvInt("DISPATCHER_WORKERS", 4),
 		DispatcherQueueSize:         getEnvInt("DISPATCHER_QUEUE_SIZE", 16),
 		DispatcherMaxAttempts:       getEnvInt("DISPATCHER_MAX_ATTEMPTS", 3),
@@ -215,4 +229,45 @@ func getEnvFloat(key string, defaultValue float64) float64 {
 		}
 	}
 	return defaultValue
+}
+
+func getEnvBool(key string) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return false
+	}
+	switch v {
+	case "1", "true", "TRUE", "True", "yes", "Y", "y":
+		return true
+	case "0", "false", "FALSE", "False", "no", "N", "n":
+		return false
+	default:
+		return false
+	}
+}
+
+// NewProvider creates a provider based on configuration
+// This factory function eliminates if-else branches and avoids circular dependencies
+func (c *Config) NewProvider() (provider.Provider, error) {
+	switch c.Provider {
+	case "claude":
+		if c.ClaudeAPIKey == "" {
+			return nil, fmt.Errorf("claude: ANTHROPIC_API_KEY is required")
+		}
+		model := c.ClaudeModel
+		if model == "" {
+			model = "claude-sonnet-4-5-20250929"
+		}
+		return claude.NewProvider(c.ClaudeAPIKey, model), nil
+
+	case "codex":
+		model := c.CodexModel
+		if model == "" {
+			model = "gpt-5-codex"
+		}
+		return codex.NewProvider(c.OpenAIAPIKey, c.OpenAIBaseURL, model), nil
+
+	default:
+		return nil, fmt.Errorf("unknown provider: %s (supported: claude, codex)", c.Provider)
+	}
 }

@@ -1,18 +1,18 @@
 package webhook
 
 import (
-    "encoding/json"
-    "errors"
-    "fmt"
-    "io"
-    "log"
-    "os"
-    "net/http"
-    "strconv"
-    "strings"
-    "time"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/cexll/swe/internal/github"
+	"github.com/cexll/swe/internal/modes"
 	"github.com/cexll/swe/internal/taskstore"
 )
 
@@ -22,6 +22,7 @@ type Task struct {
 	Repo          string
 	Number        int
 	Branch        string
+	BaseBranch    string
 	Prompt        string
 	PromptSummary string
 	IssueTitle    string
@@ -32,6 +33,11 @@ type Task struct {
 	Username      string // User who triggered the task
 	Attempt       int    // Current attempt number (managed by dispatcher)
 	PromptContext map[string]string
+	CommentID     int64  // coordination comment id (when prepared by modes)
+	Mode          string // detected mode name
+	// Raw webhook preservation for adapter-based execution
+	RawPayload []byte
+	EventType  string
 }
 
 // TaskDispatcher enqueues tasks for asynchronous execution
@@ -89,192 +95,147 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Determine event type
 	eventType := r.Header.Get("X-GitHub-Event")
-	switch eventType {
-	case "issue_comment":
-		h.handleIssueComment(w, payload)
-	case "pull_request_review_comment":
-		h.handleReviewComment(w, payload)
-	default:
-		log.Printf("Ignoring unsupported event type: %s", eventType)
+
+	// 4. Only handle comment events (issue_comment, pull_request_review_comment)
+	if !isCommentEvent(eventType) {
+		log.Printf("Ignoring non-comment event type: %s", eventType)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Event ignored"))
+		return
 	}
-}
 
-func (h *Handler) handleIssueComment(w http.ResponseWriter, payload []byte) {
-	// Parse event
-	var event IssueCommentEvent
-	if err := json.Unmarshal(payload, &event); err != nil {
-		log.Printf("Error parsing event: %v", err)
+	// 5. Parse webhook event into GitHub context
+	ghCtx, err := github.ParseWebhookEvent(eventType, payload)
+	if err != nil {
+		log.Printf("Failed to parse webhook event: %v", err)
 		http.Error(w, "Error parsing event", http.StatusBadRequest)
 		return
 	}
 
-	// Only handle newly created comments
-	if event.Action != "created" {
-		log.Printf("Ignoring issue_comment action: %s", event.Action)
+	// 6. Check if this is a created action
+	if ghCtx.EventAction != "created" {
+		log.Printf("Ignoring %s action: %s", eventType, ghCtx.EventAction)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Issue comment action ignored"))
+		switch eventType {
+		case "issue_comment":
+			w.Write([]byte("Issue comment action ignored"))
+		case "pull_request_review_comment":
+			w.Write([]byte("Review comment action ignored"))
+		default:
+			w.Write([]byte("Non-created action ignored"))
+		}
 		return
 	}
 
-	// 4. Check if comment is from a bot (prevent infinite loops)
-	if event.Comment.User.Type == "Bot" {
-		log.Printf("Ignoring comment from bot: %s", event.Comment.User.Login)
+	// 7. Check if comment is from a bot
+	if ghCtx.TriggerComment != nil && isBotComment(payload) {
+		log.Printf("Ignoring comment from bot")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Bot comment ignored"))
 		return
 	}
 
-	// 5. Check if comment contains trigger keyword
-	if !strings.Contains(event.Comment.Body, h.triggerKeyword) {
+	// 8. Check if comment contains trigger keyword
+	if !ghCtx.ShouldTrigger(h.triggerKeyword) {
 		log.Printf("Comment does not contain trigger keyword '%s'", h.triggerKeyword)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("No trigger keyword found"))
 		return
 	}
 
-	// 5.1 Verify permission: check if user is the app installer
-	if !h.verifyPermission(event.Repository.FullName, event.Comment.User.Login) {
-		log.Printf("Permission denied: user %s is not the app installer", event.Comment.User.Login)
+	// 9. Verify permission: check if user is the app installer
+	if !h.verifyPermission(ghCtx.Repository.FullName, ghCtx.TriggerUser) {
+		log.Printf("Permission denied: user %s is not the app installer", ghCtx.TriggerUser)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Permission denied"))
 		return
 	}
 
-	// 5.5 Prevent duplicate processing for the same comment ID
-	if !h.issueDeduper.markIfNew(event.Comment.ID) {
-		log.Printf("Ignoring duplicate issue comment: id=%d", event.Comment.ID)
+	// 10. Prevent duplicate processing
+	commentID := ghCtx.TriggerComment.ID
+	deduper := h.getDeduper(eventType)
+	if !deduper.markIfNew(commentID) {
+		log.Printf("Ignoring duplicate comment: id=%d", commentID)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Duplicate comment ignored"))
 		return
 	}
 
-	// 6. Extract prompt from comment
-	customInstruction, found := extractPrompt(event.Comment.Body, h.triggerKeyword)
-	if !found {
-		log.Printf("No prompt found after trigger keyword")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("No prompt found"))
+	// 10.5. Obtain GitHub App installation token for CommandMode (if available)
+	if h.appAuth != nil {
+		repo := ghCtx.Repository.FullName
+		if repo == "" {
+			repo = fmt.Sprintf("%s/%s", ghCtx.Repository.Owner, ghCtx.Repository.Name)
+		}
+		token, err := h.appAuth.GetInstallationToken(repo)
+		if err != nil {
+			log.Printf("Warning: Failed to get installation token: %v (continuing without token)", err)
+			// Continue without token (fail-open for robustness)
+		} else if token != nil {
+			// Inject token into context for CommandMode to use
+			ghCtx.Token = token.Token
+		}
+	}
+
+	// 11. Prepare execution context via CommandMode
+	mode := modes.GetCommandMode()
+	if mode == nil {
+		log.Printf("CommandMode not registered")
+		http.Error(w, "Internal configuration error", http.StatusInternalServerError)
 		return
 	}
 
-	// 7. Check if this is a PR or issue
-	isPR := event.Issue.PullRequest != nil
-
-    prompt := buildPrompt(event.Issue.Title, event.Issue.Body, customInstruction)
-	promptSummary := buildPromptSummary(event.Issue.Title, customInstruction, isPR)
-
-	// 8. Create task
-	task := &Task{
-		ID:            h.generateTaskID(event.Repository.FullName, event.Issue.Number),
-		Repo:          event.Repository.FullName,
-		Number:        event.Issue.Number,
-		Branch:        event.Repository.DefaultBranch,
-		Prompt:        prompt,
-		PromptSummary: promptSummary,
-		IssueTitle:    event.Issue.Title,
-		IssueBody:     event.Issue.Body,
-		IsPR:          isPR,
-		Username:      event.Comment.User.Login,
-		PromptContext: buildPromptContextForIssue(event, h.triggerKeyword, isPR),
-	}
-
-	h.createStoreTask(task)
-
-    // No extra execution mode hints: keep KISS and rely on latest trigger comment
-
-	log.Printf("Received task: repo=%s, number=%d, commentID=%d, user=%s", task.Repo, task.Number, event.Comment.ID, task.Username)
-
-	h.enqueueTask(w, task, prompt)
-}
-
-func (h *Handler) handleReviewComment(w http.ResponseWriter, payload []byte) {
-	var event PullRequestReviewCommentEvent
-	if err := json.Unmarshal(payload, &event); err != nil {
-		log.Printf("Error parsing review comment event: %v", err)
-		http.Error(w, "Error parsing event", http.StatusBadRequest)
+	prepareResult, err := mode.Prepare(r.Context(), ghCtx)
+	if err != nil {
+		log.Printf("Failed to prepare task: %v", err)
+		http.Error(w, "Task preparation failed", http.StatusInternalServerError)
 		return
 	}
 
-	// Only handle newly created review comments
-	if event.Action != "created" {
-		log.Printf("Ignoring pull_request_review_comment action: %s", event.Action)
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Review comment action ignored"))
-		return
+	// 12. Create and enqueue task
+	prBranch := ""
+	prState := ""
+	if ghCtx.IsPRContext() {
+		prBranch = ghCtx.GetHeadBranch()
+		prState = ghCtx.GetPRState()
 	}
 
-	// Ignore bot comments
-	if event.Comment.User.Type == "Bot" {
-		log.Printf("Ignoring review comment from bot: %s", event.Comment.User.Login)
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Bot comment ignored"))
-		return
+	// Build a concise prompt summary for UI/tests
+	var summaryBuilder strings.Builder
+	if ghCtx.IsPRContext() {
+		summaryBuilder.WriteString("**PR:** ")
+	} else {
+		summaryBuilder.WriteString("**Issue:** ")
+	}
+	summaryBuilder.WriteString(ghCtx.IssueTitle)
+	if instr := strings.TrimSpace(ghCtx.ExtractPrompt(h.triggerKeyword)); instr != "" {
+		summaryBuilder.WriteString("\n\n**Instruction:**\n")
+		summaryBuilder.WriteString(instr)
 	}
 
-	// Check trigger keyword
-	if !strings.Contains(event.Comment.Body, h.triggerKeyword) {
-		log.Printf("Review comment does not contain trigger keyword '%s'", h.triggerKeyword)
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("No trigger keyword found"))
-		return
+	t := &Task{
+		ID:            h.generateTaskID(ghCtx.Repository.FullName, ghCtx.IssueNumber),
+		Repo:          ghCtx.Repository.FullName,
+		Number:        ghCtx.IssueNumber,
+		Branch:        prepareResult.Branch,
+		BaseBranch:    prepareResult.BaseBranch,
+		Prompt:        prepareResult.Prompt,
+		PromptSummary: summaryBuilder.String(),
+		IsPR:          ghCtx.IsPR,
+		Username:      ghCtx.TriggerUser,
+		CommentID:     prepareResult.CommentID,
+		PRBranch:      prBranch,
+		PRState:       prState,
+		Mode:          mode.Name(),
+		RawPayload:    payload,
+		EventType:     string(ghCtx.EventName),
 	}
 
-	// Verify permission: check if user is the app installer
-	if !h.verifyPermission(event.Repository.FullName, event.Comment.User.Login) {
-		log.Printf("Permission denied: user %s is not the app installer", event.Comment.User.Login)
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Permission denied"))
-		return
-	}
+	h.createStoreTask(t)
 
-	if !h.reviewDeduper.markIfNew(event.Comment.ID) {
-		log.Printf("Ignoring duplicate review comment: id=%d", event.Comment.ID)
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Duplicate comment ignored"))
-		return
-	}
+	log.Printf("Received task: repo=%s, number=%d, commentID=%d, user=%s", t.Repo, t.Number, commentID, t.Username)
 
-	customInstruction, found := extractPrompt(event.Comment.Body, h.triggerKeyword)
-	if !found {
-		log.Printf("No prompt found after trigger keyword in review comment")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("No prompt found"))
-		return
-	}
-
-    prompt := buildPrompt(event.PullRequest.Title, event.PullRequest.Body, customInstruction)
-	promptSummary := buildPromptSummary(event.PullRequest.Title, customInstruction, true)
-
-	branch := event.PullRequest.Base.Ref
-	if branch == "" {
-		branch = event.Repository.DefaultBranch
-	}
-
-	task := &Task{
-		ID:            h.generateTaskID(event.Repository.FullName, event.PullRequest.Number),
-		Repo:          event.Repository.FullName,
-		Number:        event.PullRequest.Number,
-		Branch:        branch,
-		Prompt:        prompt,
-		PromptSummary: promptSummary,
-		IssueTitle:    event.PullRequest.Title,
-		IssueBody:     event.PullRequest.Body,
-		IsPR:          true,
-		PRBranch:      event.PullRequest.Head.Ref,
-		PRState:       event.PullRequest.State,
-		Username:      event.Comment.User.Login,
-		PromptContext: buildPromptContextForReview(event, h.triggerKeyword),
-	}
-
-	h.createStoreTask(task)
-
-    // No execution mode injection to avoid over-design
-
-	log.Printf("Received review task: repo=%s, number=%d, commentID=%d, user=%s", task.Repo, task.Number, event.Comment.ID, task.Username)
-
-	h.enqueueTask(w, task, prompt)
+	h.enqueueTask(w, t)
 }
 
 func (h *Handler) generateTaskID(repo string, number int) string {
@@ -286,18 +247,18 @@ func (h *Handler) generateTaskID(repo string, number int) string {
 // verifyPermission checks if the user has permission to trigger tasks
 // Returns true if user is the GitHub App installer
 func (h *Handler) verifyPermission(repo, username string) bool {
-    // Allow override via environment for development or lenient deployments
-    if strings.EqualFold(strings.TrimSpace(os.Getenv("ALLOW_ALL_USERS")), "true") ||
-        strings.EqualFold(strings.TrimSpace(os.Getenv("PERMISSION_MODE")), "open") {
-        log.Printf("Permission override enabled via env (ALLOW_ALL_USERS/PERMISSION_MODE), allowing user %s", username)
-        return true
-    }
+	// Allow override via environment for development or lenient deployments
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("ALLOW_ALL_USERS")), "true") ||
+		strings.EqualFold(strings.TrimSpace(os.Getenv("PERMISSION_MODE")), "open") {
+		log.Printf("Permission override enabled via env (ALLOW_ALL_USERS/PERMISSION_MODE), allowing user %s", username)
+		return true
+	}
 
-    if h.appAuth == nil {
-        // No auth provider, allow all (for testing)
-        log.Printf("Warning: No app auth provider configured, allowing all users")
-        return true
-    }
+	if h.appAuth == nil {
+		// No auth provider, allow all (for testing)
+		log.Printf("Warning: No app auth provider configured, allowing all users")
+		return true
+	}
 
 	// Get the installation owner
 	owner, err := h.appAuth.GetInstallationOwner(repo)
@@ -334,6 +295,12 @@ func (h *Handler) createStoreTask(task *Task) {
 	}
 	h.store.Create(storeTask)
 	h.store.AddLog(task.ID, "info", "Task queued")
+
+	// Ensure newest comment wins: mark older tasks for the same issue as superseded.
+	if n := h.store.SupersedeOlder(owner, name, task.Number, task.ID); n > 0 {
+		log.Printf("Superseded %d older task(s) for %s#%d", n, task.Repo, task.Number)
+		h.store.AddLog(task.ID, "info", fmt.Sprintf("Superseded %d older task(s)", n))
+	}
 }
 
 func splitRepo(full string) (string, string) {
@@ -344,7 +311,38 @@ func splitRepo(full string) (string, string) {
 	return full, ""
 }
 
-func (h *Handler) enqueueTask(w http.ResponseWriter, task *Task, prompt string) {
+// isCommentEvent checks if the event type is a comment event
+func isCommentEvent(eventType string) bool {
+	return eventType == "issue_comment" || eventType == "pull_request_review_comment"
+}
+
+// isBotComment checks if the comment is from a bot
+func isBotComment(payload []byte) bool {
+	var data map[string]interface{}
+	if err := json.Unmarshal(payload, &data); err != nil {
+		return false
+	}
+
+	// Check comment.user.type
+	if comment, ok := data["comment"].(map[string]interface{}); ok {
+		if user, ok := comment["user"].(map[string]interface{}); ok {
+			if userType, ok := user["type"].(string); ok {
+				return userType == "Bot"
+			}
+		}
+	}
+	return false
+}
+
+// getDeduper returns the appropriate deduper based on event type
+func (h *Handler) getDeduper(eventType string) *commentDeduper {
+	if eventType == "pull_request_review_comment" {
+		return h.reviewDeduper
+	}
+	return h.issueDeduper
+}
+
+func (h *Handler) enqueueTask(w http.ResponseWriter, task *Task) {
 	if err := h.dispatcher.Enqueue(task); err != nil {
 		log.Printf("Failed to enqueue task: %v", err)
 		switch {
@@ -358,165 +356,11 @@ func (h *Handler) enqueueTask(w http.ResponseWriter, task *Task, prompt string) 
 		return
 	}
 
+	// For review comments, branch is the base branch used by the PR
+	if task.EventType == "pull_request_review_comment" {
+		task.Branch = task.BaseBranch
+	}
+
 	w.WriteHeader(http.StatusAccepted)
 	w.Write([]byte("Task queued"))
-}
-
-// extractPrompt extracts the prompt text after the trigger keyword.
-// Returns the trimmed user instruction and a boolean indicating whether the trigger was found.
-func extractPrompt(body, triggerKeyword string) (string, bool) {
-	// Find the trigger keyword
-	idx := strings.Index(body, triggerKeyword)
-	if idx == -1 {
-		return "", false
-	}
-
-	// Get text after trigger keyword
-	remaining := strings.TrimSpace(body[idx+len(triggerKeyword):])
-
-	return remaining, true
-}
-
-// KISS: no execution mode classifier; resolve via prompt design only
-
-// buildPrompt builds the final prompt by treating the trigger instruction as the primary directive
-// and including the issue/PR content as contextual reference.
-func buildPrompt(title, body, userInstruction string) string {
-	instruction := strings.TrimSpace(userInstruction)
-	title = strings.TrimSpace(title)
-	body = strings.TrimSpace(body)
-
-	var builder strings.Builder
-
-	if instruction != "" {
-		builder.WriteString(instruction)
-	}
-
-	if title != "" || body != "" {
-		if builder.Len() > 0 {
-			builder.WriteString("\n\n---\n\n")
-		}
-		builder.WriteString("# Issue Context")
-		if title != "" {
-			builder.WriteString("\n\n## Title\n")
-			builder.WriteString(title)
-		}
-		if body != "" {
-			builder.WriteString("\n\n## Body\n")
-			builder.WriteString(body)
-		}
-	}
-
-	return builder.String()
-}
-
-func buildPromptSummary(title, userInstruction string, isPR bool) string {
-	title = strings.TrimSpace(title)
-	instruction := summarizeInstruction(userInstruction, 180)
-
-	var builder strings.Builder
-	if title != "" {
-		if isPR {
-			builder.WriteString("**PR:** ")
-		} else {
-			builder.WriteString("**Issue:** ")
-		}
-		builder.WriteString(title)
-	}
-
-	if instruction != "" {
-		if builder.Len() > 0 {
-			builder.WriteString("\n\n")
-		}
-		builder.WriteString("**Instruction:**\n")
-		builder.WriteString(instruction)
-	}
-
-	return builder.String()
-}
-
-func truncateText(text string, limit int) string {
-	text = strings.TrimSpace(text)
-	if limit <= 0 || text == "" {
-		return ""
-	}
-
-	runes := []rune(text)
-	if len(runes) <= limit {
-		return text
-	}
-
-	truncated := strings.TrimSpace(string(runes[:limit]))
-	return truncated + "…"
-}
-
-func summarizeInstruction(instruction string, limit int) string {
-	instruction = strings.TrimSpace(instruction)
-	if instruction == "" {
-		return ""
-	}
-
-	lines := strings.Split(instruction, "\n")
-	var parts []string
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts = append(parts, line)
-	}
-
-	if len(parts) == 0 {
-		return ""
-	}
-
-	joined := strings.Join(parts, " ")
-	return truncateText(joined, limit)
-}
-
-func buildPromptContextForIssue(event IssueCommentEvent, trigger string, isPR bool) map[string]string {
-	context := map[string]string{
-		"issue_title":          event.Issue.Title,
-		"issue_body":           event.Issue.Body,
-		"event_name":           "issue_comment",
-		"event_type":           "GENERAL_COMMENT",
-		"trigger_phrase":       trigger,
-		"trigger_username":     event.Comment.User.Login,
-		"trigger_display_name": event.Comment.User.Login,
-		"trigger_comment":      event.Comment.Body,
-		"trigger_context":      fmt.Sprintf("issue comment with '%s'", trigger),
-		"repository":           event.Repository.FullName,
-		"base_branch":          event.Repository.DefaultBranch,
-		"is_pr":                strconv.FormatBool(isPR),
-		"issue_number":         strconv.Itoa(event.Issue.Number),
-	}
-
-	if isPR {
-		context["pr_number"] = strconv.Itoa(event.Issue.Number)
-	}
-
-	return context
-}
-
-func buildPromptContextForReview(event PullRequestReviewCommentEvent, trigger string) map[string]string {
-	branch := event.PullRequest.Base.Ref
-	if branch == "" {
-		branch = event.Repository.DefaultBranch
-	}
-
-	return map[string]string{
-		"issue_title":          event.PullRequest.Title,
-		"issue_body":           event.PullRequest.Body,
-		"event_name":           "pull_request_review_comment",
-		"event_type":           "REVIEW_COMMENT",
-		"trigger_phrase":       trigger,
-		"trigger_username":     event.Comment.User.Login,
-		"trigger_display_name": event.Comment.User.Login,
-		"trigger_comment":      event.Comment.Body,
-		"trigger_context":      fmt.Sprintf("PR review comment with '%s'", trigger),
-		"repository":           event.Repository.FullName,
-		"base_branch":          branch,
-		"is_pr":                "true",
-		"pr_number":            strconv.Itoa(event.PullRequest.Number),
-	}
 }

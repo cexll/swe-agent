@@ -1,18 +1,20 @@
 package codex
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/cexll/swe/internal/github"
-	"github.com/cexll/swe/internal/prompt"
-	"github.com/cexll/swe/internal/provider/claude"
+	prov "github.com/cexll/swe/internal/provider"
 )
 
 func TestNewProvider_Name(t *testing.T) {
@@ -41,29 +43,6 @@ func TestNewProvider_APIKey(t *testing.T) {
 	}
 }
 
-func TestListRepoFiles(t *testing.T) {
-	// Test list repo files functionality (no need to test CLI execution)
-	// This is a unit test for the helper function
-	manager := prompt.NewManager()
-	files, err := manager.ListRepoFiles(".")
-	if err != nil {
-		t.Fatalf("listRepoFiles() error = %v", err)
-	}
-
-	// Should find at least the test file itself
-	found := false
-	for _, f := range files {
-		if f == "codex_test.go" {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		t.Errorf("listRepoFiles() should find codex_test.go, got: %v", files)
-	}
-}
-
 // TestInvokeCodex_CommandConstruction tests that the command is constructed correctly
 func TestInvokeCodex_CommandConstruction(t *testing.T) {
 	provider := NewProvider("test-key", "https://api.test.com", "gpt-5-codex")
@@ -81,7 +60,7 @@ func TestInvokeCodex_CommandConstruction(t *testing.T) {
 
 	// Call invokeCodex
 	ctx := context.Background()
-	_, _, _ = provider.invokeCodex(ctx, "test prompt", "/tmp/test")
+	_, _ = provider.invokeCodex(ctx, "test prompt", "/tmp/test")
 
 	// Verify command structure
 	expectedArgs := []string{
@@ -128,7 +107,7 @@ func TestInvokeCodex_Timeout(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	_, _, err := provider.invokeCodex(ctx, "test prompt", "/tmp/test")
+	_, err := provider.invokeCodex(ctx, "test prompt", "/tmp/test")
 	duration := time.Since(start)
 
 	if err == nil {
@@ -144,150 +123,7 @@ func TestInvokeCodex_Timeout(t *testing.T) {
 	}
 }
 
-// TestParseCodeResponse tests the response parsing logic
-func TestParseCodeResponse(t *testing.T) {
-	tests := []struct {
-		name        string
-		response    string
-		wantFiles   int
-		wantSummary string
-		wantErr     bool
-	}{
-		{
-			name: "valid response with files",
-			response: `<file path="main.go"><content>package main
-
-func main() {
-}
-</content></file>
-
-<summary>Created main.go</summary>`,
-			wantFiles:   1,
-			wantSummary: "Created main.go",
-			wantErr:     false,
-		},
-		{
-			name: "multiple files",
-			response: `<file path="main.go"><content>package main</content></file>
-<file path="utils.go"><content>package utils</content></file>
-<summary>Created multiple files</summary>`,
-			wantFiles:   2,
-			wantSummary: "Created multiple files",
-			wantErr:     false,
-		},
-		{
-			name:        "analysis only (no files)",
-			response:    `<summary>This is an analysis of the code.</summary>`,
-			wantFiles:   0,
-			wantSummary: "This is an analysis of the code.",
-			wantErr:     false,
-		},
-		{
-			name: "placeholder file ignored when other files valid",
-			response: `<file path="path/to/file.ext"><content>
-... full file content here ...
-</content></file>
-<file path="main.go"><content>package main</content></file>
-<summary>Created main.go</summary>`,
-			wantFiles:   1,
-			wantSummary: "Created main.go",
-			wantErr:     false,
-		},
-		{
-			name:        "raw text (no tags)",
-			response:    `This is a raw response without tags.`,
-			wantFiles:   0,
-			wantSummary: "This is a raw response without tags.",
-			wantErr:     false,
-		},
-		{
-			name:        "empty response",
-			response:    "",
-			wantFiles:   0,
-			wantSummary: "",
-			wantErr:     true,
-		},
-		{
-			name: "placeholder template response",
-			response: `<file path="path/to/file.ext">
-<content>
-... full file content here ...
-</content>
-</file>
-
-<summary>
-Brief description of changes made
-</summary>`,
-			wantFiles:   0,
-			wantSummary: "",
-			wantErr:     true,
-		},
-		{
-			name: "placeholder summary with real file path",
-			response: `<file path="main.go"><content>package main</content></file>
-<summary>
-Brief description of changes made
-</summary>`,
-			wantFiles:   1,
-			wantSummary: "Code changes applied",
-			wantErr:     false,
-		},
-		{
-			name: "relative placeholder path and content",
-			response: `<file path="relative/path/to/file.go"><content>
-package example
-
-// entire updated file content here
-</content></file>
-<summary>
-Add user authentication to handler.go
-</summary>`,
-			wantFiles:   0,
-			wantSummary: "",
-			wantErr:     true,
-		},
-		{
-			name: "permission request summary",
-			response: `<summary>
-The M1 implementation provides:
-- WorkflowState data structure for tracking multi-stage workflow
-- Clarify prompt generator for Stage 0
-
-Next Steps:
-- Create the files listed above
-- Add unit tests for each component
-
-Would you like me to proceed with creating these files if you grant the necessary permissions, or would you prefer to create them manually?
-</summary>`,
-			wantFiles:   0,
-			wantSummary: "",
-			wantErr:     true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseCodeResponse(tt.response)
-
-			if (err != nil) != tt.wantErr {
-				t.Errorf("parseCodeResponse() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if err != nil {
-				return
-			}
-
-			if len(result.Files) != tt.wantFiles {
-				t.Errorf("Files count = %d, want %d", len(result.Files), tt.wantFiles)
-			}
-
-			if result.Summary != tt.wantSummary {
-				t.Errorf("Summary = %q, want %q", result.Summary, tt.wantSummary)
-			}
-		})
-	}
-}
+// parseCodeResponse was removed; tests relying on it are no longer applicable.
 
 // TestGenerateCode_Integration tests the full GenerateCode flow (without actual codex execution)
 func TestGenerateCode_Integration(t *testing.T) {
@@ -316,7 +152,7 @@ func TestGenerateCode_Integration(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	req := &claude.CodeRequest{
+	req := &prov.CodeRequest{
 		Prompt:   "Test prompt",
 		RepoPath: tmpDir,
 		Context:  map[string]string{"test": "context"},
@@ -412,7 +248,7 @@ func TestGenerateCode_JSONOutputFeedsComment(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	req := &claude.CodeRequest{
+	req := &prov.CodeRequest{
 		Prompt:   "Test prompt",
 		RepoPath: tmpDir,
 		Context:  map[string]string{"test": "value"},
@@ -423,39 +259,437 @@ func TestGenerateCode_JSONOutputFeedsComment(t *testing.T) {
 		t.Fatalf("GenerateCode() error = %v", err)
 	}
 
-	if result.Summary != "JSON summary" {
-		t.Fatalf("Summary = %q, want %q", result.Summary, "JSON summary")
+	if !strings.Contains(result.Summary, "JSON summary") {
+		t.Fatalf("Summary should contain %q, got %q", "JSON summary", result.Summary)
 	}
 
-	if len(result.Files) != 1 {
-		t.Fatalf("Files count = %d, want 1", len(result.Files))
+	// Files removed from response; only Summary is validated.
+
+	// Comment tracker integration removed; only validate summary content.
+}
+
+func TestBuildCodexMCPConfig_FullContext(t *testing.T) {
+	cases := []struct {
+		name      string
+		ctx       map[string]string
+		wantLines []string
+	}{
+		{
+			name: "all context fields",
+			ctx: map[string]string{
+				"github_token": "tok_123",
+				"comment_id":   "42",
+				"repo_owner":   "linux",
+				"repo_name":    "kernel",
+				"event_name":   "pull_request",
+			},
+			wantLines: []string{
+				"# Dynamically generated Codex configuration",
+				"model = \"gpt-5-codex\"",
+				"[mcp_servers.github]",
+				"type = \"http\"",
+				"url = \"https://api.githubcopilot.com/mcp\"",
+				"[mcp_servers.github.headers]",
+				"Authorization = \"Bearer tok_123\"",
+				"[mcp_servers.git]",
+				"command = \"uvx\"",
+				"args = [\"mcp-server-git\"]",
+				"[mcp_servers.comment_updater]",
+				"[mcp_servers.comment_updater.env]",
+				"GITHUB_TOKEN = \"tok_123\"",
+				"REPO_OWNER = \"linux\"",
+				"REPO_NAME = \"kernel\"",
+				"CLAUDE_COMMENT_ID = \"42\"",
+				"GITHUB_EVENT_NAME = \"pull_request\"",
+			},
+		},
 	}
 
-	if result.Files[0].Path != "main.go" {
-		t.Fatalf("File path = %q, want %q", result.Files[0].Path, "main.go")
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			home := setupTempHome(t)
+			ensureUVXAvailability(t, true)
+
+			if err := buildCodexMCPConfig(tc.ctx); err != nil {
+				t.Fatalf("buildCodexMCPConfig error: %v", err)
+			}
+
+			content := readConfigFile(t, home)
+
+			for _, want := range tc.wantLines {
+				if !strings.Contains(content, want) {
+					t.Fatalf("config missing line %q\nconfig:\n%s", want, content)
+				}
+			}
+
+			assertTOMLFormat(t, content)
+		})
+	}
+}
+
+func TestBuildCodexMCPConfig_FileWritten(t *testing.T) {
+	cases := []struct {
+		name       string
+		precreate  bool
+		wantMode   os.FileMode
+		wantDirMod os.FileMode
+	}{
+		{
+			name:       "creates directory and file",
+			precreate:  false,
+			wantMode:   0o600,
+			wantDirMod: 0o700,
+		},
+		{
+			name:       "reuses existing directory",
+			precreate:  true,
+			wantMode:   0o600,
+			wantDirMod: 0o700,
+		},
 	}
 
-	if !strings.Contains(result.Files[0].Content, "package main") {
-		t.Fatalf("File content = %q, want to contain %q", result.Files[0].Content, "package main")
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			home := setupTempHome(t)
+			configDir := filepath.Join(home, ".codex")
+			configPath := filepath.Join(configDir, "config.toml")
+
+			if tc.precreate {
+				if err := os.MkdirAll(configDir, 0o755); err != nil {
+					t.Fatalf("precreate dir: %v", err)
+				}
+			}
+
+			if err := buildCodexMCPConfig(map[string]string{}); err != nil {
+				t.Fatalf("buildCodexMCPConfig error: %v", err)
+			}
+
+			dirInfo, err := os.Stat(configDir)
+			if err != nil {
+				t.Fatalf("stat config dir: %v", err)
+			}
+			if !dirInfo.IsDir() {
+				t.Fatalf("config path is not directory")
+			}
+
+			fileInfo, err := os.Stat(configPath)
+			if err != nil {
+				t.Fatalf("stat config file: %v", err)
+			}
+
+			if fileInfo.Mode().Perm() != tc.wantMode {
+				t.Fatalf("config file permissions = %o, want %o", fileInfo.Mode().Perm(), tc.wantMode)
+			}
+
+			// Directory may already exist; ensure at least execute for user.
+			if dirInfo.Mode()&0o700 != tc.wantDirMod {
+				t.Fatalf("config dir permissions = %o, want prefix %o", dirInfo.Mode()&0o777, tc.wantDirMod)
+			}
+		})
+	}
+}
+
+func TestBuildCodexMCPConfig_GitHubServer(t *testing.T) {
+	cases := []struct {
+		name          string
+		ctx           map[string]string
+		expectedLines []string
+	}{
+		{
+			name: "token provided",
+			ctx: map[string]string{
+				"github_token": "ghp_abc",
+			},
+			expectedLines: []string{
+				"[mcp_servers.github]",
+				"type = \"http\"",
+				"url = \"https://api.githubcopilot.com/mcp\"",
+				"[mcp_servers.github.headers]",
+				"Authorization = \"Bearer ghp_abc\"",
+			},
+		},
 	}
 
-	mockGH := github.NewMockGHClient()
-	tracker := github.NewCommentTrackerWithClient("owner/repo", 42, "tester", mockGH)
-	tracker.CommentID = 100
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			home := setupTempHome(t)
+			ensureUVXAvailability(t, false)
 
-	tracker.MarkEnd()
-	tracker.SetCompleted(result.Summary, nil, result.CostUSD)
+			if err := buildCodexMCPConfig(tc.ctx); err != nil {
+				t.Fatalf("buildCodexMCPConfig error: %v", err)
+			}
 
-	if err := tracker.Update("token"); err != nil {
-		t.Fatalf("tracker.Update() error = %v", err)
+			content := readConfigFile(t, home)
+			for _, line := range tc.expectedLines {
+				if !strings.Contains(content, line) {
+					t.Fatalf("expected config to contain %q\nconfig:\n%s", line, content)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildCodexMCPConfig_GitServer(t *testing.T) {
+	cases := []struct {
+		name          string
+		uvxAvailable  bool
+		expectedLines []string
+		rejectLines   []string
+	}{
+		{
+			name:         "uvx present",
+			uvxAvailable: true,
+			expectedLines: []string{
+				"[mcp_servers.git]",
+				"command = \"uvx\"",
+				"args = [\"mcp-server-git\"]",
+			},
+		},
+		{
+			name:         "uvx missing",
+			uvxAvailable: false,
+			rejectLines: []string{
+				"[mcp_servers.git]",
+			},
+		},
 	}
 
-	if len(mockGH.UpdateCommentCalls) != 1 {
-		t.Fatalf("expected 1 update call, got %d", len(mockGH.UpdateCommentCalls))
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			home := setupTempHome(t)
+			ensureUVXAvailability(t, tc.uvxAvailable)
+
+			if err := buildCodexMCPConfig(map[string]string{}); err != nil {
+				t.Fatalf("buildCodexMCPConfig error: %v", err)
+			}
+
+			content := readConfigFile(t, home)
+
+			for _, want := range tc.expectedLines {
+				if !strings.Contains(content, want) {
+					t.Fatalf("expected config to contain %q\nconfig:\n%s", want, content)
+				}
+			}
+
+			for _, reject := range tc.rejectLines {
+				if strings.Contains(content, reject) {
+					t.Fatalf("config should not contain %q\nconfig:\n%s", reject, content)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildCodexMCPConfig_CommentUpdater(t *testing.T) {
+	cases := []struct {
+		name          string
+		ctx           map[string]string
+		expectPresent bool
+		wantLines     []string
+	}{
+		{
+			name: "full comment context",
+			ctx: map[string]string{
+				"github_token": "ghp_full",
+				"comment_id":   "24",
+				"repo_owner":   "torvalds",
+				"repo_name":    "linux",
+				"event_name":   "issue_comment",
+			},
+			expectPresent: true,
+			wantLines: []string{
+				"[mcp_servers.comment_updater]",
+				"[mcp_servers.comment_updater.env]",
+				"GITHUB_TOKEN = \"ghp_full\"",
+				"REPO_OWNER = \"torvalds\"",
+				"REPO_NAME = \"linux\"",
+				"CLAUDE_COMMENT_ID = \"24\"",
+				"GITHUB_EVENT_NAME = \"issue_comment\"",
+			},
+		},
+		{
+			name: "missing repo owner",
+			ctx: map[string]string{
+				"github_token": "ghp_partial",
+				"comment_id":   "25",
+				"repo_name":    "linux",
+			},
+			expectPresent: false,
+		},
 	}
 
-	if body := mockGH.UpdateCommentCalls[0].Body; !strings.Contains(body, result.Summary) {
-		t.Fatalf("comment body %q should contain summary %q", body, result.Summary)
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			home := setupTempHome(t)
+			ensureUVXAvailability(t, false)
+
+			if err := buildCodexMCPConfig(tc.ctx); err != nil {
+				t.Fatalf("buildCodexMCPConfig error: %v", err)
+			}
+
+			content := readConfigFile(t, home)
+			hasSection := strings.Contains(content, "[mcp_servers.comment_updater]")
+
+			if tc.expectPresent != hasSection {
+				t.Fatalf("comment_updater presence = %t, want %t\nconfig:\n%s", hasSection, tc.expectPresent, content)
+			}
+
+			if tc.expectPresent {
+				for _, line := range tc.wantLines {
+					if !strings.Contains(content, line) {
+						t.Fatalf("expected config to contain %q\nconfig:\n%s", line, content)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestBuildCodexMCPConfig_PartialContext(t *testing.T) {
+	cases := []struct {
+		name        string
+		ctx         map[string]string
+		wantPresent []string
+		wantAbsent  []string
+	}{
+		{
+			name: "token without comment context",
+			ctx: map[string]string{
+				"github_token": "ghp_partial",
+			},
+			wantPresent: []string{
+				"[mcp_servers.github]",
+				"Authorization = \"Bearer ghp_partial\"",
+			},
+			wantAbsent: []string{
+				"[mcp_servers.comment_updater]",
+			},
+		},
+		{
+			name: "comment id missing owner",
+			ctx: map[string]string{
+				"github_token": "ghp_partial",
+				"comment_id":   "55",
+				"repo_name":    "linux",
+			},
+			wantPresent: []string{
+				"[mcp_servers.github]",
+			},
+			wantAbsent: []string{
+				"[mcp_servers.comment_updater]",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			home := setupTempHome(t)
+			ensureUVXAvailability(t, false)
+
+			if err := buildCodexMCPConfig(tc.ctx); err != nil {
+				t.Fatalf("buildCodexMCPConfig error: %v", err)
+			}
+
+			content := readConfigFile(t, home)
+			for _, line := range tc.wantPresent {
+				if !strings.Contains(content, line) {
+					t.Fatalf("expected config to contain %q\nconfig:\n%s", line, content)
+				}
+			}
+			for _, line := range tc.wantAbsent {
+				if strings.Contains(content, line) {
+					t.Fatalf("config should not contain %q\nconfig:\n%s", line, content)
+				}
+			}
+		})
+	}
+}
+
+func TestGenerateCode_MCPConfigCalled(t *testing.T) {
+	cases := []struct {
+		name           string
+		prepare        func(t *testing.T, home string)
+		wantConfig     bool
+		wantWarnLogged bool
+	}{
+		{
+			name: "config succeeds",
+			prepare: func(t *testing.T, home string) {
+				t.Helper()
+			},
+			wantConfig:     true,
+			wantWarnLogged: false,
+		},
+		{
+			name: "config failure logs warning",
+			prepare: func(t *testing.T, home string) {
+				t.Helper()
+				badPath := filepath.Join(home, ".codex")
+				if err := os.WriteFile(badPath, []byte("not a dir"), 0o600); err != nil {
+					t.Fatalf("write blocking file: %v", err)
+				}
+			},
+			wantConfig:     false,
+			wantWarnLogged: true,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			provider := NewProvider("", "", "gpt-5-codex")
+
+			home := setupTempHome(t)
+			tc.prepare(t, home)
+
+			jsonOutput := `{"type":"item.completed","item":{"type":"agent_message","text":"<summary>OK</summary>"}}`
+			originalExec := execCommandContext
+			defer func() { execCommandContext = originalExec }()
+			execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+				return exec.Command("echo", jsonOutput)
+			}
+
+			var logBuf bytes.Buffer
+			originalLogger := log.Writer()
+			log.SetOutput(&logBuf)
+			defer log.SetOutput(originalLogger)
+
+			req := &prov.CodeRequest{
+				Prompt:   "Test prompt",
+				RepoPath: t.TempDir(),
+				Context: map[string]string{
+					"github_token": "tok",
+				},
+			}
+
+			resp, err := provider.GenerateCode(context.Background(), req)
+			if err != nil {
+				t.Fatalf("GenerateCode error: %v", err)
+			}
+			if resp.Summary == "" {
+				t.Fatalf("expected summary to be populated")
+			}
+
+			configPath := filepath.Join(home, ".codex", "config.toml")
+			_, statErr := os.Stat(configPath)
+			if tc.wantConfig && statErr != nil {
+				t.Fatalf("expected config file: %v", statErr)
+			}
+			if !tc.wantConfig && statErr == nil {
+				t.Fatalf("config file should not exist at %s", configPath)
+			}
+
+			warnLogged := strings.Contains(logBuf.String(), "Warning: failed to build MCP config")
+			if warnLogged != tc.wantWarnLogged {
+				t.Fatalf("warning logged = %t, want %t\nlogs:\n%s", warnLogged, tc.wantWarnLogged, logBuf.String())
+			}
+		})
 	}
 }
 
@@ -471,4 +705,77 @@ func containsAt(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func setupTempHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return home
+}
+
+func ensureUVXAvailability(t *testing.T, present bool) {
+	t.Helper()
+	dir := t.TempDir()
+	if present {
+		name := "uvx"
+		content := "#!/bin/sh\nexit 0\n"
+		mode := os.FileMode(0o755)
+		if runtime.GOOS == "windows" {
+			name = "uvx.bat"
+			content = "@echo off\nexit /b 0\r\n"
+			mode = 0o755
+		}
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), mode); err != nil {
+			t.Fatalf("write mock uvx: %v", err)
+		}
+		// Ensure execution permission on non-windows systems
+		if runtime.GOOS != "windows" {
+			if err := os.Chmod(path, 0o755); err != nil {
+				t.Fatalf("chmod mock uvx: %v", err)
+			}
+		}
+		t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		return
+	}
+	t.Setenv("PATH", dir)
+}
+
+func readConfigFile(t *testing.T, home string) string {
+	t.Helper()
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config file: %v", err)
+	}
+	return string(data)
+}
+
+func assertTOMLFormat(t *testing.T, content string) {
+	t.Helper()
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			if !strings.HasSuffix(line, "]") {
+				t.Fatalf("invalid TOML section header: %q", line)
+			}
+			continue
+		}
+		if !strings.Contains(line, "=") {
+			t.Fatalf("invalid TOML key-value: %q", line)
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(strings.TrimSpace(parts[0])) == 0 || len(strings.TrimSpace(parts[1])) == 0 {
+			t.Fatalf("invalid TOML key-value: %q", line)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan error: %v", err)
+	}
 }

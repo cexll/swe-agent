@@ -19,6 +19,9 @@ COPY . .
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -o swe-agent ./cmd
 
+# Build MCP comment server
+RUN CGO_ENABLED=0 GOOS=linux go build -o mcp-comment-server ./cmd/mcp-comment-server
+
 # Final stage
 FROM alpine:3.20 AS runtime
 
@@ -38,49 +41,34 @@ RUN apk add --no-cache \
         github-cli \
         openssh-client \
         wget \
+        py3-pip \
         make \
         g++ \
         python3 \
         nodejs \
         npm \
         jq \
-    && npm install -g \
+        ripgrep \
+    && npm install -g --ignore-scripts \
         @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION} \
         @openai/codex@${CODEX_CLI_VERSION} \
-    && npm cache clean --force
+    && npm cache clean --force \
+    && wget -qO- https://astral.sh/uv/install.sh | sh
+
+# Ensure uv/uvx are on PATH
+ENV PATH="/root/.local/bin:${PATH}"
 
 # Copy binary from builder
 COPY --from=builder /build/swe-agent /usr/local/bin/swe-agent
-
-# Copy shared system prompt to agent config locations
-COPY --from=builder /build/system-prompt.md /tmp/system-prompt.md
-RUN mkdir -p /root/.codex /root/.claude \
-    && cp /tmp/system-prompt.md /root/.codex/AGENTS.md \
-    && cp /tmp/system-prompt.md /root/.claude/CLAUDE.md \
-    && printf '%s\n' \
-        'model = "gpt-5-codex"' \
-        'model_reasoning_effort = "high"' \
-        'model_reasoning_summary = "detailed"' \
-        'approval_policy = "never"' \
-        'sandbox_mode = "danger-full-access"' \
-        'disable_response_storage = true' \
-        'network_access = true' \
-        > /root/.codex/config.toml \
-    && rm /tmp/system-prompt.md
+COPY --from=builder /build/mcp-comment-server /usr/local/bin/mcp-comment-server
 
 WORKDIR /app
 
 # Copy runtime assets
 COPY --from=builder /build/templates ./templates
 
-# Runtime entrypoint writes auth credentials from environment and starts the service
-RUN cat <<'EOF' > /usr/local/bin/docker-entrypoint.sh
-#!/bin/sh
-set -e
-mkdir -p /root/.codex
-jq -n --arg key "${OPENAI_API_KEY:-}" '{OPENAI_API_KEY: $key}' > /root/.codex/auth.json
-exec swe-agent "$@"
-EOF
+# Copy and setup entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Expose port

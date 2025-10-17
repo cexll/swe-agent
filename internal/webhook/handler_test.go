@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cexll/swe/internal/github"
+	_ "github.com/cexll/swe/internal/modes/command" // Import to register CommandMode
 )
 
 type mockDispatcher struct {
@@ -42,85 +43,6 @@ func (e *errReadCloser) Read(p []byte) (int, error) {
 
 func (e *errReadCloser) Close() error {
 	return nil
-}
-
-func TestExtractPrompt(t *testing.T) {
-	tests := []struct {
-		name           string
-		body           string
-		triggerKeyword string
-		found          bool
-		want           string
-	}{
-		{
-			name:           "simple prompt",
-			body:           "/code fix the typo",
-			triggerKeyword: "/code",
-			found:          true,
-			want:           "fix the typo",
-		},
-		{
-			name:           "multiline comment",
-			body:           "/code add error handling\nSome more context here",
-			triggerKeyword: "/code",
-			found:          true,
-			want:           "add error handling\nSome more context here",
-		},
-		{
-			name:           "no prompt after keyword - should use issue content",
-			body:           "/code",
-			triggerKeyword: "/code",
-			found:          true,
-			want:           "",
-		},
-		{
-			name:           "/code with only whitespace",
-			body:           "/code   \n\n  ",
-			triggerKeyword: "/code",
-			found:          true,
-			want:           "",
-		},
-		{
-			name:           "keyword not found",
-			body:           "just a comment",
-			triggerKeyword: "/code",
-			found:          false,
-			want:           "",
-		},
-		{
-			name:           "custom trigger keyword",
-			body:           "/custom do something",
-			triggerKeyword: "/custom",
-			found:          true,
-			want:           "do something",
-		},
-		{
-			name:           "whitespace handling",
-			body:           "/code    fix bug   ",
-			triggerKeyword: "/code",
-			found:          true,
-			want:           "fix bug",
-		},
-		{
-			name:           "keyword in middle of text",
-			body:           "Hey @someone\n/code refactor code\nThanks!",
-			triggerKeyword: "/code",
-			found:          true,
-			want:           "refactor code\nThanks!",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, found := extractPrompt(tt.body, tt.triggerKeyword)
-			if found != tt.found {
-				t.Fatalf("extractPrompt() found = %v, want %v", found, tt.found)
-			}
-			if got != tt.want {
-				t.Errorf("extractPrompt() = %q, want %q", got, tt.want)
-			}
-		})
-	}
 }
 
 func TestHandleWebhook_IssueComment(t *testing.T) {
@@ -314,6 +236,7 @@ func TestHandleWebhook_IssueComment_DuplicateIgnored(t *testing.T) {
 			FullName:      "owner/repo",
 			DefaultBranch: "main",
 		},
+		Sender: User{Login: "tester"},
 	}
 
 	payload, err := json.Marshal(event)
@@ -378,6 +301,7 @@ func TestHandleWebhook_IssueComment_BotIgnored(t *testing.T) {
 			FullName:      "owner/repo",
 			DefaultBranch: "main",
 		},
+		Sender: User{Login: "bot-user", Type: "Bot"},
 	}
 
 	payload, _ := json.Marshal(event)
@@ -422,6 +346,7 @@ func TestHandleWebhook_IssueComment_PermissionDenied(t *testing.T) {
 			FullName:      "owner/repo",
 			DefaultBranch: "main",
 		},
+		Sender: User{Login: "random-user"},
 	}
 
 	payload, _ := json.Marshal(event)
@@ -466,6 +391,7 @@ func TestHandleWebhook_IssueComment_FailOpenOnAuthError(t *testing.T) {
 			FullName:      "owner/repo",
 			DefaultBranch: "main",
 		},
+		Sender: User{Login: "test-user"},
 	}
 
 	payload, _ := json.Marshal(event)
@@ -594,6 +520,7 @@ func TestHandleWebhook_IssueComment_QueueClosed(t *testing.T) {
 			FullName:      "owner/repo",
 			DefaultBranch: "main",
 		},
+		Sender: User{Login: "installer-user"},
 	}
 
 	payload, _ := json.Marshal(event)
@@ -1086,6 +1013,7 @@ func TestHandleWebhook_DispatcherError(t *testing.T) {
 			FullName:      "owner/repo",
 			DefaultBranch: "main",
 		},
+		Sender: User{Login: "tester"},
 	}
 
 	payload, _ := json.Marshal(event)
@@ -1132,6 +1060,7 @@ func TestHandleWebhook_QueueFull(t *testing.T) {
 			FullName:      "owner/repo",
 			DefaultBranch: "main",
 		},
+		Sender: User{Login: "tester"},
 	}
 
 	payload, _ := json.Marshal(event)
@@ -1180,6 +1109,7 @@ func TestHandleWebhook_SignatureValidation(t *testing.T) {
 			FullName:      "owner/repo",
 			DefaultBranch: "main",
 		},
+		Sender: User{Login: "user"},
 	}
 	payload, _ := json.Marshal(event)
 

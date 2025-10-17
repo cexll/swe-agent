@@ -11,8 +11,8 @@ import (
 )
 
 var runRepoClone = func(repo, branch, token, dest string) error {
-    // Pass through to underlying git clone with shallow/single-branch options for stability/perf
-    cmd := exec.Command("gh", "repo", "clone", repo, dest, "--", "-b", branch, "--depth=1", "--single-branch")
+	// Pass through to underlying git clone with shallow/single-branch options for stability/perf
+	cmd := exec.Command("gh", "repo", "clone", repo, dest, "--", "-b", branch, "--depth=1", "--single-branch")
 	if token != "" {
 		// Set both GITHUB_TOKEN and GH_TOKEN for maximum compatibility with gh CLI
 		cmd.Env = append(os.Environ(),
@@ -56,7 +56,7 @@ func extractBranchContext(branch string) (string, string) {
 }
 
 func buildCloneWorkdir(repo, branch string, ts time.Time) string {
-	ownerSegment := "unknown"
+	var ownerSegment string
 	repoSegment := "repo"
 
 	if parts := strings.Split(repo, "/"); len(parts) == 2 {
@@ -78,11 +78,9 @@ func Clone(repo, branch, token string) (string, func(), error) {
 	// Create temporary directory name that avoids collisions across concurrent clones.
 	tmpDir := buildCloneWorkdir(repo, branch, nowFunc())
 
-	// Execute gh repo clone with retry for transient failures
+	// Execute gh repo clone (single attempt)
 	// Note: git flags must be passed after '--' separator
-	err := retryWithBackoff(func() error {
-		return runRepoClone(repo, branch, token, tmpDir)
-	})
+	err := runRepoClone(repo, branch, token, tmpDir)
 
 	if err != nil {
 		return "", nil, err

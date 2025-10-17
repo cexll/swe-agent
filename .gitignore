@@ -5,6 +5,14 @@ swe
 
 .claude
 coverage.out
+coverage.html
 swe-agent
+
+# Temporary files
+*.bak
+*.old
+*.tmp
+*.swp
+*~
 
 claude-code-action

@@ -84,7 +84,7 @@ func TestLoad(t *testing.T) {
 				if cfg.Port != 8000 {
 					t.Errorf("Port = %d, want 8000 (default)", cfg.Port)
 				}
-				if cfg.ClaudeModel != "claude-3-5-sonnet-20241022" {
+				if cfg.ClaudeModel != "claude-sonnet-4-5-20250929" {
 					t.Errorf("ClaudeModel = %s, want default", cfg.ClaudeModel)
 				}
 				if cfg.CodexModel != "gpt-5-codex" {

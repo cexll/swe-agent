@@ -1,38 +1,20 @@
 package claude
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
-	"github.com/cexll/swe/internal/prompt"
+	"github.com/cexll/swe/internal/provider"
 	"github.com/cexll/swe/internal/provider/shared"
 )
-
-// FileChange represents a file modification
-type FileChange struct {
-	Path    string
-	Content string
-}
-
-// CodeRequest contains input for code generation
-type CodeRequest struct {
-	Prompt   string            // User instruction
-	RepoPath string            // Repository path
-	Context  map[string]string // Additional context
-}
-
-// CodeResponse contains the AI-generated code changes
-type CodeResponse struct {
-	Files   []FileChange // Modified files
-	Summary string       // Summary of changes
-	CostUSD float64      // Cost in USD
-}
 
 // CLIResult represents the result from Claude CLI
 type CLIResult struct {
@@ -45,8 +27,6 @@ type CLIResult struct {
 type Provider struct {
 	model string
 }
-
-var promptManager = prompt.NewManager()
 
 // NewProvider creates a new Claude provider
 func NewProvider(apiKey, model string) *Provider {
@@ -72,22 +52,131 @@ func (p *Provider) Name() string {
 }
 
 // callClaudeCLI calls the Claude CLI directly with proper working directory
-func callClaudeCLI(workDir, prompt, model, disallowedTools string) (*CLIResult, error) {
+// Backwards-compatible wrapper retained for tests. Prefer callClaudeCLIWithTools.
+func callClaudeCLI(workDir, prompt, model string) (*CLIResult, error) {
+	return callClaudeCLIWithTools(workDir, prompt, model, nil, nil, "")
+}
+
+// buildMCPConfig dynamically generates MCP server configuration JSON with environment variables.
+// This mirrors the approach to avoid conflicts with user's ~/.claude.json.
+func buildMCPConfig(ctx map[string]string) (string, error) {
+	type MCPServerConfig struct {
+		Type    string            `json:"type,omitempty"`
+		URL     string            `json:"url,omitempty"`
+		Headers map[string]string `json:"headers,omitempty"`
+		Command string            `json:"command,omitempty"`
+		Args    []string          `json:"args,omitempty"`
+		Env     map[string]string `json:"env,omitempty"`
+	}
+
+	type MCPConfig struct {
+		MCPServers map[string]MCPServerConfig `json:"mcpServers"`
+	}
+
+	config := MCPConfig{
+		MCPServers: make(map[string]MCPServerConfig),
+	}
+
+	// Add GitHub HTTP MCP server if token available
+	// Uses GitHub Copilot's HTTP MCP endpoint (no Docker required)
+	if githubToken := ctx["github_token"]; githubToken != "" {
+		config.MCPServers["github"] = MCPServerConfig{
+			Type: "http",
+			URL:  "https://api.githubcopilot.com/mcp",
+			Headers: map[string]string{
+				"Authorization": "Bearer " + githubToken,
+			},
+		}
+	}
+
+	// Add Git MCP server (uvx mcp-server-git)
+	if _, err := exec.LookPath("uvx"); err == nil {
+		config.MCPServers["git"] = MCPServerConfig{
+			Command: "uvx",
+			Args:    []string{"mcp-server-git"},
+		}
+	}
+
+	// Add Comment Updater MCP server if comment ID available and binary exists
+	if commentID := ctx["comment_id"]; commentID != "" {
+		owner := ctx["repo_owner"]
+		repo := ctx["repo_name"]
+		githubToken := ctx["github_token"]
+		eventName := ctx["event_name"]
+
+		if owner != "" && repo != "" && githubToken != "" {
+			// Check if mcp-comment-server binary exists in PATH (防御性检查)
+			if _, err := exec.LookPath("mcp-comment-server"); err == nil {
+				config.MCPServers["comment_updater"] = MCPServerConfig{
+					Command: "mcp-comment-server",
+					Env: map[string]string{
+						"GITHUB_TOKEN":      githubToken,
+						"REPO_OWNER":        owner,
+						"REPO_NAME":         repo,
+						"CLAUDE_COMMENT_ID": commentID,
+						"GITHUB_EVENT_NAME": eventName,
+					},
+				}
+				log.Printf("[MCP Config] Added comment_updater server (comment ID: %s)", commentID)
+			} else {
+				log.Printf("[MCP Config] Warning: mcp-comment-server not found in PATH, comment updates via MCP will be unavailable")
+			}
+		}
+	}
+
+	// Log final MCP server configuration summary
+	serverNames := make([]string, 0, len(config.MCPServers))
+	for name := range config.MCPServers {
+		serverNames = append(serverNames, name)
+	}
+	if len(serverNames) > 0 {
+		log.Printf("[MCP Config] Total MCP servers configured: %d (%v)", len(serverNames), serverNames)
+	} else {
+		log.Printf("[MCP Config] Warning: No MCP servers configured")
+	}
+
+	// Marshal to JSON
+	blob, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal MCP config: %w", err)
+	}
+
+	return string(blob), nil
+}
+
+// callClaudeCLIWithTools calls the Claude CLI with explicit allowed/disallowed tools.
+// If lists are empty, flags are omitted to preserve CLI defaults.
+func callClaudeCLIWithTools(workDir, prompt, model string, allowedTools, disallowedTools []string, mcpConfig string) (*CLIResult, error) {
 	// Build command arguments
 	args := []string{"-p", "--output-format", "json"}
 	if model != "" {
 		args = append(args, "--model", model)
 	}
-	// Add disallowed tools if specified
-	if disallowedTools != "" {
-		args = append(args, "--disallowedTools", disallowedTools)
-		log.Printf("[Claude CLI] Disallowed tools: %s", disallowedTools)
+	if len(allowedTools) > 0 {
+		allowedCSV := strings.Join(allowedTools, ",")
+		args = append(args, "--allowedTools", allowedCSV)
+		log.Printf("[Claude CLI] Allowed tools (%d): %s", len(allowedTools), allowedCSV)
+	}
+	if len(disallowedTools) > 0 {
+		disallowedCSV := strings.Join(disallowedTools, ",")
+		args = append(args, "--disallowedTools", disallowedCSV)
+		log.Printf("[Claude CLI] Disallowed tools (%d): %s", len(disallowedTools), disallowedCSV)
+	}
+	// Add MCP config if provided (dynamically generated)
+	if mcpConfig != "" {
+		args = append(args, "--mcp-config", mcpConfig)
+		log.Printf("[Claude CLI] Using dynamic MCP config (%d bytes)", len(mcpConfig))
 	}
 
 	// Create command
 	cmd := exec.Command("claude", args...)
 	cmd.Dir = workDir // Critical: set working directory to cloned repo
 	cmd.Stdin = strings.NewReader(prompt)
+
+	// Explicitly pass environment variables to ensure Claude CLI gets MCP config
+	// Go's exec.Cmd inherits env by default if cmd.Env is nil, but we set it
+	// explicitly to ensure CLAUDE_CONFIG is passed through
+	cmd.Env = os.Environ()
 
 	// Enable debug logging if requested
 	if os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
@@ -96,10 +185,20 @@ func callClaudeCLI(workDir, prompt, model, disallowedTools string) (*CLIResult, 
 		log.Printf("[Claude CLI] Prompt length: %d chars", len(prompt))
 	}
 
-	// Execute command
+	// Create output buffer for later parsing
+	var outputBuf bytes.Buffer
+
+	// Enable real-time streaming: output to stdout + capture to buffer
+	cmd.Stdout = io.MultiWriter(os.Stdout, &outputBuf)
+	cmd.Stderr = os.Stderr
+
+	log.Printf("[Claude CLI] Execution started, streaming output...")
+
+	// Execute command (non-blocking for output)
 	start := time.Now()
-	output, err := cmd.CombinedOutput()
+	err := cmd.Run()
 	duration := time.Since(start)
+	output := outputBuf.Bytes()
 
 	if err != nil {
 		outputPreview := truncateString(string(output), 1000)
@@ -127,7 +226,7 @@ func callClaudeCLI(workDir, prompt, model, disallowedTools string) (*CLIResult, 
 }
 
 // GenerateCode generates code changes using Claude Code CLI
-func (p *Provider) GenerateCode(ctx context.Context, req *CodeRequest) (*CodeResponse, error) {
+func (p *Provider) GenerateCode(ctx context.Context, req *provider.CodeRequest) (*provider.CodeResponse, error) {
 	log.Printf("[Claude] Starting code generation (prompt length: %d chars)", len(req.Prompt))
 
 	// Validate working directory
@@ -138,30 +237,42 @@ func (p *Provider) GenerateCode(ctx context.Context, req *CodeRequest) (*CodeRes
 		return nil, fmt.Errorf("repository path does not exist: %s", req.RepoPath)
 	}
 
-	// 1. List repository files
-	files, err := promptManager.ListRepoFiles(req.RepoPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list repo files: %w", err)
-	}
-
-	// 2. Build system prompt
-	systemPrompt := promptManager.BuildDefaultSystemPrompt(files, req.Context)
-
-	// 3. Build full prompt with system and user content
-	fullPrompt := fmt.Sprintf("System: %s\n\nUser: %s", systemPrompt, promptManager.BuildUserPrompt(req.Prompt))
+	// Executor already constructed the full prompt (system + user + GH XML)
+	fullPrompt := req.Prompt
 
 	log.Printf("[Claude] Calling Claude CLI with model: %s in directory: %s", p.model, req.RepoPath)
 
-	// 4. Get disallowed tools from context
-	disallowedTools := ""
+	// Gather tools configuration
+	var allowed []string
+	var disallowed []string
+	if len(req.AllowedTools) > 0 {
+		allowed = append(allowed, req.AllowedTools...)
+	}
+	if len(req.DisallowedTools) > 0 {
+		disallowed = append(disallowed, req.DisallowedTools...)
+	}
+	// Back-compat: also allow context-based disallowed tools (comma-separated)
 	if req.Context != nil {
-		if tools, ok := req.Context["disallowed_tools"]; ok {
-			disallowedTools = tools
+		if s, ok := req.Context["disallowed_tools"]; ok && strings.TrimSpace(s) != "" {
+			disallowed = append(disallowed, s)
 		}
 	}
 
-	// 5. Call Claude CLI with correct working directory
-	result, err := callClaudeCLI(req.RepoPath, fullPrompt, p.model, disallowedTools)
+	// Build dynamic MCP configuration with environment variables
+	// This replaces the static ~/.claude.json approach to avoid conflicts with user config
+	mcpConfig, err := buildMCPConfig(req.Context)
+	if err != nil {
+		log.Printf("[Claude] Warning: failed to build MCP config: %v", err)
+		mcpConfig = "" // Continue without dynamic MCP config
+	} else if mcpConfig != "" {
+		log.Printf("[Claude] Dynamic MCP config generated: %d bytes", len(mcpConfig))
+		if os.Getenv("DEBUG_MCP_CONFIG") == "true" {
+			log.Printf("[Claude] MCP config content:\n%s", mcpConfig)
+		}
+	}
+
+	// Call Claude CLI with correct working directory, tool configuration, and dynamic MCP config
+	result, err := callClaudeCLIWithTools(req.RepoPath, fullPrompt, p.model, allowed, disallowed, mcpConfig)
 	if err != nil {
 		return nil, fmt.Errorf("Claude CLI error: %w", err)
 	}
@@ -175,21 +286,19 @@ func (p *Provider) GenerateCode(ctx context.Context, req *CodeRequest) (*CodeRes
 	}
 
 	// 5. Parse response
-	response, err := parseCodeResponse(responseText)
+	parsed, err := parseCodeResponse(responseText)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Set cost
-	response.CostUSD = result.CostUSD
-
-	log.Printf("[Claude] Extracted %d file changes", len(response.Files))
-	return response, nil
+	// Return minimal response per new interface
+	log.Printf("[Claude] Response length: %d characters", len(responseText))
+	return &provider.CodeResponse{Summary: parsed.Summary}, nil
 }
 
 // parseCodeResponse extracts file changes and summary from Claude's response
 // Enhanced with multiple format support and debugging
-func parseCodeResponse(response string) (*CodeResponse, error) {
+func parseCodeResponse(response string) (*provider.CodeResponse, error) {
 	if os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
 		log.Printf("[Parse] Parsing response of %d characters", len(response))
 		log.Printf("[Parse] Response preview: %s...", truncateString(response, 200))
@@ -199,24 +308,10 @@ func parseCodeResponse(response string) (*CodeResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	result := &CodeResponse{
-		Summary: parsed.Summary,
-		Files:   make([]FileChange, 0, len(parsed.Files)),
-	}
-
-	for _, file := range parsed.Files {
-		result.Files = append(result.Files, FileChange{
-			Path:    file.Path,
-			Content: file.Content,
-		})
-	}
-
+	result := &provider.CodeResponse{Summary: parsed.Summary}
 	if os.Getenv("DEBUG_CLAUDE_PARSING") == "true" {
-		log.Printf("[Parse] Found %d file changes", len(result.Files))
 		log.Printf("[Parse] Summary: %s", truncateString(result.Summary, 100))
 	}
-
 	return result, nil
 }
 

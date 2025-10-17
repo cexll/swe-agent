@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	prov "github.com/cexll/swe/internal/provider"
 )
 
 // skipIfIntegrationDisabled skips the test if integration tests are disabled
@@ -28,7 +30,7 @@ func TestCallClaudeCLI_WorkingDirectoryIntegration(t *testing.T) {
 	// Test working directory validation
 	t.Run("validates working directory exists", func(t *testing.T) {
 		// Test with non-existent directory - should fail early
-		_, err := callClaudeCLI("/non/existent/path", "test prompt", "claude-3-sonnet", "")
+		_, err := callClaudeCLI("/non/existent/path", "test prompt", "claude-3-sonnet")
 		if err == nil {
 			t.Error("callClaudeCLI() should return error for non-existent directory")
 		}
@@ -43,7 +45,7 @@ func TestCallClaudeCLI_WorkingDirectoryIntegration(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		// This will likely fail due to invalid API key, but we can check the error message
-		_, err := callClaudeCLI(tmpDir, "test prompt", "claude-3-sonnet", "")
+		_, err := callClaudeCLI(tmpDir, "test prompt", "claude-3-sonnet")
 
 		// We expect some kind of error (API key, network, etc.) but not a "directory not found" error
 		if err != nil {
@@ -130,7 +132,7 @@ func TestGenerateCode_Validation(t *testing.T) {
 	provider := NewProvider("test-key", "claude-3-sonnet")
 
 	t.Run("validates repository path", func(t *testing.T) {
-		req := &CodeRequest{
+		req := &prov.CodeRequest{
 			Prompt:   "test prompt",
 			RepoPath: "", // Empty path should fail
 			Context:  map[string]string{},
@@ -147,7 +149,7 @@ func TestGenerateCode_Validation(t *testing.T) {
 	})
 
 	t.Run("validates repository path exists", func(t *testing.T) {
-		req := &CodeRequest{
+		req := &prov.CodeRequest{
 			Prompt:   "test prompt",
 			RepoPath: "/non/existent/path",
 			Context:  map[string]string{},
@@ -174,7 +176,7 @@ func TestGenerateCode_Validation(t *testing.T) {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
 
-		req := &CodeRequest{
+		req := &prov.CodeRequest{
 			Prompt:   "Fix this code",
 			RepoPath: tmpDir,
 			Context: map[string]string{
@@ -201,7 +203,7 @@ func TestCallClaudeCLI_EdgeCases(t *testing.T) {
 	t.Run("handles empty prompt", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		_, err := callClaudeCLI(tmpDir, "", "claude-3-sonnet", "")
+		_, err := callClaudeCLI(tmpDir, "", "claude-3-sonnet")
 		// Should not crash, but may return API error
 		if err != nil {
 			// Verify it's not a crash or directory-related error
@@ -215,7 +217,7 @@ func TestCallClaudeCLI_EdgeCases(t *testing.T) {
 	t.Run("handles empty model parameter", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		_, err := callClaudeCLI(tmpDir, "test", "", "")
+		_, err := callClaudeCLI(tmpDir, "test", "")
 		// Should work (uses default model), but may return API error
 		if err != nil {
 			errorStr := strings.ToLower(err.Error())
@@ -233,7 +235,7 @@ func TestCallClaudeCLI_EdgeCases(t *testing.T) {
 			t.Fatalf("Failed to create special directory: %v", err)
 		}
 
-		_, err := callClaudeCLI(specialDir, "test", "claude-3-sonnet", "")
+		_, err := callClaudeCLI(specialDir, "test", "claude-3-sonnet")
 		if err != nil {
 			errorStr := strings.ToLower(err.Error())
 			// Should not fail due to path parsing issues
@@ -278,14 +280,6 @@ Added debug test function
 		return
 	}
 
-	if len(result.Files) != 1 {
-		t.Errorf("parseCodeResponse() files count = %d, want 1", len(result.Files))
-	}
-
-	if result.Files[0].Path != "debug.go" {
-		t.Errorf("parseCodeResponse() file path = %s, want debug.go", result.Files[0].Path)
-	}
-
 	if result.Summary != "Added debug test function" {
 		t.Errorf("parseCodeResponse() summary = %q, want %q", result.Summary, "Added debug test function")
 	}
@@ -311,7 +305,7 @@ func TestGenerateCode_IntegrationWorkflow(t *testing.T) {
 		t.Fatalf("Failed to create README: %v", err)
 	}
 
-	req := &CodeRequest{
+	req := &prov.CodeRequest{
 		Prompt:   "Add error handling to the main function",
 		RepoPath: tmpDir,
 		Context: map[string]string{
