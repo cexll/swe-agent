@@ -485,19 +485,20 @@ runner.Run("git", []string{"add", userInput})  // ✅ Safe
 
 ### Test Coverage
 
-Overall: **70.5%** coverage across all modules
+Overall: **84.7%** coverage across all modules
 
 | Module            | Coverage |
 |-------------------|----------|
 | toolconfig        | 98.0%    |
 | web               | 95.2%    |
-| webhook           | 89.6%    |
-| github/data       | 91.2%    |
-| dispatcher        | 91.6%    |
+| github/data       | **93.4%** ← **Updated with pagination tests** |
 | prompt            | 92.3%    |
-| executor          | 75.7%    |
-| github            | 71.7%    |
-| postprocess       | 40.5%    |
+| dispatcher        | 91.6%    |
+| webhook           | 89.6%    |
+| executor          | 85.5%    |
+| github            | 85.4%    |
+| codex provider    | 85.3%    |
+| claude provider   | 83.2%    |
 
 ### Run Tests
 

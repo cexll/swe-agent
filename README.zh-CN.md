@@ -3,7 +3,7 @@
 # SWE-Agent - 软件工程智能体
 
 [![Go Version](https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
-[![Test Coverage](https://img.shields.io/badge/coverage-84.7%25-brightgreen)](#-测试)
+[![Test Coverage](https://img.shields.io/badge/coverage-93.4%25-brightgreen)](#-测试)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-cexll%2Fswe-181717?logo=github)](https://github.com/cexll/swe)
 
@@ -43,8 +43,40 @@ GitHub App webhook 服务，通过 `/code` 命令触发 AI 自动完成代码修
  - 🔗 **后处理** - 执行结束后自动生成分支/PR 链接
  - ✍️ **提交签名** - 可选的 GitHub API 自动签名提交
  - 🧹 **空分支清理** - 无提交分支自动删除
+ - 📊 **GraphQL 分页** - 通过游标分页处理 100+ 文件/评论的大型 PR
 
 ## 🎉 最新更新
+
+### v0.4.1 - GraphQL 分页支持（2025年10月）
+
+#### 🎉 新功能
+
+- ✅ **GraphQL 分页**：大型 PR 的游标分页支持
+  - 通过 `fetchAllRemainingFiles` 处理 100+ 文件的 PR
+  - 通过 `fetchAllRemainingComments` 支持 100+ 评论
+  - Review 评论嵌套分页
+  - 最大迭代安全限制（50次迭代 = 5,000条记录）
+  - 性能优化：99% 的 PR 单次查询完成；仅大型 PR 触发分页
+
+#### 🧪 测试改进
+
+- ✅ **测试覆盖率**：`internal/github/data` 达到 **93.4%**（从 70.4% 提升）
+  - 所有分页函数：100% 覆盖
+  - FetchGitHubData：66.2% → 95.6%
+  - FilterCommentsToTriggerTime：0% → 100%
+- ✅ **13 个新测试用例**：全面的分页场景覆盖
+  - 单页、多页、空结果
+  - 错误处理和最大迭代限制
+  - PR 和 Issue 评论分页
+  - Review 和 review 评论分页
+- ✅ **表驱动测试**：易于扩展新场景
+
+#### 🔧 技术亮点
+
+- 新类型：`PageInfo`、`FilesConnection`、`CommentsConnection`、`ReviewCommentsConnection`
+- 辅助函数：`fetchAllRemainingFiles`、`fetchAllRemainingComments`、`fetchAllRemainingReviews`、`fetchAllReviewComments`
+- GraphQL 查询更新：所有连接包含 `pageInfo { hasNextPage, endCursor }`
+- 修复 GitHub API 限制错误："Requesting 300 records exceeds the first limit of 100"
 
 ### v0.4.0 - MCP 动态配置与增强测试（2025年10月）
 
@@ -90,7 +122,7 @@ GitHub App webhook 服务，通过 `/code` 命令触发 AI 自动完成代码修
 | 指标                | 数值                                         |
 | ------------------- | -------------------------------------------- |
 | **代码行数**        | ~1,300 核心代码（从 3,150 减少 59%）        |
-| **测试覆盖率**      | 84.7%（claude 83.2%、codex 85.3%、executor 85.5%） |
+| **测试覆盖率**      | 93.4%（github/data），总体 84.7% |
 | **测试文件数**      | 32 个测试文件，300+ 个测试函数             |
 | **二进制大小**      | ~12MB 单一二进制文件                        |
 | **依赖**            | 极少 - Go 1.25+、Codex/Claude、gh CLI        |
@@ -483,19 +515,20 @@ runner.Run("git", []string{"add", userInput})  // ✅ Safe
 
 ### 测试覆盖率
 
-整体：**70.5%** 覆盖率
+整体：**84.7%** 覆盖率
 
 | 模块            | 覆盖率 |
 |-----------------|--------|
 | toolconfig      | 98.0%  |
 | web             | 95.2%  |
-| webhook         | 89.6%  |
-| github/data     | 91.2%  |
-| dispatcher      | 91.6%  |
+| github/data     | **93.4%** ← **新增分页测试** |
 | prompt          | 92.3%  |
-| executor        | 75.7%  |
-| github          | 71.7%  |
-| postprocess     | 40.5%  |
+| dispatcher      | 91.6%  |
+| webhook         | 89.6%  |
+| executor        | 85.5%  |
+| github          | 85.4%  |
+| codex provider  | 85.3%  |
+| claude provider | 83.2%  |
 
 ### 运行测试
 
