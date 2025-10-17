@@ -98,9 +98,8 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// 4. Only handle comment events (issue_comment, pull_request_review_comment)
 	if !isCommentEvent(eventType) {
-		log.Printf("Ignoring non-comment event type: %s", eventType)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Event ignored"))
+		_, _ = w.Write([]byte("Event ignored"))
 		return
 	}
 
@@ -114,24 +113,22 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// 6. Check if this is a created action
 	if ghCtx.EventAction != "created" {
-		log.Printf("Ignoring %s action: %s", eventType, ghCtx.EventAction)
 		w.WriteHeader(http.StatusOK)
 		switch eventType {
 		case "issue_comment":
-			w.Write([]byte("Issue comment action ignored"))
+			_, _ = w.Write([]byte("Issue comment action ignored"))
 		case "pull_request_review_comment":
-			w.Write([]byte("Review comment action ignored"))
+			_, _ = w.Write([]byte("Review comment action ignored"))
 		default:
-			w.Write([]byte("Non-created action ignored"))
+			_, _ = w.Write([]byte("Non-created action ignored"))
 		}
 		return
 	}
 
 	// 7. Check if comment is from a bot
 	if ghCtx.TriggerComment != nil && isBotComment(payload) {
-		log.Printf("Ignoring comment from bot")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Bot comment ignored"))
+		_, _ = w.Write([]byte("Bot comment ignored"))
 		return
 	}
 
@@ -139,7 +136,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	if !ghCtx.ShouldTrigger(h.triggerKeyword) {
 		log.Printf("Comment does not contain trigger keyword '%s'", h.triggerKeyword)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("No trigger keyword found"))
+		_, _ = w.Write([]byte("No trigger keyword found"))
 		return
 	}
 
@@ -147,7 +144,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	if !h.verifyPermission(ghCtx.Repository.FullName, ghCtx.TriggerUser) {
 		log.Printf("Permission denied: user %s is not the app installer", ghCtx.TriggerUser)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Permission denied"))
+		_, _ = w.Write([]byte("Permission denied"))
 		return
 	}
 
@@ -155,9 +152,8 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	commentID := ghCtx.TriggerComment.ID
 	deduper := h.getDeduper(eventType)
 	if !deduper.markIfNew(commentID) {
-		log.Printf("Ignoring duplicate comment: id=%d", commentID)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Duplicate comment ignored"))
+		_, _ = w.Write([]byte("Duplicate comment ignored"))
 		return
 	}
 
@@ -362,5 +358,5 @@ func (h *Handler) enqueueTask(w http.ResponseWriter, task *Task) {
 	}
 
 	w.WriteHeader(http.StatusAccepted)
-	w.Write([]byte("Task queued"))
+	_, _ = w.Write([]byte("Task queued"))
 }
