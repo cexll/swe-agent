@@ -20,8 +20,8 @@ type UpdateCommentParams struct {
 // HandleUpdateComment handles the update_claude_comment tool call
 // Corresponds to TypeScript: async ({ body }) => {...}
 func HandleUpdateComment(
-	ctx context.Context,
-	req *mcp.CallToolRequest,
+	_ context.Context,
+	_ *mcp.CallToolRequest,
 	params UpdateCommentParams,
 ) (*mcp.CallToolResult, any, error) {
 	log.Printf("[MCP Comment Server] Received update_claude_comment request")

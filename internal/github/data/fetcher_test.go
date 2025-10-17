@@ -151,15 +151,13 @@ func TestFilterCommentsToTriggerTime_NoFiltering(t *testing.T) {
 
 func TestFilterByTime_EdgeCases(t *testing.T) {
 	var empty []int
-	gotEmpty := filterByTime(empty, func(int) (string, string, string) { return "", "", "" })
+	gotEmpty := filterByTime(empty)
 	if gotEmpty != nil {
 		t.Fatalf("empty input should return nil, got %#v", gotEmpty)
 	}
 
 	values := []int{1, 2, 3}
-	gotValues := filterByTime(values, func(v int) (string, string, string) {
-		return fmt.Sprintf("%d", v), "", ""
-	})
+	gotValues := filterByTime(values)
 	if len(gotValues) != len(values) {
 		t.Fatalf("length mismatch: got %d want %d", len(gotValues), len(values))
 	}

@@ -244,7 +244,7 @@ func callClaudeCLIWithTools(workDir, prompt, model string, allowedTools, disallo
 }
 
 // GenerateCode generates code changes using Claude Code CLI
-func (p *Provider) GenerateCode(ctx context.Context, req *provider.CodeRequest) (*provider.CodeResponse, error) {
+func (p *Provider) GenerateCode(_ context.Context, req *provider.CodeRequest) (*provider.CodeResponse, error) {
 	log.Printf("[Claude] Starting code generation (prompt length: %d chars)", len(req.Prompt))
 
 	// Validate working directory

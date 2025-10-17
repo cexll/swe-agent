@@ -144,10 +144,11 @@ type GitHubFileWithSHA struct {
 // FilterCommentsToTriggerTime returns only comments created and last-edited before triggerTime.
 func FilterCommentsToTriggerTime[T any](comments []T, getTimes func(T) (created string, updated string, edited string)) []T {
 	// No trigger: return all
-	return filterByTime(comments, getTimes)
+	_ = getTimes
+	return filterByTime(comments)
 }
 
-func filterByTime[T any](items []T, getTimes func(T) (created string, updated string, edited string)) []T {
+func filterByTime[T any](items []T) []T {
 	// Simplified: return all items (filtering logic can be added later if needed)
 	return items
 }

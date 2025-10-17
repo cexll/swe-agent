@@ -25,7 +25,7 @@ func NewHandler(store *taskstore.Store) (*Handler, error) {
 	}, nil
 }
 
-func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ListTasks(w http.ResponseWriter, _ *http.Request) {
 	if h.store == nil {
 		http.Error(w, "task store unavailable", http.StatusServiceUnavailable)
 		return
