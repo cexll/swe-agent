@@ -13,19 +13,56 @@ func BuildAllowedTools(opts Options) []string {
 	// Base essential tools
 	base := []string{"Edit", "MultiEdit", "Glob", "Grep", "LS", "Read", "Write", "WebSearch", "WebFetch", "fetch__fetch"}
 
-	// GitHub MCP tools (requires mcp__github__ prefix for MCP server tools)
+	// GitHub MCP tools - Full capability matrix (requires mcp__github__ prefix for MCP server tools)
 	base = append(base,
-		// Comment + PR operations
-		"mcp__comment_updater__update_claude_comment",
-		"mcp__github__create_issue_comment",
-		"mcp__github__create_pull_request",
+		// Comment operations
+		"mcp__comment_updater__update_claude_comment", // PRIMARY for progress tracking
+		"mcp__github__add_issue_comment",              // Secondary for detailed analysis
 		"mcp__github__get_issue_comments",
+
+		// Issue management
+		"mcp__github__create_issue",      // Task decomposition
+		"mcp__github__update_issue",      // Modify issue content
+		"mcp__github__close_issue",       // Close completed issues
+		"mcp__github__reopen_issue",      // Reopen closed issues
+		"mcp__github__list_issues",       // Query issues
+		"mcp__github__assign_issue",      // Assign issues to users
+		"mcp__github__create_issue_comment", // Alternative name for add_issue_comment
+
+		// Pull request management
+		"mcp__github__create_pull_request",
+		"mcp__github__merge_pull_request",  // Merge approved PRs
+		"mcp__github__close_pull_request",  // Close PR without merging
+		"mcp__github__request_reviewers",   // Request specific reviewers
+		"mcp__github__create_and_submit_pull_request_review", // Submit code review
 		"mcp__github__add_comment_to_pending_review",
-		"mcp__github__add_issue_comment",
-		"mcp__github__assign_copilot_to_issue",
-		"mcp__github__create_and_submit_pull_request_review",
-		"mcp__github__create_branch",
 		"mcp__github__create_pending_pull_request_review",
+
+		// Label & milestone management
+		"mcp__github__add_labels",      // Add labels to issues/PRs
+		"mcp__github__remove_labels",   // Remove labels
+		"mcp__github__list_labels",     // List available labels
+		"mcp__github__create_label",    // Create new label
+		"mcp__github__create_milestone", // Create project milestones
+		"mcp__github__update_milestone", // Update milestones
+
+		// Branch management
+		"mcp__github__create_branch",
+		"mcp__github__list_branches",
+
+		// Organization & projects
+		"mcp__github__add_to_project", // Add issues/PRs to project boards
+		"mcp__github__assign_copilot_to_issue", // Assign Copilot
+
+		// Repository management
+		"mcp__github__list_repositories",
+		"mcp__github__get_repository",
+		"mcp__github__create_discussion",
+
+		// Search
+		"mcp__github__search_code",
+		"mcp__github__search_issues",
+		"mcp__github__search_repositories",
 	)
 	// File ops: choose between git bash vs API push tool
 	if opts.UseCommitSigning || opts.EnableGitHubFileOpsMCP {

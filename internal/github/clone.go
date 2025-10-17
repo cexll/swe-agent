@@ -78,11 +78,9 @@ func Clone(repo, branch, token string) (string, func(), error) {
 	// Create temporary directory name that avoids collisions across concurrent clones.
 	tmpDir := buildCloneWorkdir(repo, branch, nowFunc())
 
-	// Execute gh repo clone with retry for transient failures
+	// Execute gh repo clone (single attempt)
 	// Note: git flags must be passed after '--' separator
-	err := retryWithBackoff(func() error {
-		return runRepoClone(repo, branch, token, tmpDir)
-	})
+	err := runRepoClone(repo, branch, token, tmpDir)
 
 	if err != nil {
 		return "", nil, err
