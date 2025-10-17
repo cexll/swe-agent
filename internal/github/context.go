@@ -461,6 +461,11 @@ func (c *Context) GetTriggerCommentBody() string {
 	return c.TriggerComment.Body
 }
 
+// GetPreparedBranch returns the prepared branch name if set.
+func (c *Context) GetPreparedBranch() string {
+	return c.PreparedBranch
+}
+
 // Helper functions for safe map access
 func getStringField(data map[string]interface{}, keys ...string) string {
 	current := data

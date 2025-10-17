@@ -75,9 +75,19 @@ func BuildPrompt(ctx GitHubContext, fetched *ghdata.FetchResult) string {
 		return fmt.Sprintf("Error parsing template: %v\n\n%s", err, xml)
 	}
 
+	// Determine current branch (executor creates branch before calling AI)
+	currentBranch := ctx.GetPreparedBranch()
+	if currentBranch == "" {
+		currentBranch = ctx.GetBaseBranch()
+	}
+	if currentBranch == "" {
+		currentBranch = "main"
+	}
+
 	// Prepare template data
 	data := map[string]interface{}{
 		"GitHubContext": xml,
+		"CurrentBranch": currentBranch,
 	}
 
 	// Execute template
@@ -187,4 +197,6 @@ type GitHubContext interface {
 	GetTriggerUser() string
 	GetActor() string
 	GetTriggerCommentBody() string
+
+	GetPreparedBranch() string
 }
