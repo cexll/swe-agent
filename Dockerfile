@@ -66,9 +66,9 @@ WORKDIR /app
 
 # Copy runtime assets
 COPY --from=builder /build/templates ./templates
-
-# Copy and setup entrypoint script
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+# Make entrypoint executable
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Expose port
@@ -78,5 +78,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:8000/health || exit 1
 
-# Run the application
+# Use entrypoint to initialize auth files
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["/usr/local/bin/swe-agent"]
