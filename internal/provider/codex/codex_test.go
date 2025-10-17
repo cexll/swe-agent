@@ -286,14 +286,7 @@ func TestBuildCodexMCPConfig_FullContext(t *testing.T) {
 			wantLines: []string{
 				"# Dynamically generated Codex configuration",
 				"model = \"gpt-5-codex\"",
-				"[mcp_servers.github]",
-				"type = \"http\"",
-				"url = \"https://api.githubcopilot.com/mcp\"",
-				"[mcp_servers.github.headers]",
-				"Authorization = \"Bearer tok_123\"",
-				"[mcp_servers.git]",
-				"command = \"uvx\"",
-				"args = [\"mcp-server-git\"]",
+				// GitHub MCP and Git MCP removed - AI uses git/gh CLI via Bash
 				"[mcp_servers.comment_updater]",
 				"[mcp_servers.comment_updater.env]",
 				"GITHUB_TOKEN = \"tok_123\"",
@@ -301,6 +294,8 @@ func TestBuildCodexMCPConfig_FullContext(t *testing.T) {
 				"REPO_NAME = \"kernel\"",
 				"CLAUDE_COMMENT_ID = \"42\"",
 				"GITHUB_EVENT_NAME = \"pull_request\"",
+				"[mcp_servers.sequential_thinking]",
+				"[mcp_servers.fetch]",
 			},
 		},
 	}
@@ -391,98 +386,8 @@ func TestBuildCodexMCPConfig_FileWritten(t *testing.T) {
 	}
 }
 
-func TestBuildCodexMCPConfig_GitHubServer(t *testing.T) {
-	cases := []struct {
-		name          string
-		ctx           map[string]string
-		expectedLines []string
-	}{
-		{
-			name: "token provided",
-			ctx: map[string]string{
-				"github_token": "ghp_abc",
-			},
-			expectedLines: []string{
-				"[mcp_servers.github]",
-				"type = \"http\"",
-				"url = \"https://api.githubcopilot.com/mcp\"",
-				"[mcp_servers.github.headers]",
-				"Authorization = \"Bearer ghp_abc\"",
-			},
-		},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			home := setupTempHome(t)
-			ensureUVXAvailability(t, false)
-
-			if err := buildCodexMCPConfig(tc.ctx); err != nil {
-				t.Fatalf("buildCodexMCPConfig error: %v", err)
-			}
-
-			content := readConfigFile(t, home)
-			for _, line := range tc.expectedLines {
-				if !strings.Contains(content, line) {
-					t.Fatalf("expected config to contain %q\nconfig:\n%s", line, content)
-				}
-			}
-		})
-	}
-}
-
-func TestBuildCodexMCPConfig_GitServer(t *testing.T) {
-	cases := []struct {
-		name          string
-		uvxAvailable  bool
-		expectedLines []string
-		rejectLines   []string
-	}{
-		{
-			name:         "uvx present",
-			uvxAvailable: true,
-			expectedLines: []string{
-				"[mcp_servers.git]",
-				"command = \"uvx\"",
-				"args = [\"mcp-server-git\"]",
-			},
-		},
-		{
-			name:         "uvx missing",
-			uvxAvailable: false,
-			rejectLines: []string{
-				"[mcp_servers.git]",
-			},
-		},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			home := setupTempHome(t)
-			ensureUVXAvailability(t, tc.uvxAvailable)
-
-			if err := buildCodexMCPConfig(map[string]string{}); err != nil {
-				t.Fatalf("buildCodexMCPConfig error: %v", err)
-			}
-
-			content := readConfigFile(t, home)
-
-			for _, want := range tc.expectedLines {
-				if !strings.Contains(content, want) {
-					t.Fatalf("expected config to contain %q\nconfig:\n%s", want, content)
-				}
-			}
-
-			for _, reject := range tc.rejectLines {
-				if strings.Contains(content, reject) {
-					t.Fatalf("config should not contain %q\nconfig:\n%s", reject, content)
-				}
-			}
-		})
-	}
-}
+// TestBuildCodexMCPConfig_GitHubServer and TestBuildCodexMCPConfig_GitServer removed
+// GitHub MCP and Git MCP are no longer configured - AI uses git/gh CLI via Bash tool
 
 func TestBuildCodexMCPConfig_CommentUpdater(t *testing.T) {
 	cases := []struct {
@@ -562,9 +467,9 @@ func TestBuildCodexMCPConfig_PartialContext(t *testing.T) {
 			ctx: map[string]string{
 				"github_token": "ghp_partial",
 			},
+			// GitHub MCP no longer configured - AI uses git/gh CLI via Bash
 			wantPresent: []string{
-				"[mcp_servers.github]",
-				"Authorization = \"Bearer ghp_partial\"",
+				"model = \"gpt-5-codex\"",
 			},
 			wantAbsent: []string{
 				"[mcp_servers.comment_updater]",
@@ -578,7 +483,7 @@ func TestBuildCodexMCPConfig_PartialContext(t *testing.T) {
 				"repo_name":    "linux",
 			},
 			wantPresent: []string{
-				"[mcp_servers.github]",
+				"model = \"gpt-5-codex\"",
 			},
 			wantAbsent: []string{
 				"[mcp_servers.comment_updater]",

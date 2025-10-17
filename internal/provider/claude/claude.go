@@ -71,25 +71,8 @@ func buildMCPConfig(ctx map[string]string) (string, error) {
 		MCPServers: make(map[string]MCPServerConfig),
 	}
 
-	// Add GitHub HTTP MCP server if token available
-	// Uses GitHub Copilot's HTTP MCP endpoint (no Docker required)
-	if githubToken := ctx["github_token"]; githubToken != "" {
-		config.MCPServers["github"] = MCPServerConfig{
-			Type: "http",
-			URL:  "https://api.githubcopilot.com/mcp",
-			Headers: map[string]string{
-				"Authorization": "Bearer " + githubToken,
-			},
-		}
-	}
-
-	// Add Git MCP server (uvx mcp-server-git)
-	if _, err := exec.LookPath("uvx"); err == nil {
-		config.MCPServers["git"] = MCPServerConfig{
-			Command: "uvx",
-			Args:    []string{"mcp-server-git"},
-		}
-	}
+	// Note: GitHub MCP and Git MCP removed to match Codex provider approach.
+	// AI will use git/gh CLI via Bash tool with explicit allowedTools list.
 
 	// Add Comment Updater MCP server if comment ID available and binary exists
 	if commentID := ctx["comment_id"]; commentID != "" {
