@@ -98,15 +98,6 @@ func formatReviewComments(reviews *struct{ Nodes []Review }, imageURLMap map[str
 	return strings.Join(blocks, "\n\n")
 }
 
-// formatChangedFiles renders changed files list.
-func formatChangedFiles(files []File) string {
-	out := make([]string, 0, len(files))
-	for _, f := range files {
-		out = append(out, fmt.Sprintf("- %s (%s) +%d/-%d", f.Path, f.ChangeType, f.Additions, f.Deletions))
-	}
-	return strings.Join(out, "\n")
-}
-
 // formatChangedFilesWithSHA renders changed files with SHA suffix.
 func formatChangedFilesWithSHA(files []GitHubFileWithSHA) string {
 	out := make([]string, 0, len(files))
