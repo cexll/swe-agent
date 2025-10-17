@@ -32,8 +32,8 @@ type Provider struct {
 func NewProvider(apiKey, model string) *Provider {
 	// Set environment variables for Claude Code CLI
 	// Support both ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN
-	os.Setenv("ANTHROPIC_API_KEY", apiKey)
-	os.Setenv("ANTHROPIC_AUTH_TOKEN", apiKey)
+	_ = os.Setenv("ANTHROPIC_API_KEY", apiKey)
+	_ = os.Setenv("ANTHROPIC_AUTH_TOKEN", apiKey)
 
 	// Preserve ANTHROPIC_BASE_URL if already set in environment
 	// This allows using custom API endpoints
@@ -49,12 +49,6 @@ func NewProvider(apiKey, model string) *Provider {
 // Name returns the provider name
 func (p *Provider) Name() string {
 	return "claude"
-}
-
-// callClaudeCLI calls the Claude CLI directly with proper working directory
-// Backwards-compatible wrapper retained for tests. Prefer callClaudeCLIWithTools.
-func callClaudeCLI(workDir, prompt, model string) (*CLIResult, error) {
-	return callClaudeCLIWithTools(workDir, prompt, model, nil, nil, "")
 }
 
 // buildMCPConfig dynamically generates MCP server configuration JSON with environment variables.
@@ -122,6 +116,30 @@ func buildMCPConfig(ctx map[string]string) (string, error) {
 				log.Printf("[MCP Config] Warning: mcp-comment-server not found in PATH, comment updates via MCP will be unavailable")
 			}
 		}
+	}
+
+	// Add Sequential Thinking MCP server (npx @modelcontextprotocol/server-sequential-thinking)
+	if _, err := exec.LookPath("npx"); err == nil {
+		config.MCPServers["sequential-thinking"] = MCPServerConfig{
+			Command: "npx",
+			Args:    []string{"-y", "@modelcontextprotocol/server-sequential-thinking"},
+		}
+		log.Printf("[MCP Config] Added sequential-thinking server")
+	} else {
+		log.Printf("[MCP Config] Warning: npx not found, sequential-thinking MCP will be unavailable")
+	}
+
+	// Add Fetch MCP server (uvx mcp-server-fetch)
+	if _, err := exec.LookPath("uvx"); err == nil {
+		config.MCPServers["fetch"] = MCPServerConfig{
+			Command: "uvx",
+			Args: []string{
+				"--from",
+				"git+https://github.com/cexll/mcp-server-fetch.git",
+				"mcp-server-fetch",
+			},
+		}
+		log.Printf("[MCP Config] Added fetch server")
 	}
 
 	// Log final MCP server configuration summary
@@ -274,7 +292,7 @@ func (p *Provider) GenerateCode(ctx context.Context, req *provider.CodeRequest) 
 	// Call Claude CLI with correct working directory, tool configuration, and dynamic MCP config
 	result, err := callClaudeCLIWithTools(req.RepoPath, fullPrompt, p.model, allowed, disallowed, mcpConfig)
 	if err != nil {
-		return nil, fmt.Errorf("Claude CLI error: %w", err)
+		return nil, fmt.Errorf("claude CLI error: %w", err)
 	}
 
 	responseText := result.Result

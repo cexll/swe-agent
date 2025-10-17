@@ -36,12 +36,12 @@ type Provider struct {
 func NewProvider(apiKey, baseURL, model string) *Provider {
 	if apiKey != "" {
 		// OPENAI_API_KEY is used by Codex MCP, keep aligned with CLI expectation
-		os.Setenv("OPENAI_API_KEY", apiKey)
+		_ = os.Setenv("OPENAI_API_KEY", apiKey)
 	}
 
 	if baseURL != "" {
 		// OPENAI_BASE_URL allows custom API endpoints (e.g., proxies, local deployments)
-		os.Setenv("OPENAI_BASE_URL", baseURL)
+		_ = os.Setenv("OPENAI_BASE_URL", baseURL)
 	}
 
 	return &Provider{
@@ -79,12 +79,12 @@ func (p *Provider) GenerateCode(ctx context.Context, req *provider.CodeRequest) 
 	// Provide GitHub token to MCP tools via env (backup method)
 	if req.Context != nil {
 		if tok, ok := req.Context["github_token"]; ok && tok != "" {
-			os.Setenv("GITHUB_TOKEN", tok)
-			os.Setenv("GH_TOKEN", tok)
+			_ = os.Setenv("GITHUB_TOKEN", tok)
+			_ = os.Setenv("GH_TOKEN", tok)
 		}
 	}
 	// Ensure sandbox runs with full access per instruction
-	os.Setenv("SANDBOX_MODE", "danger-full-access")
+	_ = os.Setenv("SANDBOX_MODE", "danger-full-access")
 
 	// Executor already constructed the full prompt (system + user + GH XML)
 	fullPrompt := executionPrefix + req.Prompt
@@ -399,6 +399,22 @@ func buildCodexMCPConfig(ctx map[string]string) error {
 			}
 			sb.WriteString("\n")
 		}
+	}
+
+	// Add Sequential Thinking MCP server (npx @modelcontextprotocol/server-sequential-thinking)
+	if _, err := exec.LookPath("npx"); err == nil {
+		sb.WriteString("[mcp_servers.sequential_thinking]\n")
+		sb.WriteString("command = \"npx\"\n")
+		sb.WriteString("args = [\"-y\", \"@modelcontextprotocol/server-sequential-thinking\"]\n\n")
+		log.Printf("[Codex MCP] Added sequential-thinking server")
+	}
+
+	// Add Fetch MCP server (uvx mcp-server-fetch)
+	if _, err := exec.LookPath("uvx"); err == nil {
+		sb.WriteString("[mcp_servers.fetch]\n")
+		sb.WriteString("command = \"uvx\"\n")
+		sb.WriteString("args = [\"--from\", \"git+https://github.com/cexll/mcp-server-fetch.git\", \"mcp-server-fetch\"]\n\n")
+		log.Printf("[Codex MCP] Added fetch server")
 	}
 
 	// Write configuration file
