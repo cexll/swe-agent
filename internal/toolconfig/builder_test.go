@@ -26,7 +26,10 @@ func TestBuildAllowedTools_Defaults(t *testing.T) {
 	}
 
 	// Should include GitHub MCP tools by default (with mcp__github__ prefix)
-	for _, ght := range []string{"mcp__github__add_issue_comment", "mcp__github__create_issue_comment", "mcp__github__create_pull_request"} {
+	// Both comment tools should be present with distinct purposes:
+	// - update_claude_comment: Progress tracking (coordinating comment)
+	// - add_issue_comment: New content (detailed analysis, code review)
+	for _, ght := range []string{"mcp__comment_updater__update_claude_comment", "mcp__github__add_issue_comment", "mcp__github__create_pull_request"} {
 		if !contains(tools, ght) {
 			t.Errorf("Expected GitHub tool %s not found in allowed tools", ght)
 		}
@@ -51,12 +54,24 @@ func TestBuildAllowedTools_CommitSigning_Toggles(t *testing.T) {
 	}
 }
 
-func TestBuildAllowedTools_GitHubCommentAlwaysEnabled(t *testing.T) {
-	// mcp__github__add_issue_comment should always be present
+func TestBuildAllowedTools_BothCommentToolsEnabled(t *testing.T) {
+	// Both comment tools should be present with distinct purposes
 	opts := Options{}
 	tools := BuildAllowedTools(opts)
+	
+	// Check coordinating comment tool (progress tracking)
+	if !contains(tools, "mcp__comment_updater__update_claude_comment") {
+		t.Error("Expected mcp__comment_updater__update_claude_comment in allowed tools (for progress tracking)")
+	}
+	
+	// Check add_issue_comment tool (new content)
 	if !contains(tools, "mcp__github__add_issue_comment") {
-		t.Error("Expected mcp__github__add_issue_comment in allowed tools by default")
+		t.Error("Expected mcp__github__add_issue_comment in allowed tools (for new content like code reviews)")
+	}
+	
+	// Verify create_issue_comment alias is NOT present (to avoid confusion)
+	if contains(tools, "mcp__github__create_issue_comment") {
+		t.Error("mcp__github__create_issue_comment should not be present (add_issue_comment is the canonical name)")
 	}
 }
 

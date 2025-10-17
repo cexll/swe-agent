@@ -15,9 +15,9 @@ func BuildAllowedTools(opts Options) []string {
 
 	// GitHub MCP tools - Full capability matrix (requires mcp__github__ prefix for MCP server tools)
 	base = append(base,
-		// Comment operations
-		"mcp__comment_updater__update_claude_comment", // PRIMARY for progress tracking
-		"mcp__github__add_issue_comment",              // Secondary for detailed analysis
+		// Comment operations (two tools with distinct purposes)
+		"mcp__comment_updater__update_claude_comment", // PRIMARY: Progress tracking (updates coordinating comment)
+		"mcp__github__add_issue_comment",              // SECONDARY: New content (detailed analysis, code review)
 		"mcp__github__get_issue_comments",
 
 		// Issue management
@@ -27,7 +27,6 @@ func BuildAllowedTools(opts Options) []string {
 		"mcp__github__reopen_issue",      // Reopen closed issues
 		"mcp__github__list_issues",       // Query issues
 		"mcp__github__assign_issue",      // Assign issues to users
-		"mcp__github__create_issue_comment", // Alternative name for add_issue_comment
 
 		// Pull request management
 		"mcp__github__create_pull_request",

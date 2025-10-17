@@ -14,7 +14,7 @@ import (
 // UpdateCommentParams defines the input parameters for the tool
 // Corresponds to TypeScript: { body: z.string() }
 type UpdateCommentParams struct {
-	Body string `json:"body" jsonschema:"required,description=The updated comment content"`
+	Body string `json:"body" jsonschema:"The updated comment content"`
 }
 
 // HandleUpdateComment handles the update_claude_comment tool call
