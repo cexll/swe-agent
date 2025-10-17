@@ -16,6 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - ✅ **Prompt template restructured**: 361 → 619 lines with XML-based structure (Go constant in `internal/prompt/template.go`)
 - ✅ **Decision trees**: Clear flow diagrams for different task scenarios
 - ✅ **Full GitHub MCP capability**: 10 → 39 tools (issues, PRs, labels, milestones, search)
+- ✅ **Coordinating comment enforcement**: AI MUST use single comment for progress tracking (no duplicate comments)
 - ✅ **Massive code reduction**: 5,260 lines deleted (4,750 net reduction)
 - ✅ **100% test pass rate**: All 18 test packages passing
 
@@ -27,15 +28,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    - Added comprehensive decision flows for task complexity analysis
    - Included standard output format templates
    - Emphasized AI autonomy and full GitHub control
+   - **NEW**: Mandatory coordinating comment usage (prevents duplicate bot comments)
 
-2. **GitHub MCP Tools Expansion**:
+2. **Coordinating Comment System**:
+   - **Tool 1**: `mcp__comment_updater__update_claude_comment` (MANDATORY for progress tracking)
+   - **Tool 2**: `mcp__github__add_issue_comment` (OPTIONAL for detailed analysis/code review)
+   - **Behavior**: AI uses Tool 1 for all task status updates, Tool 2 only for standalone content
+   - **Benefits**: Clean issue/PR threads, unified progress tracking, no progress comment spam
+   - **Implementation**: `cmd/mcp-comment-server/` Go MCP server + enhanced prompt with decision rules
+
+3. **GitHub MCP Tools Expansion**:
    - **Issue Management**: create_issue, update_issue, close_issue, reopen_issue, list_issues, assign_issue
    - **PR Management**: merge_pull_request, close_pull_request, request_reviewers
    - **Labels & Milestones**: add_labels, remove_labels, create_label, create_milestone
    - **Search**: search_code, search_issues, search_repositories
    - **Repository**: list_repositories, get_repository, create_discussion
 
-3. **Code Cleanup (Deleted ~5,260 Lines)**:
+4. **Code Cleanup (Deleted ~5,260 Lines)**:
    - Removed unused packages: `branch/`, `validation/`, `image/`
    - Removed unused files: `apicommit.go`, `gh_client.go`, `label.go`, `retry.go`, `command_runner.go`, `templates.go`
    - Removed obsolete tests: 10+ test files
