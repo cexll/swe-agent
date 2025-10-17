@@ -20,6 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - ✅ **Massive code reduction**: 5,260 lines deleted (4,750 net reduction)
 - ✅ **100% test pass rate**: All 18 test packages passing
 - ✅ **GraphQL pagination support**: Handles PRs with 100+ files/comments via cursor-based pagination (October 2025)
+- ✅ **Cross-repository workflow**: AI-driven multi-repo support with zero executor changes (October 2025)
 
 **What Changed:**
 1. **Prompt System (GPT-5 Best Practices + Go text/template)**:
@@ -56,7 +57,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    - **Performance**: 99% of PRs use single query; only large PRs trigger pagination
    - **GraphQL queries updated**: All connections now include `pageInfo` fields
 
-5. **Code Cleanup (Deleted ~5,260 Lines)**:
+5. **Cross-Repository Workflow Support (October 2025)**:
+   - **Philosophy**: AI-driven discovery instead of hardcoded multi-repo coordination
+   - **Implementation**: Extended `internal/prompt/template.go` with new workflow pattern (5 lines of prompt changes)
+   - **Zero Executor Changes**: No new coordinator code, leverages existing `gh repo clone` capability
+   - **Features**:
+     - Natural language parsing: "Update backend and frontend repos" → AI clones both
+     - Sequential multi-repo processing with consistent branch naming
+     - Separate PR creation per repository
+     - Cross-repo dependency documentation in coordinating comment
+   - **Linus Principle**: Eliminates special cases (treats single/multi-repo uniformly)
+   - **Usage Example**:
+     ```
+     User: /code Fix authentication in api-server repo and web-client repo
+     AI: 
+     1. Clones cexll/api-server to ../api-server
+     2. Creates branch swe-agent/issue-123, fixes auth.go, commits, pushes
+     3. Clones cexll/web-client to ../web-client
+     4. Creates branch swe-agent/issue-123, fixes Login.tsx, commits, pushes
+     5. Creates PRs in both repos
+     6. Updates coordinating comment with all PR links and dependencies
+     ```
+
+6. **Code Cleanup (Deleted ~5,260 Lines)**:
    - Removed unused packages: `branch/`, `validation/`, `image/`
    - Removed unused files: `apicommit.go`, `gh_client.go`, `label.go`, `retry.go`, `command_runner.go`, `templates.go`
    - Removed obsolete tests: 10+ test files
@@ -567,6 +590,270 @@ The system prompt is defined as a Go constant in `internal/prompt/template.go`. 
 2. Add new template variables in `builder.go` if needed (e.g., `data["NewField"] = value`)
 3. Rebuild the binary: `go build cmd/main.go`
 4. The new template will be compiled into the binary
+
+### Prompt Development Guidelines
+
+When modifying `internal/prompt/template.go`, **MUST** follow best practices from `docs/gpt5_prompting_guide.md`:
+
+#### 1. Context Gathering Strategy
+
+**Goal**: Get enough context fast. Parallelize discovery and stop as soon as you can act.
+
+**Method**:
+```xml
+<context_gathering>
+Goal: Get enough context fast. Parallelize discovery and stop as soon as you can act.
+
+Method:
+- Start broad, then fan out to focused subqueries
+- In parallel, launch varied queries; read top hits per query
+- Deduplicate paths and cache; don't repeat queries
+- Avoid over-searching for context
+
+Early stop criteria:
+- You can name exact content to change
+- Top hits converge (~70%) on one area/path
+
+Tool call budget: 5-8 calls for initial context gathering
+- Scale up for complex tasks
+- Scale down for simple, well-defined tasks
+
+Loop: Batch search → minimal plan → complete task
+- Search again only if validation fails or new unknowns appear
+- Prefer acting over more searching
+</context_gathering>
+```
+
+**Anti-pattern**: Avoid prompts like "Be THOROUGH when gathering information" which cause over-searching.
+
+**Why this matters**: GPT-5/Claude are naturally introspective; excessive encouragement leads to repetitive tool calls.
+
+---
+
+#### 2. Self-Reflection for Code Quality
+
+**Before implementation, AI should construct and evaluate against quality rubrics:**
+
+```xml
+<self_reflection>
+Before implementing code changes:
+1. Construct quality rubric - Think of 5-7 categories for world-class code:
+   - Maintainability (follows Linus principles)
+   - Test coverage (adequate tests included)
+   - Performance (no obvious bottlenecks)
+   - Security (no vulnerabilities introduced)
+   - Code style (matches existing conventions)
+   - Documentation (clear, minimal comments)
+   - Backward compatibility (no breaking changes)
+
+2. Evaluate solution - Internally assess your proposed implementation
+
+3. Iterate if needed - If not hitting top marks, revise your approach
+</self_reflection>
+```
+
+**Example rubric for web apps**:
+- Visual quality (spacing, padding, hover states)
+- Component modularity (reusable, no duplication)
+- Design consistency (unified color tokens, typography)
+- Accessibility (semantic HTML, ARIA roles)
+- Performance (lazy loading, code splitting)
+
+---
+
+#### 3. Persistence and Autonomy
+
+**Core directive**: AI is an autonomous agent - keep going until the user's query is completely resolved.
+
+```xml
+<persistence>
+You are an agent - please keep going until the user's query is completely resolved, before ending your turn and yielding back to the user.
+
+Behavior:
+- Only terminate when the problem is solved
+- Never stop or hand back to the user when you encounter uncertainty
+- Research or deduce the most reasonable approach and continue
+- Document assumptions in the coordinating comment (don't ask for confirmation)
+
+Stop conditions:
+- Task fully completed and tested
+- All sub-tasks resolved
+- Final deliverables verified
+</persistence>
+```
+
+**Key insight from Cursor**: "If proposing next steps that would involve changing the code, make those changes proactively for the user to approve/reject rather than asking whether to proceed."
+
+---
+
+#### 4. Tool Preambles (Progress Updates)
+
+**Purpose**: Keep users informed during long-running tasks.
+
+```xml
+<tool_preambles>
+Format:
+1. Rephrase the user's goal in a clear, concise manner
+2. Outline a structured plan detailing each logical step
+3. As you execute, narrate each step succinctly and sequentially
+4. Mark progress clearly in the coordinating comment
+5. Finish by summarizing completed work
+
+Verbosity:
+- Keep text outputs brief and focused
+- Use high verbosity for code (readable variable names, clear logic)
+</tool_preambles>
+```
+
+**Example preamble**:
+```markdown
+## Task: Fix Authentication Bug
+
+### Plan
+1. [PENDING] Analyze auth.go for null pointer issues
+2. [PENDING] Implement fix with null check
+3. [PENDING] Run tests to verify
+4. [PENDING] Create PR
+
+### Status
+Starting analysis of auth.go...
+```
+
+---
+
+#### 5. Code Quality Standards
+
+**Frontend Frameworks** (for new apps):
+- **Frameworks**: Next.js (TypeScript), React, HTML
+- **Styling/UI**: Tailwind CSS, shadcn/ui, Radix Themes
+- **Icons**: Material Symbols, Heroicons, Lucide
+- **Animation**: Motion
+- **Fonts**: Sans Serif, Inter, Geist, IBM Plex Sans
+
+**Code Editing Rules** (for existing codebases):
+
+```xml
+<code_editing_rules>
+<guiding_principles>
+- Clarity and Reuse: Every component should be modular and reusable
+- Consistency: Adhere to existing design system (colors, typography, spacing)
+- Simplicity: Favor small, focused components; avoid unnecessary complexity
+- Visual Quality: Follow high visual quality bar (spacing, padding, hover states)
+</guiding_principles>
+
+<best_practices>
+- Visual Hierarchy: Limit typography to 4-5 font sizes and weights
+- Color Usage: Use 1 neutral base + up to 2 accent colors
+- Spacing: Always use multiples of 4 for padding/margins
+- State Handling: Use skeleton placeholders or animate-pulse for loading
+- Accessibility: Semantic HTML, ARIA roles, keyboard navigation
+</best_practices>
+
+<code_style>
+- Readable first: Clear variable names, straightforward control flow
+- No code golf or overly clever one-liners (unless requested)
+- Comments only when code intent is unclear
+- Follow existing codebase conventions (check CLAUDE.md, package.json)
+</code_style>
+</code_editing_rules>
+```
+
+**Go-specific standards** (this project):
+- Follow Linus principles (see Design Philosophy below)
+- Max 3 levels of indentation
+- Short functions (20-50 lines max)
+- Clear error handling with context
+- Test coverage ≥85%
+
+---
+
+#### 6. Instruction Hierarchy (Avoid Contradictions)
+
+**Problem**: Contradictory instructions impair reasoning efficiency.
+
+**Bad example**:
+```
+"Never schedule without consent" 
++ "Auto-assign earliest slot without contacting patient"
+```
+
+**Solution**: Establish clear hierarchy:
+1. Safety-critical rules (highest priority)
+2. Workflow steps
+3. Best practices
+4. Style preferences (lowest priority)
+
+**Resolution pattern**:
+```
+If conflict exists:
+- Higher-priority instruction wins
+- Document the resolution in comments
+- Add explicit escape hatch (e.g., "except in emergency cases")
+```
+
+**Testing**: Use OpenAI's [prompt optimizer tool](https://platform.openai.com/chat/edit?optimize=true) to identify contradictions.
+
+---
+
+#### 7. Verbosity Control
+
+**Global setting** (via API parameter):
+- `low`: Concise status updates, brief summaries
+- `medium` (default): Balanced detail
+- `high`: Verbose explanations
+
+**Local override** (in prompt):
+```xml
+<verbosity>
+- Keep text outputs brief and focused (use low verbosity)
+- Use high verbosity for code (readable variable names, clear logic)
+- Use high verbosity for explaining complex design decisions
+</verbosity>
+```
+
+**Cursor's approach**: Set `verbosity=low` globally, then prompt for high verbosity in code tools only.
+
+---
+
+#### Implementation Checklist
+
+When modifying `internal/prompt/template.go`:
+- [ ] **XML structure**: Use semantic tags (`<system_identity>`, `<tool_constraints>`, `<decision_tree>`)
+- [ ] **Context gathering**: Include 5-8 tool call budget with early stop criteria
+- [ ] **Self-reflection**: Add quality rubric construction step
+- [ ] **Persistence**: Add "never stop at uncertainty" clause
+- [ ] **Tool preambles**: Require plan + progress updates
+- [ ] **Code standards**: Specify frontend frameworks and Go conventions
+- [ ] **Instruction hierarchy**: Review for contradictions
+- [ ] **Examples**: Include good vs bad behavior examples
+- [ ] **Escape hatches**: Add clauses for exceptional cases
+
+---
+
+#### Testing and Iteration
+
+**Process**:
+1. Deploy prompt changes to staging
+2. Test with representative tasks (simple, medium, complex)
+3. Monitor for:
+   - Premature stopping (add persistence)
+   - Excessive tool calls (tighten context gathering)
+   - Poor code quality (strengthen rubrics)
+   - Contradictions (resolve hierarchy)
+4. Use GPT-5 as meta-prompter: Ask "What phrases could improve X behavior?"
+
+**Metaprompt template**:
+```
+Here's a prompt: [PROMPT]
+
+The desired behavior is [DO DESIRED BEHAVIOR], but instead it [DOES UNDESIRED BEHAVIOR]. 
+
+What are minimal edits to encourage more consistent behavior?
+```
+
+---
+
+**Reference**: See `docs/gpt5_prompting_guide.md` for full OpenAI GPT-5 optimization guidelines.
 
 ## Code Conventions
 
