@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-func TestStripHtmlComments(t *testing.T) {
+func TestStripHTMLComments(t *testing.T) {
 	in := "a<!-- x -->b<!--y-->c"
-	if got := StripHtmlComments(in); got != "abc" {
+	if got := StripHTMLComments(in); got != "abc" {
 		t.Fatalf("got %q, want %q", got, "abc")
 	}
 }
@@ -43,10 +43,10 @@ func TestStripHiddenAttributes(t *testing.T) {
 	}
 }
 
-func TestNormalizeHtmlEntities(t *testing.T) {
+func TestNormalizeHTMLEntities(t *testing.T) {
 	in := "Hello &#65; &#x42; &#9999;!"
 	want := "Hello A B !"
-	if got := NormalizeHtmlEntities(in); got != want {
+	if got := NormalizeHTMLEntities(in); got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }

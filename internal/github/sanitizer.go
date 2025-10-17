@@ -37,8 +37,8 @@ var (
 	reGitHubFineGrained  = regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{11,221}\b`)
 )
 
-// StripHtmlComments removes HTML comments.
-func StripHtmlComments(s string) string {
+// StripHTMLComments removes HTML comments.
+func StripHTMLComments(s string) string {
 	return reHTMLComments.ReplaceAllString(s, "")
 }
 
@@ -81,8 +81,8 @@ func StripHiddenAttributes(s string) string {
 	return s
 }
 
-// NormalizeHtmlEntities simplifies numeric entities for ASCII range.
-func NormalizeHtmlEntities(s string) string {
+// NormalizeHTMLEntities simplifies numeric entities for ASCII range.
+func NormalizeHTMLEntities(s string) string {
 	// decimal entities
 	s = regexp.MustCompile(`&#(\d+);`).ReplaceAllStringFunc(s, func(in string) string {
 		m := regexp.MustCompile(`\d+`).FindString(in)
@@ -140,12 +140,12 @@ func SanitizeContent(s string) string {
 	if s == "" {
 		return s
 	}
-	s = StripHtmlComments(s)
+	s = StripHTMLComments(s)
 	s = StripInvisibleCharacters(s)
 	s = StripMarkdownImageAltText(s)
 	s = StripMarkdownLinkTitles(s)
 	s = StripHiddenAttributes(s)
-	s = NormalizeHtmlEntities(s)
+	s = NormalizeHTMLEntities(s)
 	s = RedactGitHubTokens(s)
 	// Trim repeated whitespace edges but keep internal formatting
 	return strings.TrimSpace(s)
