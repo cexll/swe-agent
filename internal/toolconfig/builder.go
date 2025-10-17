@@ -11,7 +11,13 @@ import (
 // callers to format/stringify as needed.
 func BuildAllowedTools(opts Options) []string {
 	// Base essential tools
-	base := []string{"Edit", "MultiEdit", "Glob", "Grep", "LS", "Read", "Write", "WebSearch", "WebFetch", "fetch__fetch"}
+	base := []string{"Edit", "MultiEdit", "Glob", "Grep", "LS", "Read", "Write", "WebSearch", "Bash"}
+
+	// Custom MCP tools
+	base = append(base,
+		"mcp__sequential-thinking__sequentialthinking",
+		"mcp__fetch__fetch",
+	)
 
 	// GitHub MCP tools - Full capability matrix (requires mcp__github__ prefix for MCP server tools)
 	base = append(base,
@@ -21,27 +27,27 @@ func BuildAllowedTools(opts Options) []string {
 		"mcp__github__get_issue_comments",
 
 		// Issue management
-		"mcp__github__create_issue",      // Task decomposition
-		"mcp__github__update_issue",      // Modify issue content
-		"mcp__github__close_issue",       // Close completed issues
-		"mcp__github__reopen_issue",      // Reopen closed issues
-		"mcp__github__list_issues",       // Query issues
-		"mcp__github__assign_issue",      // Assign issues to users
+		"mcp__github__create_issue", // Task decomposition
+		"mcp__github__update_issue", // Modify issue content
+		"mcp__github__close_issue",  // Close completed issues
+		"mcp__github__reopen_issue", // Reopen closed issues
+		"mcp__github__list_issues",  // Query issues
+		"mcp__github__assign_issue", // Assign issues to users
 
 		// Pull request management
 		"mcp__github__create_pull_request",
-		"mcp__github__merge_pull_request",  // Merge approved PRs
-		"mcp__github__close_pull_request",  // Close PR without merging
-		"mcp__github__request_reviewers",   // Request specific reviewers
+		"mcp__github__merge_pull_request",                    // Merge approved PRs
+		"mcp__github__close_pull_request",                    // Close PR without merging
+		"mcp__github__request_reviewers",                     // Request specific reviewers
 		"mcp__github__create_and_submit_pull_request_review", // Submit code review
 		"mcp__github__add_comment_to_pending_review",
 		"mcp__github__create_pending_pull_request_review",
 
 		// Label & milestone management
-		"mcp__github__add_labels",      // Add labels to issues/PRs
-		"mcp__github__remove_labels",   // Remove labels
-		"mcp__github__list_labels",     // List available labels
-		"mcp__github__create_label",    // Create new label
+		"mcp__github__add_labels",       // Add labels to issues/PRs
+		"mcp__github__remove_labels",    // Remove labels
+		"mcp__github__list_labels",      // List available labels
+		"mcp__github__create_label",     // Create new label
 		"mcp__github__create_milestone", // Create project milestones
 		"mcp__github__update_milestone", // Update milestones
 
@@ -50,7 +56,7 @@ func BuildAllowedTools(opts Options) []string {
 		"mcp__github__list_branches",
 
 		// Organization & projects
-		"mcp__github__add_to_project", // Add issues/PRs to project boards
+		"mcp__github__add_to_project",          // Add issues/PRs to project boards
 		"mcp__github__assign_copilot_to_issue", // Assign Copilot
 
 		// Repository management
@@ -75,16 +81,17 @@ func BuildAllowedTools(opts Options) []string {
 	// Git MCP tools (requires mcp__git__ prefix for MCP server tools)
 	if !opts.UseCommitSigning {
 		base = append(base,
-			"mcp__git__status",
-			"mcp__git__diff_unstaged",
-			"mcp__git__diff_staged",
-			"mcp__git__commit",
-			"mcp__git__add",
-			"mcp__git__push",
-			"mcp__git__branch",
-			"mcp__git__log",
-			"mcp__git__show",
-			"mcp__git__create_branch",
+			"mcp__git__git_status",
+			"mcp__git__git_diff_unstaged",
+			"mcp__git__git_diff_staged",
+			"mcp__git__git_diff",
+			"mcp__git__git_commit",
+			"mcp__git__git_add",
+			"mcp__git__git_reset",
+			"mcp__git__git_branch",
+			"mcp__git__git_log",
+			"mcp__git__git_show",
+			"mcp__git__git_create_branch",
 		)
 	}
 
@@ -112,7 +119,7 @@ func BuildAllowedTools(opts Options) []string {
 func BuildDisallowedTools(opts Options) []string {
 	// Default disallowed tools for safety (match reference implementation)
 	// WebSearch and WebFetch are disallowed by default for security
-	disallowed := []string{"WebSearch", "WebFetch"}
+	disallowed := []string{"WebFetch"}
 
 	// Remove from defaults if explicitly allowed in CustomAllowedTools
 	customAllowedSet := toSet(opts.CustomAllowedTools)
