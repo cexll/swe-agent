@@ -671,7 +671,6 @@ func TestExecute_PRContext_UsesHeadBranchFromFetchedData(t *testing.T) {
 	// Track git commands to verify checkout uses correct branch
 	var gitCheckoutCalled bool
 	var checkoutBranch string
-	var checkoutIsNewBranch bool
 	runCmd = func(name string, args ...string) error {
 		if name == "git" && len(args) > 0 {
 			// Handle git -C workdir checkout ...
@@ -682,17 +681,9 @@ func TestExecute_PRContext_UsesHeadBranchFromFetchedData(t *testing.T) {
 			
 			if args[cmdStart] == "checkout" {
 				gitCheckoutCalled = true
-				// Extract branch from: git checkout <branch> or git checkout -b <branch>
-				if cmdStart+1 < len(args) && args[cmdStart+1] == "-b" {
-					// git checkout -b <branch>
-					checkoutIsNewBranch = true
-					if cmdStart+2 < len(args) {
-						checkoutBranch = args[cmdStart+2]
-					}
-				} else if cmdStart+1 < len(args) {
-					// git checkout <branch>
-					checkoutIsNewBranch = false
-					checkoutBranch = args[cmdStart+1]
+				// Extract branch from: git checkout -b <branch> [origin/branch]
+				if cmdStart+1 < len(args) && args[cmdStart+1] == "-b" && cmdStart+2 < len(args) {
+					checkoutBranch = args[cmdStart+2]
 				}
 			}
 		}
@@ -741,11 +732,5 @@ func TestExecute_PRContext_UsesHeadBranchFromFetchedData(t *testing.T) {
 	// The branch should be "feature/auth-fix" (from fetched PR data, not generated)
 	if checkoutBranch != "feature/auth-fix" {
 		t.Fatalf("git checkout branch = %q, want %q", checkoutBranch, "feature/auth-fix")
-	}
-	
-	// Since the remote branch doesn't exist in test environment (ls-remote will fail),
-	// it should use "checkout -b" to create a new local branch
-	if !checkoutIsNewBranch {
-		t.Fatal("Expected git checkout -b (new branch), got git checkout (existing branch)")
 	}
 }

@@ -115,12 +115,14 @@ func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) erro
 
 		// 如果 ls-remote 成功且有输出，说明远程分支存在（PR 场景）
 		if checkErr == nil && len(output) > 0 {
-			// 远程分支存在：fetch + checkout（PR 场景）
+			// 远程分支存在：fetch + create local tracking branch
 			if err := runCmd("git", "-C", workdir, "fetch", "origin", branch); err != nil {
 				return fmt.Errorf("fetch remote branch: %w", err)
 			}
-			if err := runCmd("git", "-C", workdir, "checkout", branch); err != nil {
-				return fmt.Errorf("checkout existing branch: %w", err)
+			// Create local branch tracking origin/branch
+			remoteBranch := fmt.Sprintf("origin/%s", branch)
+			if err := runCmd("git", "-C", workdir, "checkout", "-b", branch, remoteBranch); err != nil {
+				return fmt.Errorf("checkout remote branch: %w", err)
 			}
 		} else {
 			// 远程分支不存在或 ls-remote 失败：创建新分支（Issue 场景）
