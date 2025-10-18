@@ -65,6 +65,18 @@ func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) erro
 		return fmt.Errorf("fetch GitHub data: %w", err)
 	}
 
+	// 2.5) Fix PR context: If PreparedBranch is empty but we fetched PR data,
+	//      extract head branch from GraphQL data (issue_comment webhooks don't provide it)
+	if webhookCtx.IsPRContext() && webhookCtx.PreparedBranch == "" {
+		if pr, ok := fetched.ContextData.(ghdata.PullRequest); ok {
+			webhookCtx.PreparedBranch = pr.HeadRefName
+			// Also update BaseBranch if not set
+			if webhookCtx.PreparedBaseBranch == "" {
+				webhookCtx.PreparedBaseBranch = pr.BaseRefName
+			}
+		}
+	}
+
 	// 3) Clone repository (prefer prepared base branch)
 	base := webhookCtx.PreparedBaseBranch
 	if base == "" {

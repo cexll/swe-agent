@@ -654,3 +654,98 @@ func containsErr(err error, substr string) bool {
 	}
 	return contains(err.Error(), substr)
 }
+
+// TestExecute_PRContext_UsesHeadBranchFromFetchedData verifies that when PreparedBranch
+// is empty in a PR context (e.g., issue_comment webhook), the executor extracts the head
+// branch from fetched PR data instead of generating a new branch name.
+func TestExecute_PRContext_UsesHeadBranchFromFetchedData(t *testing.T) {
+	origClone := cloneRepo
+	origRun := runCmd
+	defer func() { cloneRepo = origClone; runCmd = origRun }()
+
+	// Mock cloneRepo
+	cloneRepo = func(repo, branch, token string) (string, func(), error) {
+		return t.TempDir(), func() {}, nil
+	}
+
+	// Track git commands to verify checkout uses correct branch
+	var gitCheckoutCalled bool
+	var checkoutBranch string
+	var checkoutIsNewBranch bool
+	runCmd = func(name string, args ...string) error {
+		if name == "git" && len(args) > 0 {
+			// Handle git -C workdir checkout ...
+			cmdStart := 0
+			if len(args) > 2 && args[0] == "-C" {
+				cmdStart = 2
+			}
+			
+			if args[cmdStart] == "checkout" {
+				gitCheckoutCalled = true
+				// Extract branch from: git checkout <branch> or git checkout -b <branch>
+				if cmdStart+1 < len(args) && args[cmdStart+1] == "-b" {
+					// git checkout -b <branch>
+					checkoutIsNewBranch = true
+					if cmdStart+2 < len(args) {
+						checkoutBranch = args[cmdStart+2]
+					}
+				} else if cmdStart+1 < len(args) {
+					// git checkout <branch>
+					checkoutIsNewBranch = false
+					checkoutBranch = args[cmdStart+1]
+				}
+			}
+		}
+		return nil
+	}
+
+	mp := &mockProvider{generateFunc: func(ctx context.Context, req *provider.CodeRequest) (*provider.CodeResponse, error) {
+		return &provider.CodeResponse{Summary: "ok"}, nil
+	}}
+	ma := &mockAuthProvider{}
+	ex := New(mp, ma)
+
+	// Mock fetcher to return PR data with HeadRefName
+	ex.fetcher = &mockFetcher{fetchFunc: func(ctx context.Context, gctx *github.Context) (*ghdata.FetchResult, error) {
+		return &ghdata.FetchResult{
+			ContextData: ghdata.PullRequest{
+				Title:       "Test PR",
+				Body:        "Test body",
+				Author:      ghdata.Author{Login: "testuser"},
+				BaseRefName: "main",
+				HeadRefName: "feature/auth-fix", // This should be used for checkout
+				State:       "OPEN",
+			},
+		}, nil
+	}}
+
+	// Create PR context but with empty PreparedBranch (simulating issue_comment webhook)
+	ctx := buildTestCtx(true)
+	ctx.PreparedBranch = "" // Explicitly empty - mode.Prepare() returned empty
+	ctx.HeadBranch = ""     // Also empty in webhook context
+	ctx.BaseBranch = "main" // Ensure base is set
+
+	// Set PreparedPrompt to avoid hitting prompt builder
+	ctx.PreparedPrompt = "test prompt"
+
+	err := ex.Execute(context.Background(), ctx)
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	// Verify git checkout was called with the PR's head branch from fetched data
+	if !gitCheckoutCalled {
+		t.Fatal("Expected git checkout to be called")
+	}
+	
+	// The branch should be "feature/auth-fix" (from fetched PR data, not generated)
+	if checkoutBranch != "feature/auth-fix" {
+		t.Fatalf("git checkout branch = %q, want %q", checkoutBranch, "feature/auth-fix")
+	}
+	
+	// Since the remote branch doesn't exist in test environment (ls-remote will fail),
+	// it should use "checkout -b" to create a new local branch
+	if !checkoutIsNewBranch {
+		t.Fatal("Expected git checkout -b (new branch), got git checkout (existing branch)")
+	}
+}
