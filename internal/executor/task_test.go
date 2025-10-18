@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -236,18 +237,21 @@ func TestFeatureBranchName(t *testing.T) {
 				t.Fatalf("branch %q is shorter than expected prefix %q", branch, tt.wantPrefix)
 			}
 
+			if !strings.HasPrefix(branch, "swe-agent/") {
+				t.Fatalf("branch = %q, want swe-agent/ prefix", branch)
+			}
 			if branch[:len(tt.wantPrefix)] != tt.wantPrefix {
 				t.Errorf("branch = %q, want prefix %q", branch, tt.wantPrefix)
 			}
 
-			// Branch should contain a timestamp at the end
 			if len(branch) <= len(tt.wantPrefix) {
 				t.Error("branch should have timestamp suffix")
 			}
 
 			// Basic sanity: timestamp should be between before/after
-			_ = before
-			_ = after
+			if after < before {
+				t.Fatalf("time moved backwards: before=%d after=%d", before, after)
+			}
 		})
 	}
 }
@@ -661,7 +665,12 @@ func containsErr(err error, substr string) bool {
 func TestExecute_PRContext_UsesHeadBranchFromFetchedData(t *testing.T) {
 	origClone := cloneRepo
 	origRun := runCmd
-	defer func() { cloneRepo = origClone; runCmd = origRun }()
+	origLsRemote := gitLsRemoteHeads
+	defer func() {
+		cloneRepo = origClone
+		runCmd = origRun
+		gitLsRemoteHeads = origLsRemote
+	}()
 
 	// Mock cloneRepo
 	cloneRepo = func(repo, branch, token string) (string, func(), error) {
@@ -678,7 +687,7 @@ func TestExecute_PRContext_UsesHeadBranchFromFetchedData(t *testing.T) {
 			if len(args) > 2 && args[0] == "-C" {
 				cmdStart = 2
 			}
-			
+
 			if args[cmdStart] == "checkout" {
 				gitCheckoutCalled = true
 				// Extract branch from: git checkout -b <branch> [origin/branch]
@@ -688,6 +697,13 @@ func TestExecute_PRContext_UsesHeadBranchFromFetchedData(t *testing.T) {
 			}
 		}
 		return nil
+	}
+
+	gitLsRemoteHeads = func(workdir, pattern string) ([]string, error) {
+		if pattern == "feature/auth-fix" {
+			return []string{"refs/heads/feature/auth-fix"}, nil
+		}
+		return nil, nil
 	}
 
 	mp := &mockProvider{generateFunc: func(ctx context.Context, req *provider.CodeRequest) (*provider.CodeResponse, error) {
@@ -728,9 +744,267 @@ func TestExecute_PRContext_UsesHeadBranchFromFetchedData(t *testing.T) {
 	if !gitCheckoutCalled {
 		t.Fatal("Expected git checkout to be called")
 	}
-	
+
 	// The branch should be "feature/auth-fix" (from fetched PR data, not generated)
 	if checkoutBranch != "feature/auth-fix" {
 		t.Fatalf("git checkout branch = %q, want %q", checkoutBranch, "feature/auth-fix")
+	}
+}
+
+func TestExecute_IssueContext_ReusesExistingBranch(t *testing.T) {
+	origClone := cloneRepo
+	origRun := runCmd
+	origLsRemote := gitLsRemoteHeads
+	defer func() {
+		cloneRepo = origClone
+		runCmd = origRun
+		gitLsRemoteHeads = origLsRemote
+	}()
+
+	tempDir := t.TempDir()
+	cloneRepo = func(repo, branch, token string) (string, func(), error) {
+		return tempDir, func() {}, nil
+	}
+
+	var checkoutBranch string
+	runCmd = func(name string, args ...string) error {
+		if name == "git" && len(args) > 0 {
+			idx := 0
+			if len(args) > 2 && args[0] == "-C" {
+				idx = 2
+			}
+			if args[idx] == "checkout" && idx+1 < len(args) && args[idx+1] == "-b" && idx+2 < len(args) {
+				checkoutBranch = args[idx+2]
+			}
+		}
+		return nil
+	}
+
+	gitLsRemoteHeads = func(workdir, pattern string) ([]string, error) {
+		switch pattern {
+		case "swe-agent/2461-*":
+			return []string{
+				"refs/heads/swe-agent/2461-111",
+				"refs/heads/swe-agent/2461-222",
+			}, nil
+		case "swe-agent/2461-222":
+			return []string{"refs/heads/swe-agent/2461-222"}, nil
+		default:
+			return nil, nil
+		}
+	}
+
+	mp := &mockProvider{}
+	ma := &mockAuthProvider{}
+	ex := New(mp, ma)
+	ex.fetcher = &mockFetcher{}
+
+	ctx := buildTestCtx(false)
+	ctx.IssueNumber = 2461
+	ctx.PreparedBranch = ""
+	ctx.PreparedPrompt = "prompt"
+
+	if err := ex.Execute(context.Background(), ctx); err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	if checkoutBranch != "swe-agent/2461-222" {
+		t.Fatalf("checkout branch = %q, want %q", checkoutBranch, "swe-agent/2461-222")
+	}
+	if ctx.PreparedBranch != "swe-agent/2461-222" {
+		t.Fatalf("PreparedBranch = %q, want %q", ctx.PreparedBranch, "swe-agent/2461-222")
+	}
+}
+
+func TestExecute_IssueContext_CreatesBranchWhenNoneExists(t *testing.T) {
+	origClone := cloneRepo
+	origRun := runCmd
+	origLsRemote := gitLsRemoteHeads
+	defer func() {
+		cloneRepo = origClone
+		runCmd = origRun
+		gitLsRemoteHeads = origLsRemote
+	}()
+
+	tempDir := t.TempDir()
+	cloneRepo = func(repo, branch, token string) (string, func(), error) {
+		return tempDir, func() {}, nil
+	}
+
+	var checkoutBranch string
+	runCmd = func(name string, args ...string) error {
+		if name == "git" && len(args) > 0 {
+			idx := 0
+			if len(args) > 2 && args[0] == "-C" {
+				idx = 2
+			}
+			if args[idx] == "checkout" && idx+1 < len(args) && args[idx+1] == "-b" && idx+2 < len(args) {
+				checkoutBranch = args[idx+2]
+			}
+		}
+		return nil
+	}
+
+	gitLsRemoteHeads = func(workdir, pattern string) ([]string, error) {
+		return nil, nil
+	}
+
+	mp := &mockProvider{}
+	ma := &mockAuthProvider{}
+	ex := New(mp, ma)
+	ex.fetcher = &mockFetcher{}
+
+	ctx := buildTestCtx(false)
+	ctx.IssueNumber = 2461
+	ctx.PreparedBranch = ""
+	ctx.PreparedPrompt = "prompt"
+
+	if err := ex.Execute(context.Background(), ctx); err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	if !strings.HasPrefix(checkoutBranch, "swe-agent/2461-") {
+		t.Fatalf("checkout branch = %q, want prefix swe-agent/2461-", checkoutBranch)
+	}
+	if ctx.PreparedBranch != checkoutBranch {
+		t.Fatalf("PreparedBranch = %q, want %q", ctx.PreparedBranch, checkoutBranch)
+	}
+}
+
+func TestExecute_IssueContext_CreatesBranchWhenLsRemoteFails(t *testing.T) {
+	origClone := cloneRepo
+	origRun := runCmd
+	origLsRemote := gitLsRemoteHeads
+	defer func() {
+		cloneRepo = origClone
+		runCmd = origRun
+		gitLsRemoteHeads = origLsRemote
+	}()
+
+	tempDir := t.TempDir()
+	cloneRepo = func(repo, branch, token string) (string, func(), error) {
+		return tempDir, func() {}, nil
+	}
+
+	var checkoutBranch string
+	runCmd = func(name string, args ...string) error {
+		if name == "git" && len(args) > 0 {
+			idx := 0
+			if len(args) > 2 && args[0] == "-C" {
+				idx = 2
+			}
+			if args[idx] == "checkout" && idx+1 < len(args) && args[idx+1] == "-b" && idx+2 < len(args) {
+				checkoutBranch = args[idx+2]
+			}
+		}
+		return nil
+	}
+
+	gitLsRemoteHeads = func(workdir, pattern string) ([]string, error) {
+		return nil, errors.New("remote unavailable")
+	}
+
+	mp := &mockProvider{}
+	ma := &mockAuthProvider{}
+	ex := New(mp, ma)
+	ex.fetcher = &mockFetcher{}
+
+	ctx := buildTestCtx(false)
+	ctx.IssueNumber = 2462
+	ctx.PreparedPrompt = "prompt"
+
+	if err := ex.Execute(context.Background(), ctx); err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	if !strings.HasPrefix(checkoutBranch, "swe-agent/2462-") {
+		t.Fatalf("checkout branch = %q, want prefix swe-agent/2462-", checkoutBranch)
+	}
+	if ctx.PreparedBranch != checkoutBranch {
+		t.Fatalf("PreparedBranch = %q, want %q", ctx.PreparedBranch, checkoutBranch)
+	}
+}
+
+func TestFindExistingIssueBranch_IgnoresInvalidRefs(t *testing.T) {
+	origLsRemote := gitLsRemoteHeads
+	defer func() { gitLsRemoteHeads = origLsRemote }()
+
+	gitLsRemoteHeads = func(workdir, pattern string) ([]string, error) {
+		return []string{
+			"refs/heads/swe-agent/2461-invalid",
+			"refs/heads/other-branch",
+		}, nil
+	}
+
+	ctx := buildTestCtx(false)
+	ctx.IssueNumber = 2461
+
+	got, err := findExistingIssueBranch(ctx, "/tmp")
+	if err != nil {
+		t.Fatalf("findExistingIssueBranch err = %v, want nil", err)
+	}
+	if got != "" {
+		t.Fatalf("findExistingIssueBranch = %q, want empty string", got)
+	}
+}
+
+func TestFindExistingIssueBranch_ErrorPropagation(t *testing.T) {
+	origLsRemote := gitLsRemoteHeads
+	defer func() { gitLsRemoteHeads = origLsRemote }()
+
+	gitLsRemoteHeads = func(workdir, pattern string) ([]string, error) {
+		return nil, errors.New("boom")
+	}
+
+	ctx := buildTestCtx(false)
+	ctx.IssueNumber = 2461
+
+	got, err := findExistingIssueBranch(ctx, "/tmp")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if got != "" {
+		t.Fatalf("branch = %q, want empty on error", got)
+	}
+}
+
+func TestCheckoutRemoteBranch_FallbackToFetchHead(t *testing.T) {
+	origRun := runCmd
+	defer func() { runCmd = origRun }()
+
+	call := 0
+	runCmd = func(name string, args ...string) error {
+		call++
+		if call == 1 {
+			return fmt.Errorf("origin ref missing")
+		}
+		if call == 2 {
+			if len(args) >= 6 && args[5] == "FETCH_HEAD" {
+				return nil
+			}
+			t.Fatalf("unexpected args on fallback: %v", args)
+		}
+		return fmt.Errorf("unexpected call %d", call)
+	}
+
+	if err := checkoutRemoteBranch("/tmp", "feat/monorepo"); err != nil {
+		t.Fatalf("checkoutRemoteBranch err = %v, want nil", err)
+	}
+	if call != 2 {
+		t.Fatalf("expected 2 runCmd calls, got %d", call)
+	}
+}
+
+func TestCheckoutRemoteBranch_FallbackFailure(t *testing.T) {
+	origRun := runCmd
+	defer func() { runCmd = origRun }()
+
+	runCmd = func(name string, args ...string) error {
+		return fmt.Errorf("fail")
+	}
+
+	err := checkoutRemoteBranch("/tmp", "feat/monorepo")
+	if err == nil || !strings.Contains(err.Error(), "checkout remote branch") {
+		t.Fatalf("expected checkout error, got %v", err)
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cexll/swe/internal/github"
@@ -29,6 +31,7 @@ type Executor struct {
 // allow tests to stub cloning and command execution
 var cloneRepo = github.Clone
 var runCmd = run
+var gitLsRemoteHeads = defaultLsRemoteHeads
 
 func New(p provider.Provider, auth github.AuthProvider) *Executor {
 	client := ghdata.NewClient(auth)
@@ -100,6 +103,14 @@ func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) erro
 
 	// 4) Checkout task branch
 	branch := webhookCtx.PreparedBranch
+	if branch == "" && !webhookCtx.IsPRContext() {
+		if existing, detectErr := findExistingIssueBranch(webhookCtx, workdir); detectErr != nil {
+			fmt.Printf("[Warn] detect existing branch failed: %v\n", detectErr)
+		} else if existing != "" {
+			branch = existing
+			webhookCtx.PreparedBranch = branch
+		}
+	}
 	if branch == "" {
 		// 生成新分支名
 		branch = featureBranchName(webhookCtx)
@@ -110,21 +121,21 @@ func (e *Executor) Execute(ctx context.Context, webhookCtx *github.Context) erro
 	// 如果 branch == base，说明已经在目标分支上（clone 时已 checkout），跳过
 	if branch != base {
 		// 检查远程分支是否存在（PR 场景会存在）
-		checkCmd := exec.Command("git", "-C", workdir, "ls-remote", "--heads", "origin", branch)
-		output, checkErr := checkCmd.CombinedOutput()
-
+		refs, lsErr := gitLsRemoteHeads(workdir, branch)
 		// 如果 ls-remote 成功且有输出，说明远程分支存在（PR 场景）
-		if checkErr == nil && len(output) > 0 {
-			// 远程分支存在：fetch + create local tracking branch
-			if err := runCmd("git", "-C", workdir, "fetch", "origin", branch); err != nil {
+		if lsErr == nil && len(refs) > 0 {
+			// 远程分支存在：强制 fetch 该分支到本地 tracking ref
+			refspec := fmt.Sprintf("refs/heads/%s:refs/remotes/origin/%s", branch, branch)
+			if err := runCmd("git", "-C", workdir, "fetch", "origin", refspec); err != nil {
 				return fmt.Errorf("fetch remote branch: %w", err)
 			}
-			// Create local branch tracking origin/branch
-			remoteBranch := fmt.Sprintf("origin/%s", branch)
-			if err := runCmd("git", "-C", workdir, "checkout", "-b", branch, remoteBranch); err != nil {
-				return fmt.Errorf("checkout remote branch: %w", err)
+			if err := checkoutRemoteBranch(workdir, branch); err != nil {
+				return err
 			}
 		} else {
+			if lsErr != nil {
+				fmt.Printf("[Warn] git ls-remote failed: %v\n", lsErr)
+			}
 			// 远程分支不存在或 ls-remote 失败：创建新分支（Issue 场景）
 			if err := runCmd("git", "-C", workdir, "checkout", "-b", branch); err != nil {
 				return fmt.Errorf("create feature branch: %w", err)
@@ -223,6 +234,78 @@ func run(name string, args ...string) error {
 	return nil
 }
 
+func checkoutRemoteBranch(workdir, branch string) error {
+	remoteBranch := fmt.Sprintf("origin/%s", branch)
+	if err := runCmd("git", "-C", workdir, "checkout", "-b", branch, remoteBranch); err == nil {
+		return nil
+	}
+	// fallback: use FETCH_HEAD when remote tracking 未创建（单分支 clone 常见）
+	if err := runCmd("git", "-C", workdir, "checkout", "-b", branch, "FETCH_HEAD"); err != nil {
+		return fmt.Errorf("checkout remote branch: %w", err)
+	}
+	return nil
+}
+
+func defaultLsRemoteHeads(workdir, pattern string) ([]string, error) {
+	args := []string{"-C", workdir, "ls-remote", "--heads", "origin"}
+	if pattern != "" {
+		args = append(args, pattern)
+	}
+	cmd := exec.Command("git", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-remote: %w\n%s", err, string(out))
+	}
+	outStr := strings.TrimSpace(string(out))
+	if outStr == "" {
+		return nil, nil
+	}
+	lines := strings.Split(outStr, "\n")
+	refs := make([]string, 0, len(lines))
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			refs = append(refs, fields[1])
+		}
+	}
+	return refs, nil
+}
+
+func findExistingIssueBranch(ctx *github.Context, workdir string) (string, error) {
+	issueNumber := ctx.GetIssueNumber()
+	if issueNumber <= 0 {
+		return "", nil
+	}
+	pattern := fmt.Sprintf("swe-agent/%d-*", issueNumber)
+	refs, err := gitLsRemoteHeads(workdir, pattern)
+	if err != nil {
+		return "", err
+	}
+	if len(refs) == 0 {
+		return "", nil
+	}
+
+	prefix := fmt.Sprintf("swe-agent/%d-", issueNumber)
+	var latestBranch string
+	var latestTs int64
+	for _, ref := range refs {
+		name := strings.TrimPrefix(ref, "refs/heads/")
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		tsPart := strings.TrimPrefix(name, prefix)
+		ts, parseErr := strconv.ParseInt(tsPart, 10, 64)
+		if parseErr != nil {
+			continue
+		}
+		if ts > latestTs {
+			latestTs = ts
+			latestBranch = name
+		}
+	}
+	return latestBranch, nil
+}
+
 // helpers local to executor to avoid importing config here
 func getEnvBool(key string, def bool) bool {
 	v := os.Getenv(key)
@@ -243,7 +326,7 @@ func joinCSV(items []string) string {
 	if len(items) == 0 {
 		return ""
 	}
-	// Simple join without importing strings to keep import list minimal
+	// Simple join without pulling in additional helpers
 	b := make([]byte, 0, 64)
 	for i, s := range items {
 		if i > 0 {

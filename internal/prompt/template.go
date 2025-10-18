@@ -487,6 +487,11 @@ If the task description mentions changes across multiple repositories (e.g., "Up
 - Return to original repository ({{.RepoPath}}) after multi-repo work
 </workflow_steps>
 
+### Issue Context Branching
+
+- Default branch naming pattern: ` + "`swe-agent/<issue-number>-<timestamp>`" + `
+- If the remote already contains ` + "`swe-agent/<issue-number>-*`" + `, check out and reuse the existing branch instead of creating a new one.
+
 ---
 
 <pr_context_rules>
