@@ -1,0 +1,186 @@
+# Quick Start Guide
+
+## Prerequisites
+
+- Go 1.25.1+
+- [Claude Code CLI](https://github.com/anthropics/claude-code) or [Codex](https://github.com/codex-rs/codex)
+- [GitHub CLI](https://cli.github.com/)
+- API Key (Anthropic or OpenAI)
+
+## Installation
+
+```bash
+# 1. Clone the repository
+git clone git@github.com:cexll/swe.git
+cd swe
+
+# 2. Install dependencies
+go mod download
+
+# 3. Copy environment template
+cp .env.example .env
+
+# 4. Edit .env and fill in your configuration
+# GITHUB_APP_ID=your-app-id
+# GITHUB_PRIVATE_KEY="your-private-key"
+# GITHUB_WEBHOOK_SECRET=your-webhook-secret
+# PROVIDER=codex  # or claude
+```
+
+## Environment Variables
+
+```bash
+# GitHub App Configuration
+GITHUB_APP_ID=123456
+GITHUB_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n..."
+GITHUB_WEBHOOK_SECRET=your-webhook-secret
+
+# AI Provider Configuration (choose one)
+# Option 1: Codex (Recommended)
+PROVIDER=codex
+CODEX_MODEL=gpt-5-codex
+# OPENAI_API_KEY=your-key  # Optional
+# OPENAI_BASE_URL=http://...  # Optional
+
+# Option 2: Claude
+# PROVIDER=claude
+# ANTHROPIC_API_KEY=sk-ant-xxx
+# CLAUDE_MODEL=claude-sonnet-4-5-20250929
+
+# Optional Configuration
+TRIGGER_KEYWORD=/code
+PORT=8000
+DISPATCHER_WORKERS=4
+DISPATCHER_QUEUE_SIZE=16
+DISPATCHER_MAX_ATTEMPTS=3
+DISPATCHER_RETRY_SECONDS=15
+DISPATCHER_RETRY_MAX_SECONDS=300
+DISPATCHER_BACKOFF_MULTIPLIER=2
+# SWE_AGENT_GIT_NAME=swe-agent[bot]
+# SWE_AGENT_GIT_EMAIL=123456+swe-agent[bot]@users.noreply.github.com
+
+# Commit Signing (optional)
+# USE_COMMIT_SIGNING=false  # When true, use GitHub API signing
+
+# Debugging (optional)
+# DEBUG_CLAUDE_PARSING=true
+# DEBUG_GIT_DETECTION=true
+
+# Permission overrides (optional; use with care)
+# ALLOW_ALL_USERS=false        # when true, bypass installer-only check
+# PERMISSION_MODE=open         # alternative flag to allow all users
+```
+
+> 🧵 **Queue Configuration Explanation**
+> - `DISPATCHER_WORKERS`: Number of concurrent workers (default 4)
+> - `DISPATCHER_QUEUE_SIZE`: Bounded task queue capacity, returns 503 when exceeded
+> - `DISPATCHER_MAX_ATTEMPTS`: Maximum execution attempts per task (including initial)
+> - `DISPATCHER_RETRY_SECONDS`: Initial retry delay (seconds)
+> - `DISPATCHER_RETRY_MAX_SECONDS`: Maximum delay for exponential backoff (seconds)
+> - `DISPATCHER_BACKOFF_MULTIPLIER`: Delay multiplier for each retry (default 2)
+
+## Local Development
+
+```bash
+# Load environment variables
+source .env  # or use export for each variable
+
+# Run the service
+go run cmd/main.go
+```
+
+After the service starts, visit:
+
+- 🏠 Service Info: http://localhost:8000/
+- 📋 Task Dashboard: http://localhost:8000/tasks
+- ❤️ Health Check: http://localhost:8000/health
+- 🔗 Webhook: http://localhost:8000/webhook
+
+## Usage
+
+### 1. Configure GitHub App
+
+1. **Create GitHub App**: https://github.com/settings/apps/new
+2. **Permission Settings**:
+   - Repository permissions:
+     - ✅ Contents: Read & Write
+     - ✅ Issues: Read & Write
+     - ✅ Pull requests: Read & Write
+   - Subscribe to events:
+     - ✅ Issue comments
+      - ✅ Pull request review comments
+3. **Webhook Settings**:
+   - URL: `https://your-domain.com/webhook`
+   - Secret: Generate a random key
+   - Content type: `application/json`
+4. **Install to Repository**
+
+### 2. Trigger in Issue/PR Comments (including Review inline comments)
+
+Comment in any Issue or PR:
+
+```
+/code fix the typo in README.md
+```
+
+```
+/code add error handling to the main function
+```
+
+```
+/code refactor the database connection code
+```
+
+You can also trigger on specific lines in code review:
+
+```
+/code tighten error handling here
+```
+
+#### Multi-turn (analysis → implementation)
+
+You can split the workflow into analysis and implementation using separate trigger comments:
+
+```
+/code Please analyze the approach: list steps, risks, and tests.
+```
+
+Then follow up to implement:
+
+```
+/code Proceed to implement now. Return full files using <file path=...><content>...</content></file> blocks and push.
+```
+
+Only the latest comment containing the trigger keyword is treated as the authoritative instruction. Other comments are context only.
+
+### 3. SWE-Agent Automatically Executes
+
+SWE-Agent will automatically complete the following workflow:
+
+1. ✅ **Clone Repository** - Download latest code to temporary directory
+2. ✅ **AI Generation** - Call AI provider to generate or directly modify files
+3. ✅ **Detect Changes** - Use `git status` to detect actual file changes
+4. ✅ **Commit** - Commit to new branch `swe-agent/<issue-number>-<timestamp>`
+5. ✅ **Push** - Push to remote repository
+6. ✅ **Reply Comment** - Provide PR creation link
+
+### 4. View Results
+
+SWE-Agent will automatically reply under the original comment:
+
+```markdown
+### ✅ Task Completed Successfully
+
+**Summary:** Fixed typo in README.md
+
+**Modified Files:** (1)
+
+- `README.md`
+
+**Next Step:**
+[🚀 Click here to create Pull Request](https://github.com/owner/repo/compare/main...swe-agent/123-1234567890?expand=1&quick_pull=1&title=Fix%20typo&body=Fix%20typo)
+
+---
+
+_Generated by SWE-Agent_
+```
