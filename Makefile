@@ -151,6 +151,12 @@ docker-stop:
 docker-logs:
 	@docker logs -f $(DOCKER_IMAGE)
 
+## docker-deploy: Build Container and Stop Old Container and Run New Container
+docker-deploy:
+	$(MAKE) docker-build
+	$(MAKE) docker-stop
+	$(MAKE) docker-run
+
 ## install-tools: Install development tools
 install-tools:
 	@echo "Installing development tools..."

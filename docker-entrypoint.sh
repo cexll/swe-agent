@@ -1,17 +1,13 @@
-#!/bin/sh
+#!/bin/bash
 set -e
 
-# Ensure directories exist
-mkdir -p /root/.codex /root/.claude
+# Initialize Codex authentication if OPENAI_API_KEY is provided
+if [ -n "$OPENAI_API_KEY" ]; then
+    mkdir -p ~/.codex
+    echo "{\"OPENAI_API_KEY\": \"$OPENAI_API_KEY\"}" > ~/.codex/auth.json
+    chmod 600 ~/.codex/auth.json
+    echo "[Entrypoint] Codex authentication configured"
+fi
 
-# Write Codex auth.json
-jq -n --arg key "${OPENAI_API_KEY:-}" '{OPENAI_API_KEY: $key}' > /root/.codex/auth.json
-
-# Note: Codex MCP config (config.toml) is now dynamically generated at runtime
-# in internal/provider/codex/codex.go to avoid conflicts and allow per-execution customization
-
-# Note: Claude MCP config is now dynamically generated via --mcp-config flag
-# in internal/provider/claude/claude.go to avoid conflicts with user's ~/.claude.json
-
-# Start the service
-exec swe-agent "$@"
+# Execute the main application
+exec "$@"

@@ -39,9 +39,16 @@ func (m *Mode) Prepare(ctx context.Context, ghCtx *ghpkg.Context) (*modes.Prepar
 		base = ghCtx.GetRepositoryDefaultBranch()
 	}
 
+	// Determine branch: PR uses head branch, Issue generates new branch
+	branch := ""
+	if ghCtx.IsPRContext() {
+		branch = ghCtx.GetHeadBranch() // PR: use existing branch
+	}
+	// If not PR (Issue context), leave empty for executor to generate
+
 	return &modes.PrepareResult{
 		CommentID:  commentID,
-		Branch:     "", // 留空，AI 会通过 MCP 自己创建分支
+		Branch:     branch,
 		BaseBranch: base,
 		Prompt:     "", // 留空，Executor 会统一构建 Prompt
 	}, nil

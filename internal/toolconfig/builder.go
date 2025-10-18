@@ -13,96 +13,48 @@ func BuildAllowedTools(opts Options) []string {
 	// Base essential tools
 	base := []string{"Edit", "MultiEdit", "Glob", "Grep", "LS", "Read", "Write", "WebSearch", "Bash"}
 
-	// Custom MCP tools
+	// Git CLI commands (safe operations via Bash tool)
 	base = append(base,
-		"mcp__sequential-thinking__sequentialthinking",
-		"mcp__fetch__fetch",
+		"Bash(git status)",
+		"Bash(git diff)",
+		"Bash(git log)",
+		"Bash(git show)",
+		"Bash(git branch)",
+		"Bash(git checkout)",
+		"Bash(git add)",
+		"Bash(git commit)",
+		"Bash(git push)",
+		"Bash(git pull)",
+		"Bash(git fetch)",
+		"Bash(git clone)",
+		"Bash(git remote)",
 	)
 
-	// GitHub MCP tools - Full capability matrix (requires mcp__github__ prefix for MCP server tools)
+	// GitHub CLI commands (safe operations via Bash tool)
 	base = append(base,
-		// Comment operations (two tools with distinct purposes)
-		"mcp__comment_updater__update_claude_comment", // PRIMARY: Progress tracking (updates coordinating comment)
-		"mcp__github__add_issue_comment",              // SECONDARY: New content (detailed analysis, code review)
-		"mcp__github__get_issue_comments",
-
-		// Issue management
-		"mcp__github__create_issue", // Task decomposition
-		"mcp__github__update_issue", // Modify issue content
-		"mcp__github__close_issue",  // Close completed issues
-		"mcp__github__reopen_issue", // Reopen closed issues
-		"mcp__github__list_issues",  // Query issues
-		"mcp__github__assign_issue", // Assign issues to users
-
-		// Pull request management
-		"mcp__github__create_pull_request",
-		"mcp__github__merge_pull_request",                    // Merge approved PRs
-		"mcp__github__close_pull_request",                    // Close PR without merging
-		"mcp__github__request_reviewers",                     // Request specific reviewers
-		"mcp__github__create_and_submit_pull_request_review", // Submit code review
-		"mcp__github__add_comment_to_pending_review",
-		"mcp__github__create_pending_pull_request_review",
-
-		// Label & milestone management
-		"mcp__github__add_labels",       // Add labels to issues/PRs
-		"mcp__github__remove_labels",    // Remove labels
-		"mcp__github__list_labels",      // List available labels
-		"mcp__github__create_label",     // Create new label
-		"mcp__github__create_milestone", // Create project milestones
-		"mcp__github__update_milestone", // Update milestones
-
-		// Branch management
-		"mcp__github__create_branch",
-		"mcp__github__list_branches",
-
-		// Organization & projects
-		"mcp__github__add_to_project",          // Add issues/PRs to project boards
-		"mcp__github__assign_copilot_to_issue", // Assign Copilot
-
-		// Repository management
-		"mcp__github__list_repositories",
-		"mcp__github__get_repository",
-		"mcp__github__create_discussion",
-
-		// Search
-		"mcp__github__search_code",
-		"mcp__github__search_issues",
-		"mcp__github__search_repositories",
+		"Bash(gh pr create)",
+		"Bash(gh pr list)",
+		"Bash(gh pr view)",
+		"Bash(gh pr comment)",
+		"Bash(gh pr merge)",
+		"Bash(gh pr close)",
+		"Bash(gh pr checkout)",
+		"Bash(gh issue create)",
+		"Bash(gh issue list)",
+		"Bash(gh issue view)",
+		"Bash(gh issue comment)",
+		"Bash(gh issue close)",
+		"Bash(gh repo clone)",
+		"Bash(gh repo view)",
+		"Bash(gh api)",
 	)
-	// File ops: choose between git bash vs API push tool
-	if opts.UseCommitSigning || opts.EnableGitHubFileOpsMCP {
-		// Enable API-based push that supports signing on server side (requires mcp__ prefix)
-		base = append(base, "mcp__github__push_files")
-	} else {
-		// Allow local file create/update when not using signing
-		base = append(base, "mcp__github__create_or_update_file")
-	}
 
-	// Git MCP tools (requires mcp__git__ prefix for MCP server tools)
-	if !opts.UseCommitSigning {
-		base = append(base,
-			"mcp__git__git_status",
-			"mcp__git__git_diff_unstaged",
-			"mcp__git__git_diff_staged",
-			"mcp__git__git_diff",
-			"mcp__git__git_commit",
-			"mcp__git__git_add",
-			"mcp__git__git_reset",
-			"mcp__git__git_branch",
-			"mcp__git__git_log",
-			"mcp__git__git_show",
-			"mcp__git__git_create_branch",
-		)
-	}
-
-	// GitHub CI MCP (optional, requires mcp__github__ prefix)
-	if opts.EnableGitHubCIMCP {
-		base = append(base,
-			"mcp__github__get_workflow_runs",
-			"mcp__github__get_workflow_run",
-			"mcp__github__get_job_logs",
-		)
-	}
+	// Custom MCP tools (minimal set)
+	base = append(base,
+		"mcp__sequential-thinking__sequentialthinking", // Deep reasoning
+		"mcp__fetch__fetch",                            // Web content fetching
+		"mcp__comment_updater__update_claude_comment",  // Progress tracking (coordinating comment)
+	)
 
 	// Append any custom tools last
 	if len(opts.CustomAllowedTools) > 0 {
@@ -117,9 +69,29 @@ func BuildAllowedTools(opts Options) []string {
 // entries. It also removes tools from the default blocklist if they are
 // explicitly allowed, mirroring the behavior.
 func BuildDisallowedTools(opts Options) []string {
-	// Default disallowed tools for safety (match reference implementation)
-	// WebSearch and WebFetch are disallowed by default for security
-	disallowed := []string{"WebFetch"}
+	// Default disallowed tools for safety
+	disallowed := []string{
+		"WebFetch", // Prefer mcp__fetch__fetch for web content
+
+		// Dangerous git operations (prevent data loss)
+		"Bash(git push --force)",
+		"Bash(git push -f)",
+		"Bash(git push --force-with-lease)",
+		"Bash(git reset --hard)",
+		"Bash(git clean -fd)",
+		"Bash(git clean -f)",
+		"Bash(git branch -D)",
+		"Bash(git tag -d)",
+		"Bash(git rebase -i)", // Interactive mode not supported
+		"Bash(git add -i)",    // Interactive mode not supported
+		"Bash(rm -rf .git)",
+		"Bash(rm -rf *)",
+
+		// Dangerous gh CLI operations
+		"Bash(gh repo delete)",
+		"Bash(gh api -X DELETE)",
+		"Bash(gh api --method DELETE)",
+	}
 
 	// Remove from defaults if explicitly allowed in CustomAllowedTools
 	customAllowedSet := toSet(opts.CustomAllowedTools)

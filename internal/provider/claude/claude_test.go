@@ -150,30 +150,8 @@ func TestBuildMCPConfig_FullContext(t *testing.T) {
 
 			cfg := decodeMCPConfig(t, raw)
 
-			if len(cfg.MCPServers) != 5 {
-				t.Fatalf("expected 5 MCP servers (github, git, comment_updater, sequential-thinking, fetch), got %d", len(cfg.MCPServers))
-			}
-
-			github, ok := cfg.MCPServers["github"]
-			if !ok {
-				t.Fatalf("github MCP server missing: %+v", cfg.MCPServers)
-			}
-			if github.Type != "http" || github.URL != "https://api.githubcopilot.com/mcp" {
-				t.Fatalf("github MCP server mismatch: %+v", github)
-			}
-			if github.Headers["Authorization"] != "Bearer "+tc.ctx["github_token"] {
-				t.Fatalf("github Authorization header mismatch: %+v", github.Headers)
-			}
-
-			git, ok := cfg.MCPServers["git"]
-			if !ok {
-				t.Fatalf("git MCP server missing")
-			}
-			if git.Command != "uvx" {
-				t.Fatalf("git MCP server command mismatch: %s", git.Command)
-			}
-			if len(git.Args) != 1 || git.Args[0] != "mcp-server-git" {
-				t.Fatalf("git MCP server args mismatch: %+v", git.Args)
+			if len(cfg.MCPServers) != 3 {
+				t.Fatalf("expected 3 MCP servers (comment_updater, sequential-thinking, fetch), got %d", len(cfg.MCPServers))
 			}
 
 			comment, ok := cfg.MCPServers["comment_updater"]
@@ -202,13 +180,11 @@ func TestBuildMCPConfig_FullContext(t *testing.T) {
 
 func TestBuildMCPConfig_GitHubOnly(t *testing.T) {
 	cases := []struct {
-		name       string
-		uvx        bool
-		wantGit    bool
-		wantGitHub bool
+		name string
+		uvx  bool
 	}{
-		{name: "uvxAvailable", uvx: true, wantGit: true, wantGitHub: true},
-		{name: "uvxMissing", uvx: false, wantGit: false, wantGitHub: true},
+		{name: "uvxAvailable", uvx: true},
+		{name: "uvxMissing", uvx: false},
 	}
 
 	ctx := map[string]string{
@@ -226,26 +202,14 @@ func TestBuildMCPConfig_GitHubOnly(t *testing.T) {
 
 			cfg := decodeMCPConfig(t, raw)
 
-			if tc.wantGitHub {
-				if _, ok := cfg.MCPServers["github"]; !ok {
-					t.Fatalf("expected github MCP server, got %+v", cfg.MCPServers)
+			// Should have sequential-thinking and fetch (if uvx available)
+			if tc.uvx {
+				if _, ok := cfg.MCPServers["fetch"]; !ok {
+					t.Fatalf("expected fetch MCP server when uvx available")
 				}
-			} else if _, ok := cfg.MCPServers["github"]; ok {
-				t.Fatalf("unexpected github MCP server")
 			}
 
-			if tc.wantGit {
-				git, ok := cfg.MCPServers["git"]
-				if !ok {
-					t.Fatalf("expected git MCP server, got %+v", cfg.MCPServers)
-				}
-				if git.Command != "uvx" {
-					t.Fatalf("git MCP server command mismatch: %s", git.Command)
-				}
-			} else if _, ok := cfg.MCPServers["git"]; ok {
-				t.Fatalf("unexpected git MCP server")
-			}
-
+			// Should NOT have comment_updater (missing required context)
 			if _, ok := cfg.MCPServers["comment_updater"]; ok {
 				t.Fatalf("comment_updater MCP server should not be present")
 			}
@@ -255,12 +219,11 @@ func TestBuildMCPConfig_GitHubOnly(t *testing.T) {
 
 func TestBuildMCPConfig_EmptyContext(t *testing.T) {
 	cases := []struct {
-		name    string
-		uvx     bool
-		wantGit bool
+		name string
+		uvx  bool
 	}{
-		{name: "uvxAvailable", uvx: true, wantGit: true},
-		{name: "uvxMissing", uvx: false, wantGit: false},
+		{name: "uvxAvailable", uvx: true},
+		{name: "uvxMissing", uvx: false},
 	}
 
 	ctx := map[string]string{}
@@ -276,17 +239,16 @@ func TestBuildMCPConfig_EmptyContext(t *testing.T) {
 
 			cfg := decodeMCPConfig(t, raw)
 
-			if tc.wantGit {
-				if _, ok := cfg.MCPServers["git"]; !ok {
-					t.Fatalf("expected git MCP server when uvx available: %+v", cfg.MCPServers)
+			// When uvx available, should have fetch
+			if tc.uvx {
+				if _, ok := cfg.MCPServers["fetch"]; !ok {
+					t.Fatalf("expected fetch MCP server when uvx available: %+v", cfg.MCPServers)
 				}
-				if len(cfg.MCPServers) != 3 {
-					t.Fatalf("expected 3 MCP servers (git, sequential-thinking, fetch), got %d", len(cfg.MCPServers))
-				}
-			} else {
-				if len(cfg.MCPServers) != 0 {
-					t.Fatalf("expected no MCP servers, got %+v", cfg.MCPServers)
-				}
+			}
+
+			// Should NOT have comment_updater (empty context)
+			if _, ok := cfg.MCPServers["comment_updater"]; ok {
+				t.Fatalf("unexpected comment_updater MCP server with empty context")
 			}
 		})
 	}
@@ -318,20 +280,16 @@ func TestBuildMCPConfig_PartialCommentContext(t *testing.T) {
 
 			cfg := decodeMCPConfig(t, raw)
 
+			// Should NOT have comment_updater (partial context, missing repo_owner)
 			if _, ok := cfg.MCPServers["comment_updater"]; ok {
 				t.Fatalf("comment_updater should not be present with partial context")
 			}
 
-			if _, ok := cfg.MCPServers["github"]; !ok {
-				t.Fatalf("expected github MCP server")
-			}
-
+			// Should have fetch if uvx available
 			if tc.uvx {
-				if _, ok := cfg.MCPServers["git"]; !ok {
-					t.Fatalf("expected git MCP server when uvx available")
+				if _, ok := cfg.MCPServers["fetch"]; !ok {
+					t.Fatalf("expected fetch MCP server when uvx available")
 				}
-			} else if _, ok := cfg.MCPServers["git"]; ok {
-				t.Fatalf("unexpected git MCP server when uvx missing")
 			}
 		})
 	}

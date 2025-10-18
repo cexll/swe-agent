@@ -2,14 +2,16 @@
 
 # SWE-Agent - 软件工程智能体
 
-[![Go Version](https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.25.1-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![Test Coverage](https://img.shields.io/badge/coverage-93.4%25-brightgreen)](#-测试)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-cexll%2Fswe-181717?logo=github)](https://github.com/cexll/swe)
 
 GitHub App webhook 服务，通过 `/code` 命令触发 AI 自动完成代码修改任务。
 
-> 🎯 **核心理念**：让 AI 赋能开发者，使得修改代码像留言一样简单。
+> 🎯 **核心理念**：AI 优先的软件工程，完全的 GitHub 自主性。让修改代码像留言一样简单。
+>
+> 🚀 **v2.1 架构革命**：GPT-5 最佳实践、MCP 集成、59% 代码精简。
 
 ## 📖 目录
 
@@ -132,7 +134,7 @@ GitHub App webhook 服务，通过 `/code` 命令触发 AI 自动完成代码修
 
 ### 前置条件
 
-- Go 1.25+
+- Go 1.25.1+
 - [Claude Code CLI](https://github.com/anthropics/claude-code) 或 [Codex](https://github.com/codex-rs/codex)
 - [GitHub CLI](https://cli.github.com/)
 - API Key（Anthropic 或 OpenAI）

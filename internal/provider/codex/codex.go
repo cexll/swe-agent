@@ -363,21 +363,8 @@ func buildCodexMCPConfig(ctx map[string]string) error {
 	sb.WriteString("disable_response_storage = true\n")
 	sb.WriteString("network_access = true\n\n")
 
-	// Add GitHub HTTP MCP server if token available
-	if githubToken := ctx["github_token"]; githubToken != "" {
-		sb.WriteString("[mcp_servers.github]\n")
-		sb.WriteString("type = \"http\"\n")
-		sb.WriteString("url = \"https://api.githubcopilot.com/mcp\"\n\n")
-		sb.WriteString("[mcp_servers.github.headers]\n")
-		sb.WriteString(fmt.Sprintf("Authorization = \"Bearer %s\"\n\n", githubToken))
-	}
-
-	// Add Git MCP server (uvx mcp-server-git)
-	if _, err := exec.LookPath("uvx"); err == nil {
-		sb.WriteString("[mcp_servers.git]\n")
-		sb.WriteString("command = \"uvx\"\n")
-		sb.WriteString("args = [\"mcp-server-git\"]\n\n")
-	}
+	// Note: GitHub MCP and Git MCP removed to avoid Codex TOML 'command' field issues.
+	// AI will use git/gh CLI via Bash tool with explicit allowedTools list.
 
 	// Add Comment Updater MCP server if comment ID available
 	if commentID := ctx["comment_id"]; commentID != "" {
