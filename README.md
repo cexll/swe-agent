@@ -2,14 +2,16 @@
 
 # SWE-Agent - Software Engineering Agent
 
-[![Go Version](https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
-[![Test Coverage](https://img.shields.io/badge/coverage-84.7%25-brightgreen)](#-testing)
+[![Go Version](https://img.shields.io/badge/Go-1.25.1-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Test Coverage](https://img.shields.io/badge/coverage-93.4%25-brightgreen)](#-testing)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-cexll%2Fswe-181717?logo=github)](https://github.com/cexll/swe)
 
 GitHub App webhook service that triggers AI to automatically complete code modification tasks via `/code` commands.
 
-> 🎯 **Core Philosophy**: Empower developers with AI, making code changes as simple as leaving comments.
+> 🎯 **Core Philosophy**: AI-first software engineering with full GitHub autonomy. Make code changes as simple as leaving comments.
+>
+> 🚀 **v2.1 Architecture Revolution**: GPT-5 best practices, MCP integration, and 59% code reduction.
 
 ## 📖 Table of Contents
 
@@ -25,15 +27,15 @@ GitHub App webhook service that triggers AI to automatically complete code modif
 
 ## ✨ Features
 
-- 🤖 **Multi-AI Provider Support** - Claude Code and Codex, easily extensible
+- 🤖 **Multi-AI Provider Support** - Claude Code and Codex with dynamic MCP configuration
 - 🔐 **Security Verification** - GitHub webhook signature verification (HMAC SHA-256)
 - ⚡ **Async Processing** - Immediate webhook response, background task execution
 - 📦 **Smart Change Detection** - Auto-detect filesystem changes regardless of how AI modifies files
 - 🎯 **Configurable Trigger Words** - Default `/code`, customizable
-- 🎨 **Clean Architecture** - Provider interface abstraction, GitHub operations abstraction
-- ✅ **High Test Coverage** - 84.7% unit test coverage
-- 🛡️ **Safe Execution** - Command runner with injection prevention, sandboxed execution
-- 📊 **Progress Tracking** - Comment tracker with real-time task status updates
+- 🎨 **Clean Architecture** - 59% code reduction with modular design (1,300 core lines)
+- ✅ **High Test Coverage** - 93.4% unit test coverage (github/data), 85%+ overall
+- 🛡️ **Safe Execution** - Git and gh CLI tools with security constraints
+- 📊 **Progress Tracking** - Coordinating comment system with real-time updates
 - 🖥️ **Task Dashboard UI** - Built-in `/tasks` web view for queue status and logs
 - ⏱️ **Timeout Protection** - 10-minute timeout prevents task hang-ups
 - 🔀 **Multi-PR Workflow** - Automatically split large changes into multiple logical PRs
@@ -44,6 +46,10 @@ GitHub App webhook service that triggers AI to automatically complete code modif
 - 🔗 **Post-Processing** - Automatic branch/PR link generation after execution
 - ✍️ **Commit Signing** - Optional GitHub-signed commits via API
 - 🧹 **Empty Branch Cleanup** - Auto-delete branches with no commits
+- 📊 **GraphQL Pagination** - Handle PRs with 100+ files/comments via cursor-based pagination
+- 🔄 **Cross-Repository Workflow** - AI-driven multi-repo support with zero executor changes
+- 🎯 **PR Context Awareness** - Automatically updates existing PRs vs creating new ones
+- 🛠️ **MCP Integration** - 39 GitHub MCP tools + coordinating comment system
 
 ## 🎉 Recent Updates
 
@@ -78,7 +84,7 @@ GitHub App webhook service that triggers AI to automatically complete code modif
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.25.1+
 - [Claude Code CLI](https://github.com/anthropics/claude-code) or [Codex](https://github.com/codex-rs/codex)
 - [GitHub CLI](https://cli.github.com/)
 - API Key (Anthropic or OpenAI)
