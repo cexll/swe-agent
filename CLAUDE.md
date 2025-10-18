@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `github.com/golang-jwt/jwt/v5` - GitHub App JWT authentication
   - `github.com/joho/godotenv` - Environment variable management
 
-## v2.1 Architecture Revolution (January 2025)
+## v0.4.2 Architecture (October 2025)
 
 **AI-First Redesign - GPT-5 Prompting Best Practices:**
 - ✅ **Prompt template restructured**: 361 → 619 lines with XML-based structure (Go constant in `internal/prompt/template.go`)
@@ -23,7 +23,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - ✅ **GraphQL pagination support**: Handles PRs with 100+ files/comments via cursor-based pagination (October 2025)
 - ✅ **Cross-repository workflow**: AI-driven multi-repo support with zero executor changes (October 2025)
 
-**What Changed:**
+**What Changed in v0.4.2:**
+1. **Version Unification**: All documentation files now consistently show v0.4.2
+2. **Git Tag Alignment**: Documentation version matches git tag version
+
+**Previous v2.1 Architecture Changes:**
 1. **Prompt System (GPT-5 Best Practices + Go text/template)**:
    - Converted system prompt to Go constant in `internal/prompt/template.go`
    - Applied structured XML tags: `<system_identity>`, `<tool_constraints>`, `<decision_tree>`, etc.
